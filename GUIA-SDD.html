@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guía SDD — Spec-Driven Development</title>
+<style>
+  :root{
+    --tinta:#1a1a2e;
+    --acento:#2d5fff;
+    --acento-suave:#eaf0ff;
+    --gris:#5b6472;
+    --gris-claro:#f4f6fa;
+    --borde:#dfe4ec;
+    --ok:#1a7f55;
+    --aviso:#b25a00;
+  }
+  *{box-sizing:border-box;}
+  html{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--tinta);line-height:1.6;margin:0;background:#fff;font-size:15px;
+  }
+  .pagina{max-width:820px;margin:0 auto;padding:48px 56px;}
+
+  /* Portada */
+  .portada{
+    min-height:100vh;display:flex;flex-direction:column;justify-content:center;
+    padding:64px 56px;background:linear-gradient(150deg,var(--tinta) 0%,#23234a 100%);color:#fff;
+  }
+  .portada .etiqueta{font-size:13px;letter-spacing:3px;text-transform:uppercase;color:#9fb4ff;margin-bottom:24px;}
+  .portada h1{font-size:54px;line-height:1.05;margin:0 0 16px;font-weight:800;letter-spacing:-1px;}
+  .portada h2{font-size:22px;font-weight:400;color:#c7d0e0;margin:0 0 40px;max-width:560px;}
+  .portada .meta{font-size:14px;color:#9aa4b8;border-top:1px solid rgba(255,255,255,.18);padding-top:20px;max-width:480px;}
+  .portada .meta strong{color:#fff;font-weight:600;}
+
+  h2.seccion{font-size:30px;margin:0 0 6px;letter-spacing:-.5px;font-weight:800;}
+  h2.seccion .num{color:var(--acento);}
+  .subtitulo{color:var(--gris);font-size:16px;margin:0 0 28px;}
+  h3{font-size:20px;margin:32px 0 10px;font-weight:700;}
+  h4{font-size:16px;margin:22px 0 6px;font-weight:700;color:var(--tinta);}
+  p{margin:0 0 14px;}
+  a{color:var(--acento);}
+
+  .lead{font-size:18px;color:var(--tinta);background:var(--acento-suave);
+    border-left:4px solid var(--acento);padding:16px 20px;border-radius:0 8px 8px 0;margin:0 0 24px;}
+
+  ul,ol{margin:0 0 16px;padding-left:22px;}
+  li{margin:0 0 8px;}
+
+  .caja{background:var(--gris-claro);border:1px solid var(--borde);border-radius:10px;padding:18px 22px;margin:0 0 20px;}
+  .caja.cristiano{background:#fff8ed;border-color:#f0d9b5;}
+  .caja.cristiano::before{content:"💬 En cristiano";display:block;font-weight:700;color:var(--aviso);font-size:13px;margin-bottom:6px;letter-spacing:.3px;}
+  .caja.clave{background:var(--acento-suave);border-color:#c5d4ff;}
+  .caja.clave::before{content:"⭐ Idea clave";display:block;font-weight:700;color:var(--acento);font-size:13px;margin-bottom:6px;letter-spacing:.3px;}
+
+  table{width:100%;border-collapse:collapse;margin:0 0 22px;font-size:14px;}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--borde);vertical-align:top;}
+  th{background:var(--tinta);color:#fff;font-weight:600;font-size:13px;}
+  tr:nth-child(even) td{background:var(--gris-claro);}
+
+  .pasos{counter-reset:paso;list-style:none;padding:0;}
+  .pasos li{counter-increment:paso;position:relative;padding:14px 16px 14px 56px;margin-bottom:12px;
+    background:#fff;border:1px solid var(--borde);border-radius:10px;}
+  .pasos li::before{content:counter(paso);position:absolute;left:14px;top:14px;width:28px;height:28px;
+    background:var(--acento);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:14px;}
+
+  .flujo{background:var(--tinta);color:#e8ecf5;border-radius:12px;padding:24px;margin:0 0 24px;
+    font-family:"SF Mono",Consolas,Monaco,monospace;font-size:13px;line-height:1.7;white-space:pre;overflow-x:auto;}
+
+  .dos-col{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:0 0 22px;}
+  .tarjeta{border:1px solid var(--borde);border-radius:10px;padding:18px 20px;}
+  .tarjeta h4{margin-top:0;color:var(--acento);}
+
+  .puerta{display:flex;align-items:flex-start;gap:12px;background:#fff;border:2px dashed var(--acento);
+    border-radius:10px;padding:14px 18px;margin:0 0 14px;}
+  .puerta .icono{font-size:24px;}
+
+  code{background:#eef1f6;padding:1px 6px;border-radius:4px;font-family:"SF Mono",Consolas,monospace;font-size:.9em;}
+  .pill{display:inline-block;background:var(--acento-suave);color:var(--acento);border-radius:20px;
+    padding:2px 12px;font-size:12px;font-weight:600;margin:0 4px 4px 0;}
+
+  footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--borde);color:var(--gris);font-size:13px;}
+
+  hr{border:none;border-top:1px solid var(--borde);margin:40px 0;}
+
+  @media print{
+    .portada{min-height:auto;height:100vh;}
+    .salto{page-break-before:always;}
+    .pagina{padding:24px 0;}
+    body{font-size:12.5px;}
+    .no-print{display:none;}
+    @page{margin:18mm 16mm;}
+  }
+</style>
+</head>
+<body>
+
+<!-- PORTADA -->
+<section class="portada">
+  <div class="etiqueta">Metodología de desarrollo · Flama Studio</div>
+  <h1>Spec-Driven Development</h1>
+  <h2>Cómo preparamos y construimos software: primero el qué, después el cómo. Con la IA como aliada, sin perder el control.</h2>
+  <div class="meta">
+    <strong>Guía de referencia</strong><br>
+    Para equipo, programadores y clientes.<br>
+    Inspirada en el arnés <em>betta-tech/harness-sdd</em> y adaptada por Flama Studio.
+  </div>
+</section>
+
+<!-- 1. QUÉ ES -->
+<section class="pagina salto">
+  <h2 class="seccion"><span class="num">1.</span> Qué es esto y por qué importa</h2>
+  <p class="subtitulo">El problema que resolvemos antes de escribir una sola línea.</p>
+
+  <p class="lead">La inteligencia artificial ya escribe código. La pregunta importante ya no es <em>si</em> puede, sino cómo conseguir que escriba el código <strong>correcto</strong>. La respuesta no está en usar un modelo más nuevo, sino en el <strong>método</strong> con el que se trabaja.</p>
+
+  <p><strong>Spec-Driven Development (SDD)</strong> es desarrollo guiado por la especificación. Primero se describe con claridad <em>qué</em> debe hacer el software (la <em>spec</em>), y solo después se construye el código a partir de esa spec. La especificación es la <strong>fuente de verdad</strong>: si algo no está en la spec, no se construye.</p>
+
+  <div class="caja cristiano">
+    Piensa en construir una casa. La <strong>spec</strong> son los planos del arquitecto. Nadie pone un ladrillo antes de tener los planos aprobados. En el desarrollo improvisado, mucha gente empieza a poner ladrillos "a ver qué sale" — y así aparecen las chapuzas y los sobrecostes.
+  </div>
+
+  <h3>Harness Engineering vs SDD (no son lo mismo)</h3>
+  <p>Conviene separar dos conceptos que suelen confundirse:</p>
+  <table>
+    <tr><th>Concepto</th><th>Qué es</th></tr>
+    <tr><td><strong>Harness Engineering</strong></td><td>La <em>disciplina</em> de automatizar un flujo de trabajo con IA. Un "arnés" es el conjunto de reglas y ficheros que <strong>obligan a la IA a trabajar de una forma concreta</strong> en vez de improvisar.</td></tr>
+    <tr><td><strong>SDD</strong></td><td>Un <em>flujo de trabajo concreto</em>: spec primero, código después.</td></tr>
+  </table>
+  <p>Es decir: usamos harness engineering para <strong>construir un arnés que implementa SDD</strong>. Con la misma técnica se podría montar un arnés para otro método (TDD, ágil…). Nosotros montamos uno para SDD.</p>
+
+  <div class="caja clave">
+    El "arnés" no es nada mágico ni complejo: son <strong>ficheros de texto</strong> que le dicen a la IA cómo comportarse, qué pasos seguir y qué no saltarse. Eso es todo.
+  </div>
+</section>
+
+<!-- 2. PRINCIPIOS -->
+<section class="pagina salto">
+  <h2 class="seccion"><span class="num">2.</span> Los principios que lo hacen funcionar</h2>
+  <p class="subtitulo">El "por qué" detrás de toda la estructura.</p>
+
+  <ol>
+    <li><strong>El estado vive en disco, no en el chat.</strong> Todo (requisitos, decisiones, progreso) se guarda en ficheros. Si se cierra la sesión hoy y se retoma mañana, no se pierde nada. El chat se olvida; los ficheros no.</li>
+    <li><strong>Una cosa a la vez.</strong> Se completa una funcionalidad antes de empezar la siguiente. Nada de diez cosas a medias.</li>
+    <li><strong>El humano dentro del bucle.</strong> Una persona aprueba en dos momentos clave (el diseño y los tests). La IA no trabaja sola mientras nadie mira. Se mantiene el control.</li>
+    <li><strong>Trazabilidad: 1 requisito → 1 test.</strong> Cada requisito se comprueba con una prueba automática. Así se sabe, de verdad, si está bien hecho.</li>
+    <li><strong>Cada agente, su contexto.</strong> En lugar de un único "chat gigante" que se lía, hay agentes especializados y cada uno recibe solo lo que necesita.</li>
+    <li><strong>Selectivo, no para todo.</strong> Las tareas triviales no pasan por todo el ritual. Solo lo importante.</li>
+  </ol>
+
+  <div class="caja clave">
+    Lo verdaderamente valioso no es copiar la herramienta de otro, sino <strong>construir la propia</strong>, que funcione como trabaja cada equipo. Esta metodología es un punto de partida pensado para evolucionar.
+  </div>
+</section>
+
+<!-- 3. LAS DOS FASES -->
+<section class="pagina salto">
+  <h2 class="seccion"><span class="num">3.</span> Las dos fases de un proyecto</h2>
+  <p class="subtitulo">Primero saber qué hay que hacer. Luego hacerlo.</p>
+
+  <div class="dos-col">
+    <div class="tarjeta">
+      <h4>Fase A · Descubrimiento</h4>
+      <p><strong>Objetivo:</strong> saber QUÉ hay que construir.</p>
+      <p><strong>Quién lleva la voz:</strong> la IA, haciendo de <em>Analista</em>, entrevista y guía.</p>
+      <p><strong>Resultado:</strong> requisitos claros + los cimientos del proyecto.</p>
+    </div>
+    <div class="tarjeta">
+      <h4>Fase B · Construcción</h4>
+      <p><strong>Objetivo:</strong> construirlo bien.</p>
+      <p><strong>Quién lleva la voz:</strong> el arnés de agentes (leader, spec_author, implementer, reviewer).</p>
+      <p><strong>Resultado:</strong> código que cumple los requisitos y está probado.</p>
+    </div>
+  </div>
+
+  <h3>El mapa completo</h3>
+  <div class="flujo">  TÚ + EL CLIENTE
+        │
+        ▼
+┌──────────────────────────────────────────────┐
+│  FASE A · DESCUBRIMIENTO                        │
+│  (la IA hace de "Analista" y te entrevista)    │
+│  · Estado actual · Visión de negocio           │
+│  · Procesos y flujos · Requisitos (EARS)       │
+│  · Modelo de datos · Integraciones             │
+│  + CIMIENTOS: arquitectura · convenciones      │
+└───────────────────┬────────────────────────────┘
+                    │  ⛳ ¿"Definición de listo"?
+                    ▼
+┌──────────────────────────────────────────────┐
+│  EL PUENTE  →  la carpeta ya es un proyecto     │
+│  listo para el arnés. Mismo punto de partida.   │
+└───────────────────┬────────────────────────────┘
+        ┌───────────┴───────────┐
+   TÚ con IA                DEV HUMANO
+        ▼                        ▼
+┌──────────────────────┐  ┌────────────────────┐
+│ FASE B · arnés        │  │ Entregas la Fase A  │
+│ leader → spec_author  │  │ como requisitos +   │
+│  → 🧍 apruebas spec   │  │ CHECKPOINTS como    │
+│  → implementer        │  │ criterios de "hecho"│
+│  → 🧍 apruebas tests  │  └────────────────────┘
+│  → reviewer → DONE    │
+└──────────────────────┘</div>
+
+  <div class="caja">
+    <strong>Flujo mixto:</strong> al acabar la Fase A se decide quién construye. Si lo hace la IA, se entra en la Fase B. Si lo hace un programador humano, se le entrega el resultado de la Fase A como documento de requisitos. <strong>En ambos casos, el trabajo duro de pensar el qué ya está hecho.</strong>
+  </div>
+</section>
+
+<!-- 4. FASE A -->
+<section class="pagina salto">
+  <h2 class="seccion"><span class="num">4.</span> Fase A — El Analista te acompaña</h2>
+  <p class="subtitulo">Pensada para quien dirige el proyecto sin ser programador.</p>
+
+  <p>En esta fase la IA no espera a que le digan exactamente qué pedir: <strong>entrevista, guía y decide cuándo hay información suficiente.</strong> Aporta el método y las preguntas correctas; la persona aporta el conocimiento del negocio y del cliente.</p>
+
+  <h3>Qué hace el Analista</h3>
+  <ul>
+    <li>Hace las preguntas <strong>de una en una</strong> (opción múltiple cuando se puede).</li>
+    <li><strong>Explica antes de preguntar</strong>: ningún tecnicismo sin traducir.</li>
+    <li>Escucha la historia del cliente aunque venga desordenada, y la <strong>reformula para confirmar</strong>.</li>
+    <li><strong>Detecta los huecos</strong> y los anota como dudas o pendientes.</li>
+    <li>Avisa <strong>cuándo ya hay suficiente</strong> mediante una "Definición de listo".</li>
+  </ul>
+
+  <h3>Qué se produce</h3>
+  <table>
+    <tr><th>Documento</th><th>Qué captura</th></tr>
+    <tr><td>Estado actual</td><td>Qué usa hoy el cliente (si hay sistema previo).</td></tr>
+    <tr><td>Visión de negocio</td><td>El para qué, el dolor que se resuelve, el éxito.</td></tr>
+    <tr><td>Procesos y flujos</td><td>Cómo trabaja el cliente de verdad, paso a paso.</td></tr>
+    <tr><td>Requisitos (EARS)</td><td>Lo que el software debe hacer, comprobable con tests.</td></tr>
+    <tr><td>Modelo de datos</td><td>Qué información se guarda y cómo se relaciona.</td></tr>
+    <tr><td>Integraciones</td><td>Con qué otros sistemas hay que conectar.</td></tr>
+    <tr><td>Cimientos</td><td>Arquitectura, convenciones y formato de specs.</td></tr>
+  </table>
+
+  <div class="caja cristiano">
+    Donde quien dirige no tenga criterio técnico, el Analista <strong>propone valores por defecto sensatos y explica el porqué</strong>. No es hacer trampa: lo que afecta al negocio lo decide la persona; lo puramente técnico, la IA.
+  </div>
+
+  <h3>Cómo se garantiza no olvidar nada (motor anti-olvidos)</h3>
+  <p>Los requisitos <strong>no se sacan de memoria ni "uno a uno"</strong>: emergen de hablar del negocio. La persona cuenta historias y procesos; la IA los convierte en requisitos y los devuelve para confirmar (reconocer es más fácil que recordar). La completitud la garantiza un recorrido sistemático:</p>
+  <ol>
+    <li><strong>Recorrido del proceso</strong> — el camino normal, paso a paso.</li>
+    <li><strong>Barrido "¿qué pasa si…?"</strong> — sobre cada acción: falta un dato, ya existe, falla el otro sistema, quién puede hacerlo, límites, deshacer…</li>
+    <li><strong>Las 5 operaciones por entidad</strong> — crear, ver, buscar/listar, editar, borrar.</li>
+    <li><strong>Categorías transversales</strong> — validaciones, estados, permisos, avisos, informes, integraciones, auditoría, cálculos, migración…</li>
+    <li><strong>Repaso final</strong> — "¿reconoces todo tu negocio aquí? ¿falta alguna excepción rara?".</li>
+  </ol>
+  <div class="caja">
+    Se trabaja <strong>por capas</strong>: primero lo esencial para arrancar; el resto, en una segunda pasada o anotado como pendiente. Así la fase nunca se bloquea, pero nada se pierde. Y siempre se puede pedir "más cobertura": la IA seguirá generando preguntas hasta agotar el tema.
+  </div>
+</section>
+
+<!-- 5. EARS -->
+<section class="pagina salto">
+  <h2 class="seccion"><span class="num">5.</span> Cómo se escriben los requisitos: EARS</h2>
+  <p class="subtitulo">Una plantilla sencilla para que cada requisito se pueda probar.</p>
+
+  <div class="caja cristiano">
+    <strong>EARS</strong> es una forma de escribir cada requisito con un patrón fijo:
+    <em>"Cuando [situación], el sistema debe [comportamiento concreto]."</em>
+    La gracia: cada requisito así escrito se convierte directamente en un test.
+  </div>
+
+  <table>
+    <tr><th>Tipo</th><th>Patrón</th><th>Ejemplo</th></tr>
+    <tr><td>Evento</td><td>Cuando [evento], el sistema debe [respuesta].</td><td>Cuando el usuario guarda un cliente, el sistema debe mostrarlo en el listado.</td></tr>
+    <tr><td>Condición/error</td><td>Si [condición], entonces el sistema debe [respuesta].</td><td>Si falta el email, el sistema debe rechazar el guardado y avisar.</td></tr>
+    <tr><td>Estado</td><td>Mientras [estado], el sistema debe [respuesta].</td><td>Mientras se carga, el sistema debe mostrar un indicador.</td></tr>
+    <tr><td>Siempre</td><td>El sistema debe [respuesta].</td><td>El sistema debe registrar quién hizo cada cambio.</td></tr>
+  </table>
+
+  <p><strong>Por qué EARS y no historias de usuario:</strong> una historia de usuario puede ser vaga ("como usuario quiero gestionar clientes"). Un requisito EARS es concreto y verificable: se sabe exactamente qué comprobar. Cada <code>R</code> → al menos un test.</p>
+</section>
+
+<!-- 6. FASE B -->
+<section class="pagina salto">
+  <h2 class="seccion"><span class="num">6.</span> Fase B — El arnés de agentes</h2>
+  <p class="subtitulo">La IA construye; el humano supervisa en dos puertas.</p>
+
+  <h3>Los cuatro agentes</h3>
+  <table>
+    <tr><th>Agente</th><th>Su trabajo</th><th>Nunca hace</th></tr>
+    <tr><td><strong>leader</strong> (jefe)</td><td>Mira el estado y lanza al agente que toca</td><td>Escribir código</td></tr>
+    <tr><td><strong>spec_author</strong></td><td>Convierte un requisito en 3 ficheros (qué/cómo/pasos)</td><td>Implementar</td></tr>
+    <tr><td><strong>implementer</strong></td><td>Escribe el código siguiendo las tareas</td><td>Auto-aprobarse</td></tr>
+    <tr><td><strong>reviewer</strong></td><td>Valida specs ↔ tests, convenciones y "terminado"</td><td>Modificar código</td></tr>
+  </table>
+  <p>Ningún agente aprueba su propio trabajo: así se evita el conflicto de interés y se mantiene la calidad.</p>
+
+  <h3>Los tres ficheros de cada spec</h3>
+  <ul>
+    <li><code>requirements.md</code> — <strong>QUÉ</strong> hay que hacer (requisitos EARS).</li>
+    <li><code>design.md</code> — <strong>CÓMO</strong> se hace (decisiones técnicas, qué se toca y qué no).</li>
+    <li><code>tasks.md</code> — los <strong>PASOS</strong> concretos que ejecuta el implementer.</li>
+  </ul>
+
+  <h3>El flujo de estados y las dos puertas</h3>
+  <div class="flujo">pending ──(spec_author redacta las 3 specs)──▶ spec_ready
+                                              │
+                       🧍 APRUEBAS  ◀────── PUERTA 1 (diseño)
+                                              ▼
+                                        in_progress
+                          (implementer escribe el código)
+                                              │
+                       🧍 REVISAS  ◀─────── PUERTA 2 (tests)
+                                              ▼
+                          (reviewer valida todo) ──▶ done</div>
+
+  <div class="puerta"><div class="icono">🧍</div><div><strong>Puerta 1 — tras la spec.</strong> ¿Es de verdad lo que queremos construir? El agente se para y espera aprobación antes de escribir una línea de código.</div></div>
+  <div class="puerta"><div class="icono">🧍</div><div><strong>Puerta 2 — tras los tests.</strong> ¿Las pruebas tienen sentido y cubren lo importante? Se revisa antes de cerrar.</div></div>
+
+  <div class="caja">
+    <strong>SDD no es para todo.</strong> Cada funcionalidad lleva una marca <span class="pill">sdd: true</span> (pasa por todo el ritual) o <span class="pill">sdd: false</span> (cambio pequeño, sin ceremonia). El criterio evita que un cambio trivial cueste más esfuerzo del que vale.
+  </div>
+</section>
+
+<!-- 7. CÓMO SE USA -->
+<section class="pagina salto">
+  <h2 class="seccion"><span class="num">7.</span> Cómo se usa, en la práctica</h2>
+  <p class="subtitulo">De carpeta vacía a proyecto en marcha.</p>
+
+  <ol class="pasos">
+    <li>Se copia la plantilla del framework a la carpeta del cliente/proyecto.</li>
+    <li>Se arranca la Fase A: se le da a la IA el prompt de inicio y empieza la entrevista guiada.</li>
+    <li>Se responde hasta que el Analista confirma que hay información suficiente ("Definición de listo").</li>
+    <li>Se decide quién construye: la IA (Fase B) o un programador humano (se le entrega la Fase A).</li>
+    <li>Si construye la IA: se le pide "implementa la siguiente tarea pendiente" y se aprueba en las dos puertas.</li>
+    <li>Cada funcionalidad terminada queda registrada en el historial. Se repite con la siguiente.</li>
+  </ol>
+
+  <div class="caja clave">
+    La IA acelera enormemente el trabajo, pero la experiencia y el criterio humano no se delegan. Se revisa el diseño y se revisan los tests. Ese es el seguro de calidad.
+  </div>
+
+  <h3>Para el programador (si construye una persona)</h3>
+  <p>Se entrega la carpeta de descubrimiento como documento de requisitos y el fichero de <em>checkpoints</em> como criterios de aceptación. El valor es el mismo: alguien ya ha hecho el trabajo de definir, con precisión, qué hay que construir.</p>
+</section>
+
+<!-- 8. GLOSARIO -->
+<section class="pagina salto">
+  <h2 class="seccion"><span class="num">8.</span> Glosario rápido</h2>
+  <p class="subtitulo">Los términos, en lenguaje llano.</p>
+
+  <table>
+    <tr><th>Término</th><th>Qué es</th></tr>
+    <tr><td>Spec / Especificación</td><td>La descripción de qué debe hacer el software. Los "planos".</td></tr>
+    <tr><td>Requisito</td><td>Una cosa concreta que el software debe hacer.</td></tr>
+    <tr><td>EARS</td><td>Plantilla para escribir requisitos de forma que se puedan probar.</td></tr>
+    <tr><td>Arquitectura</td><td>Cómo se organizan las piezas grandes de la app y cómo se comunican.</td></tr>
+    <tr><td>Convenciones</td><td>Normas de estilo y nombres, para que todo sea coherente.</td></tr>
+    <tr><td>Test / Prueba</td><td>Programa que comprueba automáticamente que algo funciona.</td></tr>
+    <tr><td>Trazabilidad</td><td>Seguir el hilo: requisito → código → test.</td></tr>
+    <tr><td>Agente</td><td>"Personalidad" especializada de la IA (un fichero de instrucciones).</td></tr>
+    <tr><td>Arnés (harness)</td><td>Conjunto de reglas y ficheros que obligan a la IA a seguir el método.</td></tr>
+    <tr><td>Feature</td><td>Una funcionalidad concreta del software.</td></tr>
+    <tr><td>Fuente de verdad</td><td>El documento que manda. En SDD, la spec.</td></tr>
+  </table>
+
+  <footer>
+    <strong>Spec-Driven Development · Guía de referencia</strong><br>
+    Metodología de Flama Studio. Inspirada en el arnés <em>betta-tech/harness-sdd</em> y en el vídeo
+    "Esto es lo que Aprendí Adaptando Claude Code para SDD".<br>
+    Documento autocontenido — para imprimir: <em>Archivo → Imprimir → Guardar como PDF</em> (tamaño A4).
+  </footer>
+</section>
+
+</body>
+</html>

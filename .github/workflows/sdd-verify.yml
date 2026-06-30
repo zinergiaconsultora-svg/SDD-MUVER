@@ -1,0 +1,56 @@
+name: SDD Discipline Verification (CI)
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  sdd-validation:
+    name: Verify SDD Structure & Rules
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: 1. Validate Feature List Atomicity
+      run: |
+        if [ -f "feature_list.json" ]; then
+          echo "Checking feature_list.json..."
+          # Verificar si hay alguna feature marcada como in_progress
+          IN_PROGRESS=$(grep -o '"status": *"in_progress"' feature_list.json | wc -l || echo 0)
+          if [ "$IN_PROGRESS" -gt 0 ]; then
+            echo "ERROR: Hay $IN_PROGRESS características en estado 'in_progress' en la rama de destino."
+            echo "No se permite integrar código de características que estén a medias."
+            exit 1
+          fi
+          echo "OK: No hay características a medias en la rama."
+        else
+          echo "Warning: feature_list.json no encontrado."
+        fi
+
+    - name: 2. Run Semantic Linter (sdd-lint)
+      run: |
+        if [ -f "sdd-lint.js" ]; then
+          echo "Running sdd-lint.js..."
+          node sdd-lint.js
+        else
+          echo "sdd-lint.js no encontrado. Omitiendo."
+        fi
+
+    - name: 3. Verify Env & Run Tests (init.sh)
+      run: |
+        if [ -f "init.sh" ]; then
+          echo "Running init.sh..."
+          chmod +x init.sh
+          ./init.sh
+        else
+          echo "init.sh no encontrado."
+        fi

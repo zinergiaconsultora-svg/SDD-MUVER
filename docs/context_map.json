@@ -1,0 +1,30 @@
+{
+  "_comment": "Este archivo mapea los módulos de negocio con sus archivos fuente, esquemas e integraciones. Optimiza el contexto inyectado a los agentes.",
+  "modules": {
+    "auth": {
+      "description": "Autenticación, tokens, cifrado y sesiones de usuario.",
+      "sources": [
+        "src/auth/auth.service.js",
+        "src/auth/auth.controller.js"
+      ],
+      "schemas": [
+        "docs/constitution.md#Entidad: Usuario"
+      ],
+      "tests": [
+        "tests/auth.test.js"
+      ]
+    },
+    "database": {
+      "description": "Configuración de ORM, conexiones y migraciones de datos.",
+      "sources": [
+        "src/config/db.js"
+      ],
+      "schemas": [],
+      "tests": []
+    }
+  },
+  "shared_utilities": [
+    "src/utils/logger.js",
+    "src/utils/errors.js"
+  ]
+}

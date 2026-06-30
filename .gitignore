@@ -1,0 +1,13 @@
+
+# SDD Framework (No ignorar)
+!docs/
+!specs/
+!progress/
+!.claude/
+!sdd-descubrimiento/
+!CLAUDE.md
+!AGENTS.md
+!CHECKPOINTS.md
+!feature_list.json
+!init.sh
+!GUIA-SDD.html
