@@ -5,10 +5,10 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #2 `puesto-de-mando-acceso-web` — acceso web seguro (fase 2)
-- **Estado:** `in_progress` (spec aprobada por el humano; implementer trabajando)
-- **Tarea actual:** Implementación TDD de `specs/puesto-de-mando-acceso-web/tasks.md` (T1→T34)
+- **Estado:** `in_progress` — implementación terminada (166 tests en verde, `init.sh` OK); **esperando revisión humana (puerta 2)**
+- **Tarea actual:** T30/T31 (verificación manual del humano en Windows e Internet); T1–T29, T32–T34 hechas
 - **Siguiente paso:** Implementer termina → humano revisa tests (puerta 2) → reviewer → done.
-- **Bloqueos / esperando:** —
+- **Bloqueos / esperando:** aprobación humana de los tests (puerta 2) y verificación manual T30/T31
 
 ## Decisiones tomadas con el humano
 

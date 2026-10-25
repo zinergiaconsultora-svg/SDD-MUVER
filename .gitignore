@@ -11,3 +11,6 @@
 !feature_list.json
 !init.sh
 !GUIA-SDD.html
+
+# Datos privados del panel (contraseña, sesiones, logs)
+panel/data/

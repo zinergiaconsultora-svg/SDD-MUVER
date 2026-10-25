@@ -16,13 +16,15 @@ export const MIME_TYPES = Object.freeze({
   '.ico': 'image/x-icon',
 });
 
+export const COOKIE_NAME = 'muver_session';
+
+/** Responde JSON. Conserva las cabeceras ya fijadas con res.setHeader (p. ej. Set-Cookie). */
 export function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(payload),
-    'Cache-Control': 'no-store',
-  });
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Length', Buffer.byteLength(payload));
+  res.setHeader('Cache-Control', 'no-store');
+  res.writeHead(status);
   res.end(payload);
 }
 
@@ -75,6 +77,54 @@ export function readJsonBody(req, { limit = BODY_LIMIT_BYTES } = {}) {
     });
     req.on('error', fail);
   });
+}
+
+/** Parsea la cabecera Cookie: { nombre: valor }, con decodeURIComponent tolerante. */
+export function parseCookies(req) {
+  const header = req && req.headers ? req.headers.cookie : '';
+  const cookies = {};
+  if (typeof header !== 'string' || !header) return cookies;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx < 0) continue;
+    const name = part.slice(0, idx).trim();
+    const raw = part.slice(idx + 1).trim();
+    if (!name) continue;
+    try {
+      cookies[name] = decodeURIComponent(raw);
+    } catch {
+      cookies[name] = raw;
+    }
+  }
+  return cookies;
+}
+
+/** Construye la cabecera Set-Cookie de sesión. Borrado: buildSetCookie('', { maxAge: 0, secure }). */
+export function buildSetCookie(value, { maxAge, secure = false }) {
+  const parts = [`${COOKIE_NAME}=${value}`, 'HttpOnly', 'SameSite=Lax', 'Path=/', `Max-Age=${Math.max(0, Math.floor(maxAge))}`];
+  if (secure) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function firstHeaderValue(value) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === 'string' ? raw.split(',')[0].trim() : '';
+}
+
+/** true si la cookie debe llevar Secure: secureCookies, o X-Forwarded-Proto: https con proxy de confianza. */
+export function isHttpsRequest(req, { trustProxy = true, secureCookies = false } = {}) {
+  if (secureCookies) return true;
+  if (!trustProxy) return false;
+  return firstHeaderValue(req.headers['x-forwarded-proto']).toLowerCase() === 'https';
+}
+
+/** IP del cliente: CF-Connecting-IP (proxy de confianza) o remoteAddress; 'unknown' si no hay ninguna. */
+export function getClientIp(req, { trustProxy = true } = {}) {
+  if (trustProxy) {
+    const forwarded = firstHeaderValue(req.headers['cf-connecting-ip']);
+    if (forwarded) return forwarded;
+  }
+  return (req.socket && req.socket.remoteAddress) || 'unknown';
 }
 
 /** Resuelve una ruta URL dentro de publicDir; devuelve null si queda fuera o no es válida. */

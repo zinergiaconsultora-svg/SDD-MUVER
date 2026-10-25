@@ -1,4 +1,4 @@
-// Tests estáticos sobre public/index.html y public/styles.css — R26, R36, R37
+// Tests estáticos sobre public/index.html y public/styles.css — R26, R36, R37, F2-R37, F2-R40, F2-R42, F2-R43
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -92,4 +92,41 @@ test('[R37] las cinco clases status-* definen un color', () => {
 
 test('[R36] botones con área táctil mínima de 44 px', () => {
   assert.match(css, /\.btn[^{]*\{[^}]*min-height:\s*44px/s);
+});
+
+// ---------- Fase 2: autenticación en index.html y styles.css ----------
+
+test('[F2-R37] index.html tiene #auth-view, #change-password-view, #session-actions y los botones Salir / Cambiar contraseña', () => {
+  assert.ok(indexHtml.includes('id="auth-view"'));
+  assert.ok(indexHtml.includes('id="change-password-view"'));
+  assert.ok(indexHtml.includes('id="session-actions"'));
+  assert.match(indexHtml, /<button[^>]*id="logout-button"[^>]*>\s*Salir\s*<\/button>/);
+  assert.match(indexHtml, /<button[^>]*id="change-password-button"[^>]*>\s*Cambiar contraseña\s*<\/button>/);
+  assert.match(indexHtml, /<section[^>]*id="list-view"[^>]*\shidden/, '#list-view arranca oculto');
+  assert.ok(indexHtml.includes('<script type="module" src="/app.js">'));
+});
+
+test('[F2-R40] el pie de index.html ya no habla de "sin autenticación"', () => {
+  assert.ok(!indexHtml.includes('sin autenticación'));
+  assert.ok(indexHtml.includes('Acceso protegido por contraseña'));
+});
+
+test('[F2-R42] index.html tiene el hueco #public-url en el encabezado', () => {
+  assert.ok(indexHtml.includes('id="public-url"'));
+  const topbar = indexHtml.slice(indexHtml.indexOf('<header class="topbar">'), indexHtml.indexOf('</header>'));
+  assert.ok(topbar.includes('id="public-url"'), 'dentro del encabezado');
+  assert.match(css, /\.public-url\s*\{[^}]*word-break:\s*break-all/s);
+});
+
+test('[F2-R43] .auth-card ocupa el ancho completo con inputs al 100 %, max-width en rem y botones .btn en el encabezado', () => {
+  const base = baseCss(css);
+  assert.match(base, /\.auth-card\s*\{[^}]*width:\s*100%/s);
+  assert.match(base, /\.auth-card input\s*\{[^}]*width:\s*100%/s);
+  // Puede haber varios bloques @media (min-width: 601px): basta con que uno defina el max-width en rem.
+  assert.match(css, /@media \(min-width: 601px\)\s*\{[^@]*\.auth-card\s*\{[^}]*max-width:\s*[\d.]+rem/s);
+  assert.match(css, /\.topbar-actions\s*\{[^}]*display:\s*flex/s);
+  const logout = indexHtml.match(/<button[^>]*id="logout-button"[^>]*>/)[0];
+  const change = indexHtml.match(/<button[^>]*id="change-password-button"[^>]*>/)[0];
+  assert.match(logout, /class="btn[" ]/);
+  assert.match(change, /class="btn[" ]/);
 });

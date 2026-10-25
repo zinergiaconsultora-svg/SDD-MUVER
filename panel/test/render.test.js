@@ -1,4 +1,4 @@
-// Tests de public/render.js y public/app-config.js — R28–R35
+// Tests de public/render.js, public/app-config.js y public/api-client.js — R28–R35, F2-R37–R39, F2-R41, F2-R42
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -12,8 +12,17 @@ import {
   renderLoadError,
   buildProjectPayload,
   handleDelete,
+  resolveAuthView,
+  renderAuthForm,
+  renderAuthError,
+  validateNewPassword,
+  renderChangePasswordForm,
+  buildChangePasswordPayload,
+  handleLogout,
+  renderPublicUrl,
 } from '../public/render.js';
-import { REFRESH_INTERVAL_MS, API_BASE } from '../public/app-config.js';
+import { REFRESH_INTERVAL_MS, API_BASE, MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } from '../public/app-config.js';
+import { createApiClient } from '../public/api-client.js';
 
 const NOW = Date.parse('2026-10-25T12:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -213,4 +222,156 @@ test('[R34] renderLoadError muestra el mensaje y un botón Reintentar', () => {
 test('[R35] REFRESH_INTERVAL_MS es 60000 y API_BASE apunta a /api', () => {
   assert.equal(REFRESH_INTERVAL_MS, 60000);
   assert.equal(API_BASE, '/api');
+});
+
+// ---------- Fase 2: autenticación en la interfaz ----------
+
+test('[F2-R37] resolveAuthView → setup / login / panel', () => {
+  assert.equal(resolveAuthView({ configured: false, authenticated: false }), 'setup');
+  assert.equal(resolveAuthView({ configured: true, authenticated: false }), 'login');
+  assert.equal(resolveAuthView({ configured: true, authenticated: true }), 'panel');
+  assert.equal(resolveAuthView({}), 'setup');
+});
+
+test('[F2-R37] renderAuthForm("setup") tiene título, data-mode, password + confirm y botón "Crear contraseña"', () => {
+  const html = renderAuthForm('setup');
+  assert.ok(html.includes('id="auth-form"'));
+  assert.ok(html.includes('data-mode="setup"'));
+  assert.match(html, /<h2[^>]*>\s*Crear contraseña\s*<\/h2>/);
+  assert.match(html, /<input[^>]*type="password"[^>]*name="password"[^>]*>/);
+  assert.match(html, /<input[^>]*type="password"[^>]*name="confirm"[^>]*>/);
+  assert.ok(html.includes('autocomplete="new-password"'));
+  assert.ok(html.includes('minlength="10"'));
+  assert.ok(html.includes('id="auth-error"'));
+  assert.match(html, /<button[^>]*type="submit"[^>]*class="btn primary"[^>]*>\s*Crear contraseña\s*<\/button>/);
+  assert.ok(/contraseña única/i.test(html), 'explica que es la contraseña única del panel');
+});
+
+test('[F2-R37] renderAuthForm("login") tiene título "Iniciar sesión", solo password y botón "Entrar"', () => {
+  const html = renderAuthForm('login');
+  assert.ok(html.includes('data-mode="login"'));
+  assert.match(html, /<h2[^>]*>\s*Iniciar sesión\s*<\/h2>/);
+  assert.match(html, /<input[^>]*name="password"[^>]*>/);
+  assert.ok(!html.includes('name="confirm"'), 'sin confirmación en login');
+  assert.ok(html.includes('autocomplete="current-password"'));
+  assert.match(html, /<button[^>]*type="submit"[^>]*>\s*Entrar\s*<\/button>/);
+  assert.ok(!html.includes('Crear contraseña'));
+});
+
+test('[F2-R38][F2-R40] renderAuthError devuelve el mensaje escapado con role="alert"', () => {
+  const html = renderAuthError('Contraseña <incorrecta>');
+  assert.match(html, /<p class="form-error" role="alert">Contraseña &lt;incorrecta&gt;<\/p>/);
+  assert.ok(renderAuthError('').includes('role="alert"'));
+});
+
+test('[F2-R38] validateNewPassword: corta, distinta y válida', () => {
+  assert.equal(MIN_PASSWORD_LENGTH, 10);
+  assert.equal(MAX_PASSWORD_LENGTH, 128);
+  assert.deepEqual(validateNewPassword('corta', 'corta'), { ok: false, error: 'La contraseña debe tener al menos 10 caracteres' });
+  assert.deepEqual(validateNewPassword('contraseña-larga', 'contraseña-larga2'), { ok: false, error: 'Las contraseñas no coinciden' });
+  assert.deepEqual(validateNewPassword('contraseña-larga', 'contraseña-larga'), { ok: true });
+  assert.equal(validateNewPassword('x'.repeat(129), 'x'.repeat(129)).ok, false, 'más de 128 tampoco vale');
+  assert.equal(validateNewPassword(undefined, undefined).ok, false);
+});
+
+test('[F2-R41] renderChangePasswordForm tiene currentPassword, newPassword, confirm, "Guardar contraseña" y "Cancelar"', () => {
+  const html = renderChangePasswordForm();
+  assert.ok(html.includes('id="change-password-form"'));
+  for (const name of ['currentPassword', 'newPassword', 'confirm']) {
+    assert.match(html, new RegExp(`<input[^>]*type="password"[^>]*name="${name}"[^>]*>`), name);
+  }
+  assert.match(html, /<button[^>]*type="submit"[^>]*>\s*Guardar contraseña\s*<\/button>/);
+  assert.match(html, /<button[^>]*data-action="cancel-change"[^>]*>\s*Cancelar\s*<\/button>/);
+  assert.ok(html.includes('id="change-password-error"'));
+});
+
+test('[F2-R41] buildChangePasswordPayload omite confirm', () => {
+  assert.deepEqual(buildChangePasswordPayload({ currentPassword: 'vieja-contraseña', newPassword: 'nueva-contraseña', confirm: 'nueva-contraseña' }), {
+    currentPassword: 'vieja-contraseña',
+    newPassword: 'nueva-contraseña',
+  });
+  assert.deepEqual(buildChangePasswordPayload({}), { currentPassword: '', newPassword: '' });
+});
+
+test('[F2-R41] handleLogout llama a POST /api/auth/logout y devuelve true', async () => {
+  const calls = [];
+  const result = await handleLogout({ request: async (url, init) => { calls.push({ url, init }); return null; } });
+  assert.equal(result, true);
+  assert.deepEqual(calls, [{ url: '/api/auth/logout', init: { method: 'POST' } }]);
+});
+
+test('[F2-R42] renderPublicUrl con URL → enlace escapado; con null → cadena vacía', () => {
+  const html = renderPublicUrl('https://abc.trycloudflare.com/?a=1&b="x"');
+  assert.match(html, /<a class="public-url" href="https:\/\/abc\.trycloudflare\.com\/\?a=1&amp;b=&quot;x&quot;" target="_blank" rel="noopener">/);
+  assert.ok(html.includes('URL pública: https://abc.trycloudflare.com/?a=1&amp;b=&quot;x&quot;</a>'));
+  assert.equal(renderPublicUrl(null), '');
+  assert.equal(renderPublicUrl(''), '');
+  assert.equal(renderPublicUrl(undefined), '');
+});
+
+// ---------- public/api-client.js (F2-R39) ----------
+
+function fakeFetch(responses) {
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push({ url, init });
+    const spec = typeof responses === 'function' ? responses(url, init) : responses;
+    const body = spec.body === undefined ? '' : (typeof spec.body === 'string' ? spec.body : JSON.stringify(spec.body));
+    return { ok: spec.status >= 200 && spec.status < 300, status: spec.status, text: async () => body };
+  };
+  return { fetch, calls };
+}
+
+test('[F2-R39] createApiClient envía X-Requested-With: fetch, Accept, credentials same-origin y Content-Type solo con body', async () => {
+  const { fetch, calls } = fakeFetch({ status: 200, body: [] });
+  const request = createApiClient({ fetch });
+  const data = await request('/api/projects');
+  assert.deepEqual(data, []);
+  assert.equal(calls[0].url, '/api/projects');
+  assert.equal(calls[0].init.credentials, 'same-origin');
+  assert.equal(calls[0].init.headers['X-Requested-With'], 'fetch');
+  assert.equal(calls[0].init.headers.Accept, 'application/json');
+  assert.equal('Content-Type' in calls[0].init.headers, false);
+
+  await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'x' }) });
+  assert.equal(calls[1].init.method, 'POST');
+  assert.equal(calls[1].init.headers['Content-Type'], 'application/json');
+  assert.equal(calls[1].init.headers['X-Requested-With'], 'fetch');
+  assert.equal(calls[1].init.credentials, 'same-origin');
+});
+
+test('[F2-R39] 401 en /api/projects invoca onUnauthorized una vez y rechaza con status 401', async () => {
+  const { fetch } = fakeFetch({ status: 401, body: { error: 'No autenticado' } });
+  let unauthorized = 0;
+  const request = createApiClient({ fetch, onUnauthorized: () => { unauthorized++; } });
+  await assert.rejects(request('/api/projects'), (err) => {
+    assert.equal(err.status, 401);
+    assert.deepEqual(err.payload, { error: 'No autenticado' });
+    assert.equal(err.message, 'No autenticado');
+    return true;
+  });
+  assert.equal(unauthorized, 1);
+});
+
+test('[F2-R39] 401 en /api/auth/login NO invoca onUnauthorized pero sí rechaza con status 401', async () => {
+  const { fetch } = fakeFetch({ status: 401, body: { error: 'Contraseña incorrecta' } });
+  let unauthorized = 0;
+  const request = createApiClient({ fetch, onUnauthorized: () => { unauthorized++; } });
+  await assert.rejects(request('/api/auth/login', { method: 'POST', body: '{}' }), (err) => err.status === 401 && err.payload.error === 'Contraseña incorrecta');
+  assert.equal(unauthorized, 0);
+});
+
+test('[F2-R39] 204 → null; 4xx → error con payload; cuerpo no JSON → payload con mensaje genérico', async () => {
+  const noContent = createApiClient({ fetch: fakeFetch({ status: 204 }).fetch });
+  assert.equal(await noContent('/api/auth/logout', { method: 'POST' }), null);
+
+  const bad = createApiClient({ fetch: fakeFetch({ status: 400, body: { error: 'Falta la contraseña', field: 'password' } }).fetch });
+  await assert.rejects(bad('/api/auth/login', { method: 'POST', body: '{}' }), (err) => {
+    assert.equal(err.status, 400);
+    assert.deepEqual(err.payload, { error: 'Falta la contraseña', field: 'password' });
+    return true;
+  });
+
+  const broken = createApiClient({ fetch: fakeFetch({ status: 502, body: '<html>bad gateway</html>' }).fetch });
+  await assert.rejects(broken('/api/projects'), (err) => err.status === 502 && typeof err.payload.error === 'string');
 });

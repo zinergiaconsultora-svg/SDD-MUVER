@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "reset-password": "node scripts/reset-password.js"
   }
 }

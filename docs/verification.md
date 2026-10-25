@@ -16,7 +16,8 @@ automático. Si un requisito no se puede probar, está mal escrito.
 
 ## Cómo se ejecutan
 
-- Todo se lanza desde `init.sh` (paso 3: `(cd panel && npm test)`, que ejecuta `node --test` sobre `panel/test/*.test.js`; también puede lanzarse a mano con `cd panel && npm test`).
+- Todo se lanza desde `init.sh` (paso 3: `(cd panel && npm test)`, que ejecuta `node --test` sobre `panel/test/*.test.js`; también puede lanzarse a mano con `cd panel && npm test`). Los tests de la fase 1 llevan el prefijo `[R<n>]` y los de la fase 2 `[F2-R<n>]`; los de la fase 1 que tocan la API se autentican con la cookie de sesión del `before()` (`F2-R16`).
+- Los requisitos **[MANUAL — Windows]** y **[MANUAL — Internet]** de la fase 2 no pueden ejecutarse en el entorno de tests (Linux, sin `cloudflared`): el humano los comprueba siguiendo `docs/acceso-web.md` y anota aquí el resultado.
 - El reviewer ejecuta `init.sh` y exige que esté **todo en verde** antes de aprobar.
 
 ## Mapa de trazabilidad (lo rellena el implementer)
@@ -62,6 +63,63 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R35 | `panel/test/render.test.js` → "[R35] REFRESH_INTERVAL_MS es 60000…"; manual: la hora del encabezado cambia |
 | R36 | `panel/test/styles.test.js` → "[R36] .projects es de una columna…", "[R36] ningún width/min-width en píxeles supera 360", "[R36] botones con área táctil mínima de 44 px"; manual: emulador 360×640 sin scroll horizontal |
 | R37 | `panel/test/styles.test.js` → "[R37] tema oscuro redefine --bg y --fg…" y "[R37] las cinco clases status-* definen un color"; manual: cambiar el tema del sistema |
+
+## Mapa de trazabilidad — Feature 2: `puesto-de-mando-acceso-web` (prefijo `[F2-R<n>]`)
+
+> Ficheros nuevos: `panel/test/auth.test.js`, `rate-limit.test.js`, `auth-api.test.js`, `config.test.js`, `tunnel.test.js`, `deploy.test.js`; ampliados: `render.test.js`, `styles.test.js`, `api.test.js`, `helpers.js`.
+
+| Requisito | Test que lo cubre |
+|-----------|-------------------|
+| R1 | `panel/test/auth-api.test.js` → "[F2-R1] GET /api/auth/status sin auth.json → 200 { configured: false, authenticated: false, publicUrl: null }" |
+| R2 | `panel/test/auth-api.test.js` → "[F2-R2] POST /api/auth/setup crea auth.json (§3.1)…"; `panel/test/auth.test.js` → "[F2-R2] createAuthRecord devuelve el registro del contrato §3.1…" |
+| R3 | `panel/test/auth-api.test.js` → "[F2-R3] setup con password ausente, no cadena, 9 o 129 caracteres → 400 y sin auth.json"; `panel/test/auth.test.js` → "[F2-R3][F2-R29] validatePassword…" |
+| R4 | `panel/test/auth-api.test.js` → "[F2-R4] setup repetido → 409 y auth.json byte a byte igual" |
+| R5 | `panel/test/auth-api.test.js` → "[F2-R5] auth.json roto → 500 en status/login/setup, fichero intacto y GET / sigue en 200"; `panel/test/auth.test.js` → "[F2-R5][F2-R6] loadAuth: …" |
+| R6 | `panel/test/auth-api.test.js` → "[F2-R6] dataDir inexistente: el setup crea la carpeta y auth.json sin .tmp residual"; `panel/test/auth.test.js` → "[F2-R5][F2-R6] loadAuth … saveAuth atómico" |
+| R7 | `panel/test/deploy.test.js` → "[F2-R7] .gitignore raíz contiene la línea panel/data/…" y "[F2-R7] git check-ignore considera ignorado panel/data/auth.json" |
+| R8 | `panel/test/auth-api.test.js` → "[F2-R8] login correcto → 200, cookie con HttpOnly/SameSite=Lax/Path=//Max-Age=2592000 y sesión con expiresAt = now + 30 d"; `panel/test/auth.test.js` → "[F2-R8][F2-R18][F2-R19] createSessionStore…"; `panel/test/rate-limit.test.js` → "[F2-R8][F2-R20] parseCookies y buildSetCookie…" |
+| R9 | `panel/test/auth-api.test.js` → "[F2-R9] contraseña incorrecta → 401 "Contraseña incorrecta", sin Set-Cookie ni sesión nueva" |
+| R10 | `panel/test/auth-api.test.js` → "[F2-R10] login sin password o con password no cadena → 400 siempre (nunca 429)…" |
+| R11 | `panel/test/auth-api.test.js` → "[F2-R11] login sin auth.json → 409 "Contraseña no configurada"" |
+| R12 | `panel/test/auth.test.js` → "[F2-R12] hashPassword usa scrypt N=16384 r=8 p=1 keylen=64 con salt nuevo; verifyPassword acepta la correcta y rechaza la alterada" |
+| R13 | `panel/test/auth.test.js` → "[F2-R13] verifyPassword con hash de longitud distinta o hex inválido devuelve false sin lanzar", "[F2-R13] signId/verifyToken…" y "[F2-R13] lib/auth.js y lib/sessions.js usan timingSafeEqual" |
+| R14 | `panel/test/auth-api.test.js` → "[F2-R14] atributo Secure solo con X-Forwarded-Proto: https (proxy de confianza) o secureCookies: true"; `panel/test/rate-limit.test.js` → "[F2-R14][F2-R15] isHttpsRequest…"; **MANUAL — pendiente del humano** (cookie `Secure` vista en DevTools desde la URL pública, T31) |
+| R15 | `panel/test/auth-api.test.js` → "[F2-R15] trustProxy: false ignora X-Forwarded-Proto y CF-Connecting-IP"; `panel/test/rate-limit.test.js` → "[F2-R14][F2-R15] isHttpsRequest…" y "[F2-R25] getClientIp…" |
+| R16 | `panel/test/auth-api.test.js` → "[F2-R16] petición autenticada ejecuta la ruta como en la fase 1 (GET 200, POST 201)"; `panel/test/api.test.js` (los 15 tests de la fase 1, autenticados en `before()`) |
+| R17 | `panel/test/auth-api.test.js` → "[F2-R17] sin cookie / firma incorrecta / id no listado / caducada → 401 "No autenticado" sin tocar projects.json" |
+| R18 | `panel/test/auth-api.test.js` → "[F2-R18] renovación deslizante: a los 10 s no hay Set-Cookie ni cambio; a los 20 días se renueva (expiresAt = t0 + 50 d)"; `panel/test/auth.test.js` → "[F2-R8][F2-R18][F2-R19] createSessionStore…" |
+| R19 | `panel/test/auth-api.test.js` → "[F2-R19] sesión caducada (t0 + 31 d) → 401 y la entrada desaparece de sessions.json"; `panel/test/auth.test.js` → "[F2-R8][F2-R18][F2-R19] createSessionStore…" |
+| R20 | `panel/test/auth-api.test.js` → "[F2-R20] logout → 204 con cookie de borrado, sesión eliminada, cookie antigua → 401; logout sin cookie → 204"; `panel/test/auth.test.js` → "[F2-R20][F2-R27] destroy…"; `panel/test/rate-limit.test.js` → "[F2-R8][F2-R20] parseCookies y buildSetCookie…" |
+| R21 | `panel/test/auth-api.test.js` → "[F2-R21] reinicio con el mismo dataDir conserva la sesión" y "[F2-R21] sessions.json roto → arranca con cero sesiones…"; `panel/test/auth.test.js` → "[F2-R21] createSessionStore carga desde fichero existente; roto → cero sesiones y console.error" |
+| R22 | `panel/test/auth-api.test.js` → "[F2-R22] status con cookie válida / sin cookie / alterada → authenticated true/false/false, configured true, sin renovar" |
+| R23 | `panel/test/auth-api.test.js` → "[F2-R23] 5 fallos → el login correcto responde 429 con cuerpo, Retry-After y sin sesión"; `panel/test/rate-limit.test.js` → "[F2-R23] createRateLimiter: 4 fallos no bloquean; el quinto bloquea…" y "[F2-R23] fallos separados más de 15 minutos no se acumulan" |
+| R24 | `panel/test/auth-api.test.js` → "[F2-R24] a los 15 min + 1 s del bloqueo el login correcto responde 200; 4 fallos + éxito + 4 fallos nunca dan 429"; `panel/test/rate-limit.test.js` → los dos tests "[F2-R24] …" |
+| R25 | `panel/test/auth-api.test.js` → "[F2-R25] con proxy de confianza cada CF-Connecting-IP tiene su propio contador"; `panel/test/rate-limit.test.js` → "[F2-R25] getClientIp usa CF-Connecting-IP solo con trustProxy…" |
+| R26 | `panel/test/auth-api.test.js` → "[F2-R26] mutaciones sin X-Requested-With → 403 antes de la sesión, sin efectos ni fallo contado" |
+| R27 | `panel/test/auth-api.test.js` → "[F2-R27] change-password → 204, revoca las otras sesiones, conserva la actual y el sessionSecret, cambia salt y hash"; `panel/test/auth.test.js` → "[F2-R20][F2-R27] destroy elimina una sesión y destroyOthers conserva solo la indicada" |
+| R28 | `panel/test/auth-api.test.js` → "[F2-R28] currentPassword incorrecta → 403 con field, auth.json intacto y cuenta para el 429" |
+| R29 | `panel/test/auth-api.test.js` → "[F2-R29] newPassword ausente, no cadena o fuera de 10–128 → 400 con field newPassword sin modificar auth.json"; `panel/test/auth.test.js` → "[F2-R3][F2-R29] validatePassword…" |
+| R30 | `panel/test/config.test.js` → "[F2-R30] reset-password.js borra auth.json y sessions.json y lo anuncia (código 0)", "[F2-R30] reset-password.js sin ficheros imprime "No había contraseña configurada."…" y "[F2-R30] package.json declara el script reset-password" |
+| R31 | `panel/test/config.test.js` → "[F2-R31] readConfig con env vacío…", "[F2-R31] readConfig con las cuatro variables definidas…" y "[F2-R31] readConfig con PORT inválido…" |
+| R32 | `panel/test/config.test.js` → "[F2-R32] buildStartupLines con contraseña configurada y URL pública" y "[F2-R32] buildStartupLines sin contraseña y sin URL pública"; `npm start`: comprobado a mano por el implementer en Linux (imprime directorio de datos y estado de la contraseña); **MANUAL — pendiente del humano** en Windows |
+| R33 | `panel/test/auth-api.test.js` → "[F2-R33] los ocho estáticos son públicos sin sesión y el servidor escucha en 0.0.0.0" |
+| R34 | `panel/test/tunnel.test.js` → "[F2-R34] parsePublicUrl…", "[F2-R34] readPublicUrl…" y "[F2-R34] GET /api/auth/status devuelve publicUrl según public-url.txt…" |
+| R35 | `panel/test/tunnel.test.js` → "[F2-R35] extractTunnelUrl con la línea real de cloudflared, una sin URL y una con http://localhost" |
+| R36 | `panel/test/tunnel.test.js` → "[F2-R36] runTunnel escribe public-url.txt al ver la URL, anexa a cloudflared.log, vacía el fichero en exit y resuelve con el código", "[F2-R36] runTunnel con exit code 3 resuelve 3; con evento error… resuelve 1" y "[F2-R36] scripts/run-tunnel.js existe y usa CLOUDFLARED_BIN, readConfig y runTunnel" |
+| R37 | `panel/test/render.test.js` → "[F2-R37] resolveAuthView → setup / login / panel", "[F2-R37] renderAuthForm("setup")…", "[F2-R37] renderAuthForm("login")…"; `panel/test/styles.test.js` → "[F2-R37] index.html tiene #auth-view, #change-password-view, #session-actions y los botones Salir / Cambiar contraseña"; flujo completo: **MANUAL — pendiente del humano** |
+| R38 | `panel/test/render.test.js` → "[F2-R38] validateNewPassword: corta, distinta y válida" y "[F2-R38][F2-R40] renderAuthError devuelve el mensaje escapado con role="alert"" |
+| R39 | `panel/test/render.test.js` → los cuatro tests "[F2-R39] createApiClient / 401 …" |
+| R40 | `panel/test/render.test.js` → "[F2-R38][F2-R40] renderAuthError…"; `panel/test/styles.test.js` → "[F2-R40] el pie de index.html ya no habla de "sin autenticación""; flujo con contraseña correcta/incorrecta: **MANUAL — pendiente del humano** |
+| R41 | `panel/test/render.test.js` → "[F2-R41] renderChangePasswordForm…", "[F2-R41] buildChangePasswordPayload omite confirm" y "[F2-R41] handleLogout llama a POST /api/auth/logout y devuelve true"; flujo: **MANUAL — pendiente del humano** |
+| R42 | `panel/test/render.test.js` → "[F2-R42] renderPublicUrl con URL → enlace escapado; con null → cadena vacía"; `panel/test/styles.test.js` → "[F2-R42] index.html tiene el hueco #public-url en el encabezado"; desde el móvil en la LAN: **MANUAL — pendiente del humano** |
+| R43 | `panel/test/styles.test.js` → "[F2-R43] .auth-card ocupa el ancho completo con inputs al 100 %, max-width en rem y botones .btn en el encabezado" (+ "[R36] ningún width/min-width en píxeles supera 360" y "[R36] botones con área táctil mínima de 44 px" siguen en verde); 360×640: **MANUAL — pendiente del humano** |
+| R44 | `panel/test/deploy.test.js` → "[F2-R44] cloudflared-config.example.yml tiene tunnel, credentials-file, ingress con hostname → http://localhost:4310 y http_status:404" |
+| R45 | `panel/test/deploy.test.js` → "[F2-R45] docs/acceso-web.md tiene la estructura exigida y la opción avanzada al final" |
+| R46 | `panel/test/deploy.test.js` → "[F2-R46] install-service.ps1 registra dos tareas S4U…" y "[F2-R46] uninstall-service.ps1 elimina las dos tareas con Unregister-ScheduledTask" |
+| R47 | **MANUAL — Windows — pendiente del humano** (T30): `install-service.ps1` como administrador, reiniciar sin iniciar sesión, `http://localhost:4310` responde, `Get-ScheduledTask -TaskName PuestoDeMandoMUVER` en `Ready`/`Running`, `panel\data\panel.log` con las líneas de arranque. Resultado: _(anotar fecha y resultado)_ |
+| R48 | **MANUAL — Windows — pendiente del humano** (T30): `uninstall-service.ps1`, `Get-ScheduledTask` ya no lista las tareas, tras reiniciar nada escucha en 4310. Resultado: _(anotar)_ |
+| R49 | **MANUAL — Windows — pendiente del humano** (T30): tras reiniciar, `panel\data\public-url.txt` con `https://….trycloudflare.com` en menos de 60 s y la misma URL en el encabezado del panel desde el móvil en la LAN. Resultado: _(anotar)_ |
+| R50 | **MANUAL — Internet — pendiente del humano** (T31): URL pública desde el móvil con datos → login, listado; cookie con `Secure` en DevTools de escritorio; `http://<ip-lan>:4310` sigue funcionando con su propia sesión. Resultado: _(anotar)_ |
 
 ## Qué NO se considera verificado
 

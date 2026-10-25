@@ -77,22 +77,52 @@ export async function writeRegistry(file, projects) {
   return file;
 }
 
-/** Arranca la app en puerto 0 y devuelve baseUrl, server y close(). */
+/**
+ * Arranca la app en puerto 0. Si no recibe `dataDir` crea uno temporal; si recibe `password`
+ * escribe `auth.json` con esa contraseña antes de arrancar. Acepta `now`, `trustProxy`, `secureCookies`.
+ * Devuelve { server, baseUrl, dataDir, close, login(password?) → cabecera Cookie }.
+ */
 export async function startApp(options = {}) {
   const { createApp } = await import('../lib/app.js');
-  const server = createApp({ publicDir: PUBLIC_DIR, ...options });
+  const { password, dataDir: givenDataDir, ...rest } = options;
+  const dataDir = givenDataDir || (await makeTempDir('muver-data-'));
+  if (password !== undefined) {
+    const { createAuthRecord, saveAuth } = await import('../lib/auth.js');
+    await saveAuth(path.join(dataDir, 'auth.json'), await createAuthRecord(password));
+  }
+  const server = createApp({ publicDir: PUBLIC_DIR, dataDir, ...rest });
   await new Promise((resolve) => server.listen(0, '0.0.0.0', resolve));
   const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
   return {
     server,
-    baseUrl: `http://127.0.0.1:${port}`,
+    baseUrl,
+    dataDir,
     close: () => new Promise((resolve) => server.close(resolve)),
+    async login(pwd = password, init = {}) {
+      const r = await request(baseUrl, '/api/auth/login', { method: 'POST', body: JSON.stringify({ password: pwd }), ...init });
+      if (r.status !== 200 || !r.setCookie) throw new Error(`login falló: ${r.status} ${r.text}`);
+      return cookieHeaderFromSetCookie(r.setCookie);
+    },
   };
 }
 
-/** Pequeño wrapper sobre fetch que devuelve status, headers y cuerpo (texto y JSON si aplica). */
+/** Convierte un valor de Set-Cookie en el valor que iría en la cabecera Cookie ("nombre=valor"). */
+export function cookieHeaderFromSetCookie(setCookie) {
+  return String(setCookie).split(';')[0].trim();
+}
+
+/**
+ * Wrapper sobre fetch que devuelve status, headers, cuerpo (texto y JSON) y `setCookie`.
+ * Añade `X-Requested-With: fetch` a POST/DELETE salvo `init.csrf === false`; `init.cookie` → cabecera Cookie.
+ */
 export async function request(baseUrl, urlPath, init = {}) {
-  const res = await fetch(baseUrl + urlPath, init);
+  const { csrf, cookie, headers: givenHeaders, ...rest } = init;
+  const headers = { ...(givenHeaders || {}) };
+  const method = String(rest.method || 'GET').toUpperCase();
+  if ((method === 'POST' || method === 'DELETE') && csrf !== false) headers['X-Requested-With'] = 'fetch';
+  if (cookie) headers.Cookie = cookie;
+  const res = await fetch(baseUrl + urlPath, { ...rest, headers, redirect: 'manual' });
   const text = await res.text();
   let json = null;
   try {
@@ -100,7 +130,31 @@ export async function request(baseUrl, urlPath, init = {}) {
   } catch {
     json = null;
   }
-  return { status: res.status, headers: res.headers, text, json };
+  const setCookie = res.headers.get('set-cookie');
+  return { status: res.status, headers: res.headers, text, json, setCookie: setCookie || null };
+}
+
+/** Reloj controlable para el `now` inyectado. */
+export function makeClock(start = Date.now()) {
+  let current = start;
+  return {
+    now: () => current,
+    advance(ms) {
+      current += ms;
+      return current;
+    },
+    set(value) {
+      current = value;
+    },
+  };
+}
+
+/** Parsea una cabecera Set-Cookie: { name, value, attributes: Set<string en minúsculas> }. */
+export function parseSetCookie(header) {
+  const parts = String(header).split(';').map((p) => p.trim()).filter(Boolean);
+  const [name, ...valueParts] = parts[0].split('=');
+  const attributes = new Set(parts.slice(1).map((a) => a.toLowerCase()));
+  return { name, value: valueParts.join('='), attributes };
 }
 
 /** Elimina un directorio temporal sin fallar si ya no existe. */

@@ -16,11 +16,19 @@
     <div class="topbar-inner">
       <h1>Puesto de Mando MUVER</h1>
       <p class="last-updated">Última actualización: <time id="last-updated">—</time></p>
+      <div id="public-url" class="public-url-slot"></div>
+      <nav class="topbar-actions" id="session-actions" hidden aria-label="Sesión">
+        <button type="button" class="btn" id="change-password-button">Cambiar contraseña</button>
+        <button type="button" class="btn" id="logout-button">Salir</button>
+      </nav>
     </div>
   </header>
 
   <main class="container">
-    <section id="list-view" aria-labelledby="projects-title">
+    <section id="auth-view" class="auth-card" hidden aria-live="polite"></section>
+    <section id="change-password-view" class="auth-card" hidden aria-live="polite"></section>
+
+    <section id="list-view" aria-labelledby="projects-title" hidden>
       <div class="section-header">
         <h2 id="projects-title">Proyectos</h2>
         <button type="button" class="btn" id="refresh-button">Actualizar</button>
@@ -64,7 +72,7 @@
   </main>
 
   <footer class="footer">
-    <p>Panel local sin autenticación: úsalo solo en redes de confianza. Se actualiza automáticamente cada minuto.</p>
+    <p>Acceso protegido por contraseña. Se actualiza automáticamente cada minuto.</p>
   </footer>
 
   <script type="module" src="/app.js"></script>

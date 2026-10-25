@@ -140,6 +140,35 @@ code {
   opacity: 0.9;
 }
 
+.topbar-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-basis: 100%;
+}
+
+.topbar-actions .btn {
+  background: transparent;
+  color: var(--accent-fg);
+  border-color: color-mix(in srgb, var(--accent-fg) 50%, transparent);
+}
+
+.public-url-slot {
+  flex-basis: 100%;
+  font-size: 0.9rem;
+  min-width: 0;
+}
+
+.public-url-slot:empty {
+  display: none;
+}
+
+.public-url {
+  word-break: break-all;
+  color: var(--accent-fg);
+  text-decoration: underline;
+}
+
 .container {
   padding-top: 16px;
   padding-bottom: 32px;
@@ -475,6 +504,69 @@ code {
   .form-error-slot,
   .form-actions {
     grid-column: 1 / -1;
+  }
+}
+
+/* ---------- Autenticación (login, creación y cambio de contraseña) ---------- */
+
+.auth-card {
+  width: 100%;
+  max-width: 100%;
+  margin: 16px auto;
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.auth-card[hidden] {
+  display: none;
+}
+
+.auth-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-card input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.auth-card input:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.auth-card .form-actions {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.form-status {
+  background: color-mix(in srgb, var(--status-ok) 14%, var(--card));
+  border: 1px solid var(--status-ok);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+@media (min-width: 601px) {
+  .auth-card {
+    max-width: 28rem;
+  }
+
+  .topbar-actions,
+  .public-url-slot {
+    flex-basis: auto;
   }
 }
 

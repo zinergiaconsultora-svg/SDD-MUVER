@@ -215,3 +215,106 @@ export async function handleDelete(id, { confirm, request }) {
   await request('/api/projects/' + encodeURIComponent(id), { method: 'DELETE' });
   return true;
 }
+
+// ---------- Fase 2: autenticación (F2-R37, F2-R38, F2-R41, F2-R42) ----------
+
+const AUTH_MIN_LENGTH = 10;
+const AUTH_MAX_LENGTH = 128;
+
+/** Qué vista toca según GET /api/auth/status: 'setup' | 'login' | 'panel'. */
+export function resolveAuthView(status) {
+  const s = status || {};
+  if (!s.configured) return 'setup';
+  if (!s.authenticated) return 'login';
+  return 'panel';
+}
+
+/** Formulario de creación de contraseña (setup) o de login. */
+export function renderAuthForm(mode) {
+  const isSetup = mode === 'setup';
+  const title = isSetup ? 'Crear contraseña' : 'Iniciar sesión';
+  const intro = isSetup
+    ? '<p class="muted">Es la contraseña única del panel: la pedirá cada vez que entres desde el móvil o el PC. Guárdala en un lugar seguro.</p>'
+    : '<p class="muted">Introduce la contraseña del panel para ver tus proyectos.</p>';
+  const confirm = isSetup
+    ? `<div class="field">
+        <label for="auth-confirm">Repite la contraseña</label>
+        <input id="auth-confirm" type="password" name="confirm" autocomplete="new-password" minlength="${AUTH_MIN_LENGTH}" maxlength="${AUTH_MAX_LENGTH}" required>
+      </div>`
+    : '';
+  return `<form id="auth-form" data-mode="${isSetup ? 'setup' : 'login'}" novalidate>
+    <h2>${title}</h2>
+    ${intro}
+    <div class="field">
+      <label for="auth-password">Contraseña${isSetup ? ` (de ${AUTH_MIN_LENGTH} a ${AUTH_MAX_LENGTH} caracteres)` : ''}</label>
+      <input id="auth-password" type="password" name="password" autocomplete="${isSetup ? 'new-password' : 'current-password'}" minlength="${AUTH_MIN_LENGTH}" maxlength="${AUTH_MAX_LENGTH}" required autofocus>
+    </div>
+    ${confirm}
+    <div id="auth-error" class="form-error-slot"></div>
+    <div class="form-actions">
+      <button type="submit" class="btn primary" id="auth-submit">${isSetup ? 'Crear contraseña' : 'Entrar'}</button>
+    </div>
+  </form>`;
+}
+
+/** Error de autenticación con role="alert" (mismos estilos que renderFormError). */
+export function renderAuthError(message) {
+  return `<p class="form-error" role="alert">${escapeHtml(message)}</p>`;
+}
+
+/** Validación local antes de enviar una contraseña nueva (setup y cambio). */
+export function validateNewPassword(password, confirm) {
+  const value = typeof password === 'string' ? password : '';
+  const length = [...value].length;
+  if (length < AUTH_MIN_LENGTH) return { ok: false, error: 'La contraseña debe tener al menos 10 caracteres' };
+  if (length > AUTH_MAX_LENGTH) return { ok: false, error: 'La contraseña debe tener entre 10 y 128 caracteres' };
+  if (value !== confirm) return { ok: false, error: 'Las contraseñas no coinciden' };
+  return { ok: true };
+}
+
+/** Formulario de cambio de contraseña. */
+export function renderChangePasswordForm() {
+  return `<form id="change-password-form" novalidate>
+    <h2>Cambiar contraseña</h2>
+    <p class="muted">Al cambiarla se cierran las demás sesiones abiertas (la de este navegador se mantiene).</p>
+    <div class="field">
+      <label for="change-current">Contraseña actual</label>
+      <input id="change-current" type="password" name="currentPassword" autocomplete="current-password" required>
+    </div>
+    <div class="field">
+      <label for="change-new">Nueva contraseña (de ${AUTH_MIN_LENGTH} a ${AUTH_MAX_LENGTH} caracteres)</label>
+      <input id="change-new" type="password" name="newPassword" autocomplete="new-password" minlength="${AUTH_MIN_LENGTH}" maxlength="${AUTH_MAX_LENGTH}" required>
+    </div>
+    <div class="field">
+      <label for="change-confirm">Repite la nueva contraseña</label>
+      <input id="change-confirm" type="password" name="confirm" autocomplete="new-password" minlength="${AUTH_MIN_LENGTH}" maxlength="${AUTH_MAX_LENGTH}" required>
+    </div>
+    <div id="change-password-error" class="form-error-slot"></div>
+    <div class="form-actions">
+      <button type="button" class="btn" data-action="cancel-change">Cancelar</button>
+      <button type="submit" class="btn primary" id="change-password-submit">Guardar contraseña</button>
+    </div>
+  </form>`;
+}
+
+/** Cuerpo de POST /api/auth/change-password (omite confirm). */
+export function buildChangePasswordPayload(formValues) {
+  const v = formValues || {};
+  return {
+    currentPassword: typeof v.currentPassword === 'string' ? v.currentPassword : '',
+    newPassword: typeof v.newPassword === 'string' ? v.newPassword : '',
+  };
+}
+
+/** Cierra la sesión en el servidor. Devuelve true cuando la petición se ha enviado. */
+export async function handleLogout({ request }) {
+  await request('/api/auth/logout', { method: 'POST' });
+  return true;
+}
+
+/** Enlace a la URL pública del túnel para el encabezado; '' si no hay URL. */
+export function renderPublicUrl(url) {
+  if (typeof url !== 'string' || !url) return '';
+  const safe = escapeHtml(url);
+  return `<a class="public-url" href="${safe}" target="_blank" rel="noopener">URL pública: ${safe}</a>`;
+}

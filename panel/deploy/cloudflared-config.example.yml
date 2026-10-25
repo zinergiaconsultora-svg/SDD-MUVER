@@ -1,0 +1,21 @@
+# Configuración de ejemplo de Cloudflare Tunnel para la OPCIÓN AVANZADA (túnel con nombre y dominio propio).
+# Camino principal (sin dominio): no necesitas este fichero; usa `cloudflared tunnel --url http://localhost:4310`
+# o la tarea programada PuestoDeMandoMUVER-Tunnel (ver docs/acceso-web.md).
+#
+# Cómo usarlo:
+#   1. cloudflared tunnel login                      → autoriza tu cuenta y tu dominio en Cloudflare
+#   2. cloudflared tunnel create muver               → crea el túnel y muestra su <TUNNEL-ID>
+#   3. cloudflared tunnel route dns muver panel.tudominio.com
+#   4. Copia este fichero a %USERPROFILE%\.cloudflared\config.yml y sustituye <TUNNEL-ID>, <USUARIO> y el hostname
+#   5. cloudflared service install                    → arranca con Windows como servicio
+#   6. Escribe https://panel.tudominio.com en panel\data\public-url.txt para que el panel la muestre
+
+tunnel: <TUNNEL-ID>
+credentials-file: C:\Users\<USUARIO>\.cloudflared\<TUNNEL-ID>.json
+
+ingress:
+  # El dominio público que elijas apunta al panel local (puerto 4310 por defecto; cámbialo si usas otro PORT).
+  - hostname: panel.tudominio.com
+    service: http://localhost:4310
+  # Regla final obligatoria: cualquier otra petición recibe 404.
+  - service: http_status:404

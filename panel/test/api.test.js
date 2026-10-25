@@ -1,4 +1,4 @@
-// Tests de integración HTTP de lib/app.js — R1–R4, R17–R26
+// Tests de integración HTTP de lib/app.js — R1–R4, R17–R26 (fase 2: autenticados con cookie, F2-R16)
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -23,6 +23,14 @@ let withoutHarness;
 let registryFile;
 let app;
 let baseUrl;
+let cookie;
+
+const PASSWORD = 'contraseña-de-la-fase-2';
+
+/** request() autenticado: añade la cookie de sesión del before() (F2-R16). */
+function authed(urlPath, init = {}) {
+  return request(baseUrl, urlPath, { cookie, ...init });
+}
 
 before(async () => {
   base = await makeTempDir('muver-api-');
@@ -37,12 +45,14 @@ before(async () => {
     { id: 'con-arnes', name: 'Con arnés', path: withHarness, appUrl: 'http://localhost:3000', repoUrl: 'https://example.test/repo', tags: ['web'] },
     { id: 'sin-arnes', name: 'Sin arnés', path: withoutHarness, appUrl: '', repoUrl: '', tags: [] },
   ]);
-  app = await startApp({ projectsFile: registryFile });
+  app = await startApp({ projectsFile: registryFile, password: PASSWORD });
   baseUrl = app.baseUrl;
+  cookie = await app.login();
 });
 
 after(async () => {
   if (app) await app.close();
+  await removeDir(app.dataDir);
   await removeDir(base);
   await removeDir(withHarness);
   await removeDir(withoutHarness);
@@ -53,7 +63,7 @@ const SUMMARY_KEYS = ['id', 'name', 'appUrl', 'repoUrl', 'tags', 'exists', 'stat
 // ---------- A. Lectura ----------
 
 test('[R1] GET /api/projects devuelve el listado en orden con los campos del contrato', async () => {
-  const r = await request(baseUrl, '/api/projects');
+  const r = await authed('/api/projects');
   assert.equal(r.status, 200);
   assert.match(r.headers.get('content-type'), /^application\/json/);
   assert.ok(Array.isArray(r.json));
@@ -70,7 +80,7 @@ test('[R1] GET /api/projects devuelve el listado en orden con los campos del con
 });
 
 test('[R2] GET /api/projects/:id devuelve detalle con features, progreso, commits y ficheros sucios', { skip: skipNoGit }, async () => {
-  const r = await request(baseUrl, '/api/projects/con-arnes');
+  const r = await authed('/api/projects/con-arnes');
   assert.equal(r.status, 200);
   assert.equal(r.json.sdd.features.length, 2);
   assert.equal(r.json.progress.text, CURRENT_MD);
@@ -86,19 +96,19 @@ test('[R2] GET /api/projects/:id devuelve detalle con features, progreso, commit
 });
 
 test('[R3] GET /api/projects/:id inexistente → 404', async () => {
-  const r = await request(baseUrl, '/api/projects/no-existe');
+  const r = await authed('/api/projects/no-existe');
   assert.equal(r.status, 404);
   assert.deepEqual(r.json, { error: 'Proyecto no encontrado' });
 });
 
 test('[R4] rutas /api desconocidas → 404 "Ruta no encontrada" y el servidor sigue vivo', async () => {
-  const r1 = await request(baseUrl, '/api/nada');
+  const r1 = await authed('/api/nada');
   assert.equal(r1.status, 404);
   assert.deepEqual(r1.json, { error: 'Ruta no encontrada' });
-  const r2 = await request(baseUrl, '/api/projects', { method: 'PUT' });
+  const r2 = await authed('/api/projects', { method: 'PUT' });
   assert.equal(r2.status, 404);
   assert.deepEqual(r2.json, { error: 'Ruta no encontrada' });
-  const r3 = await request(baseUrl, '/api/projects');
+  const r3 = await authed('/api/projects');
   assert.equal(r3.status, 200);
 });
 
@@ -106,7 +116,7 @@ test('[R4] rutas /api desconocidas → 404 "Ruta no encontrada" y el servidor si
 
 test('[R17] POST /api/projects válido → 201, id derivado, persistencia y aparece en el listado', async () => {
   const dir = await makeTempDir('muver-nuevo-');
-  const r = await request(baseUrl, '/api/projects', {
+  const r = await authed('/api/projects', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name: 'Mi Proyecto', path: dir, appUrl: 'http://localhost:5173', tags: ['web'] }),
@@ -118,7 +128,7 @@ test('[R17] POST /api/projects válido → 201, id derivado, persistencia y apar
   assert.ok(saved.projects.some((p) => p.id === 'mi-proyecto'));
   assert.equal(saved.projects.at(-1).id, 'mi-proyecto', 'se añade al final');
 
-  const list = await request(baseUrl, '/api/projects');
+  const list = await authed('/api/projects');
   assert.deepEqual(list.json.map((p) => p.id), ['con-arnes', 'sin-arnes', 'mi-proyecto']);
   await removeDir(dir);
 });
@@ -133,7 +143,7 @@ test('[R18] POST con path inexistente / fichero / relativa → 400 field path si
     { name: 'C', path: 'relativa/ruta' },
   ];
   for (const body of bodies) {
-    const r = await request(baseUrl, '/api/projects', { method: 'POST', body: JSON.stringify(body) });
+    const r = await authed('/api/projects', { method: 'POST', body: JSON.stringify(body) });
     assert.equal(r.status, 400, `cuerpo ${JSON.stringify(body)}`);
     assert.equal(r.json.field, 'path');
     assert.equal(typeof r.json.error, 'string');
@@ -151,7 +161,7 @@ test('[R19] POST sin name / sin path / id inválido / id duplicado → 400 con f
     [{ name: 'Dup', path: withoutHarness, id: 'sin-arnes' }, 'id'],
   ];
   for (const [body, field] of cases) {
-    const r = await request(baseUrl, '/api/projects', { method: 'POST', body: JSON.stringify(body) });
+    const r = await authed('/api/projects', { method: 'POST', body: JSON.stringify(body) });
     assert.equal(r.status, 400, `cuerpo ${JSON.stringify(body)}`);
     assert.equal(r.json.field, field);
     assert.equal(typeof r.json.error, 'string');
@@ -159,16 +169,16 @@ test('[R19] POST sin name / sin path / id inválido / id duplicado → 400 con f
 });
 
 test('[R20] POST con JSON roto → 400 "Cuerpo JSON inválido" y servidor vivo; cuerpo > 64 KB también', async () => {
-  const r = await request(baseUrl, '/api/projects', { method: 'POST', body: '{ roto' });
+  const r = await authed('/api/projects', { method: 'POST', body: '{ roto' });
   assert.equal(r.status, 400);
   assert.deepEqual(r.json, { error: 'Cuerpo JSON inválido' });
-  const big = await request(baseUrl, '/api/projects', {
+  const big = await authed('/api/projects', {
     method: 'POST',
     body: JSON.stringify({ name: 'x'.repeat(70 * 1024), path: withoutHarness }),
   });
   assert.equal(big.status, 400);
   assert.deepEqual(big.json, { error: 'Cuerpo JSON inválido' });
-  const alive = await request(baseUrl, '/api/projects');
+  const alive = await authed('/api/projects');
   assert.equal(alive.status, 200);
 });
 
@@ -176,14 +186,14 @@ test('[R21] DELETE /api/projects/:id → 204, desaparece del listado y el disco 
   const dir = await makeTempDir('muver-borrar-');
   const marker = path.join(dir, 'importante.txt');
   await fs.writeFile(marker, 'no borrar');
-  const created = await request(baseUrl, '/api/projects', { method: 'POST', body: JSON.stringify({ name: 'Para borrar', path: dir }) });
+  const created = await authed('/api/projects', { method: 'POST', body: JSON.stringify({ name: 'Para borrar', path: dir }) });
   assert.equal(created.status, 201);
 
-  const r = await request(baseUrl, '/api/projects/para-borrar', { method: 'DELETE' });
+  const r = await authed('/api/projects/para-borrar', { method: 'DELETE' });
   assert.equal(r.status, 204);
   assert.equal(r.text, '');
 
-  const list = await request(baseUrl, '/api/projects');
+  const list = await authed('/api/projects');
   assert.ok(!list.json.some((p) => p.id === 'para-borrar'));
   const saved = JSON.parse(await fs.readFile(registryFile, 'utf8'));
   assert.ok(!saved.projects.some((p) => p.id === 'para-borrar'));
@@ -192,7 +202,7 @@ test('[R21] DELETE /api/projects/:id → 204, desaparece del listado y el disco 
 });
 
 test('[R22] DELETE /api/projects/:id inexistente → 404', async () => {
-  const r = await request(baseUrl, '/api/projects/no-existe', { method: 'DELETE' });
+  const r = await authed('/api/projects/no-existe', { method: 'DELETE' });
   assert.equal(r.status, 404);
   assert.deepEqual(r.json, { error: 'Proyecto no encontrado' });
 });
@@ -207,18 +217,18 @@ test('[R24] estáticos: /, /styles.css, /app.js, /manifest.webmanifest → 200 c
     ['/manifest.webmanifest', /^application\/manifest\+json/],
   ];
   for (const [urlPath, mime] of cases) {
-    const r = await request(baseUrl, urlPath);
+    const r = await authed(urlPath);
     assert.equal(r.status, 200, urlPath);
     assert.match(r.headers.get('content-type'), mime, urlPath);
     assert.ok(r.text.length > 0);
   }
-  const index = await request(baseUrl, '/');
+  const index = await authed('/');
   assert.ok(index.text.includes('Puesto de Mando MUVER'));
 });
 
 test('[R25] estáticos inexistentes o fuera de public/ → 404 sin revelar rutas', async () => {
   for (const urlPath of ['/no-existe.html', '/../package.json', '/%2e%2e/server.js', '/..%2fpackage.json']) {
-    const r = await request(baseUrl, urlPath);
+    const r = await authed(urlPath);
     assert.equal(r.status, 404, urlPath);
     assert.ok(!r.text.includes('panel/'), urlPath);
     assert.ok(!r.text.includes('panel\\'), urlPath);
@@ -229,7 +239,7 @@ test('[R25] estáticos inexistentes o fuera de public/ → 404 sin revelar rutas
 });
 
 test('[R26] manifest con los campos exigidos e icono SVG servido desde public/', async () => {
-  const r = await request(baseUrl, '/manifest.webmanifest');
+  const r = await authed('/manifest.webmanifest');
   assert.equal(r.status, 200);
   const manifest = r.json;
   assert.equal(typeof manifest.name, 'string');
@@ -241,7 +251,7 @@ test('[R26] manifest con los campos exigidos e icono SVG servido desde public/',
   assert.ok(Array.isArray(manifest.icons) && manifest.icons.length > 0);
   const svgIcon = manifest.icons.find((i) => i.type === 'image/svg+xml');
   assert.ok(svgIcon, 'debe haber al menos un icono SVG');
-  const icon = await request(baseUrl, svgIcon.src);
+  const icon = await authed(svgIcon.src);
   assert.equal(icon.status, 200);
   assert.match(icon.headers.get('content-type'), /^image\/svg\+xml/);
 });
@@ -252,14 +262,17 @@ test('[R23] la app escucha en 0.0.0.0 con puerto 0', async () => {
   assert.equal(address.address, '0.0.0.0');
   assert.ok(address.port > 0);
   await other.close();
+  await removeDir(other.dataDir);
 });
 
 test('[R4] excepción inesperada del handler → 500 "Error interno" sin cerrar el proceso', async () => {
-  const broken = await startApp({ projectsFile: registryFile, runner: () => { throw new Error('boom síncrono'); }, now: () => { throw new Error('reloj roto'); } });
-  const r = await request(broken.baseUrl, '/api/projects');
+  // Comparte dataDir con la app principal para que la cookie del before() sea válida; la excepción se provoca tras el
+  // middleware con un projectsFile que es un directorio (loadRegistry lanza EISDIR al leerlo).
+  const broken = await startApp({ projectsFile: base, dataDir: app.dataDir });
+  const r = await request(broken.baseUrl, '/api/projects', { cookie });
   assert.equal(r.status, 500);
   assert.deepEqual(r.json, { error: 'Error interno' });
-  const alive = await request(broken.baseUrl, '/api/nada');
+  const alive = await request(broken.baseUrl, '/api/nada', { cookie });
   assert.equal(alive.status, 404);
   await broken.close();
 });

@@ -1,5 +1,7 @@
-// Lógica del panel en el navegador: carga, refresco, detalle, alta y baja. Usa render.js (puro) y app-config.js.
+// Lógica del panel en el navegador: autenticación (setup/login/logout/cambio de contraseña), carga, refresco,
+// detalle, alta y baja. Usa render.js (puro), api-client.js y app-config.js.
 import { REFRESH_INTERVAL_MS, API_BASE } from './app-config.js';
+import { createApiClient } from './api-client.js';
 import {
   renderProjectCard,
   renderProjectDetail,
@@ -7,44 +9,204 @@ import {
   renderLoadError,
   buildProjectPayload,
   handleDelete,
+  resolveAuthView,
+  renderAuthForm,
+  renderAuthError,
+  validateNewPassword,
+  renderChangePasswordForm,
+  buildChangePasswordPayload,
+  handleLogout,
+  renderPublicUrl,
 } from './render.js';
 
 const projectsEl = document.getElementById('projects');
 const listView = document.getElementById('list-view');
 const detailView = document.getElementById('detail');
+const authView = document.getElementById('auth-view');
+const changePasswordView = document.getElementById('change-password-view');
+const sessionActions = document.getElementById('session-actions');
+const publicUrlEl = document.getElementById('public-url');
 const lastUpdatedEl = document.getElementById('last-updated');
 const form = document.getElementById('add-project-form');
 const formErrorEl = document.getElementById('form-error');
 const submitButton = document.getElementById('add-project-submit');
 const refreshButton = document.getElementById('refresh-button');
+const logoutButton = document.getElementById('logout-button');
+const changePasswordButton = document.getElementById('change-password-button');
 
 let projects = [];
 let loading = false;
+let authenticated = false;
+let refreshTimer = null;
 
 const timeFormatter = new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-/** fetch que lanza un error con el cuerpo JSON cuando la respuesta no es 2xx. */
-async function request(url, init = {}) {
-  const headers = { Accept: 'application/json', ...(init.headers || {}) };
-  if (init.body !== undefined) headers['Content-Type'] = 'application/json';
-  const res = await fetch(url, { ...init, headers });
-  let payload = null;
-  if (res.status !== 204) {
-    const text = await res.text();
-    try {
-      payload = text ? JSON.parse(text) : null;
-    } catch {
-      payload = null;
-    }
+/** Un 401 fuera del login significa que la sesión ya no vale: volvemos al login y paramos el refresco. */
+const request = createApiClient({
+  onUnauthorized: () => {
+    authenticated = false;
+    stopRefresh();
+    showAuth('login');
+  },
+});
+
+// ---------- Vistas ----------
+
+function stopRefresh() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
   }
-  if (!res.ok) {
-    const err = new Error((payload && payload.error) || `Error HTTP ${res.status}`);
-    err.status = res.status;
-    err.payload = payload || { error: err.message };
-    throw err;
-  }
-  return payload;
 }
+
+function hideAll() {
+  listView.hidden = true;
+  detailView.hidden = true;
+  detailView.innerHTML = '';
+  authView.hidden = true;
+  changePasswordView.hidden = true;
+  changePasswordView.innerHTML = '';
+}
+
+function showAuth(mode) {
+  hideAll();
+  sessionActions.hidden = true;
+  authView.innerHTML = renderAuthForm(mode);
+  authView.hidden = false;
+  const field = authView.querySelector('input[name="password"]');
+  if (field) field.focus();
+  window.scrollTo({ top: 0 });
+}
+
+function showPanel() {
+  authenticated = true;
+  hideAll();
+  authView.innerHTML = '';
+  listView.hidden = false;
+  sessionActions.hidden = false;
+  load();
+  if (!refreshTimer) {
+    refreshTimer = setInterval(() => {
+      // No pisamos la vista de detalle mientras el usuario la está leyendo; el listado se refresca igualmente.
+      load();
+    }, REFRESH_INTERVAL_MS);
+  }
+}
+
+function showChangePassword() {
+  hideAll();
+  changePasswordView.innerHTML = renderChangePasswordForm();
+  changePasswordView.hidden = false;
+  const field = changePasswordView.querySelector('input[name="currentPassword"]');
+  if (field) field.focus();
+  window.scrollTo({ top: 0 });
+}
+
+function setAuthError(container, message) {
+  const slot = container.querySelector('.form-error-slot');
+  if (slot) slot.innerHTML = message ? renderAuthError(message) : '';
+}
+
+function setAuthStatus(container, message) {
+  const slot = container.querySelector('.form-error-slot');
+  if (slot) slot.innerHTML = `<p class="form-status" role="status">${message}</p>`;
+}
+
+function errorMessage(err, fallback) {
+  if (err && err.status && err.status >= 400 && err.status < 500) {
+    return (err.payload && err.payload.error) || fallback;
+  }
+  console.error(fallback, err);
+  return 'No se pudo contactar con el servidor del panel';
+}
+
+// ---------- Autenticación ----------
+
+async function boot() {
+  try {
+    const status = await request(`${API_BASE}/auth/status`);
+    publicUrlEl.innerHTML = renderPublicUrl(status && status.publicUrl ? status.publicUrl : null);
+    const view = resolveAuthView(status);
+    if (view === 'panel') showPanel();
+    else showAuth(view);
+  } catch (err) {
+    console.error('No se pudo consultar el estado de autenticación:', err);
+    hideAll();
+    authView.innerHTML = renderLoadError();
+    authView.hidden = false;
+  }
+}
+
+async function submitAuth(event) {
+  event.preventDefault();
+  const authForm = event.target;
+  const mode = authForm.dataset.mode;
+  const values = Object.fromEntries(new FormData(authForm).entries());
+  setAuthError(authView, '');
+  if (mode === 'setup') {
+    const valid = validateNewPassword(values.password, values.confirm);
+    if (!valid.ok) return setAuthError(authView, valid.error);
+  } else if (!values.password) {
+    return setAuthError(authView, 'Falta la contraseña');
+  }
+  const button = authForm.querySelector('button[type="submit"]');
+  if (button) button.disabled = true;
+  try {
+    await request(`${API_BASE}/auth/${mode === 'setup' ? 'setup' : 'login'}`, { method: 'POST', body: JSON.stringify({ password: values.password }) });
+    showPanel();
+  } catch (err) {
+    setAuthError(authView, errorMessage(err, mode === 'setup' ? 'No se pudo crear la contraseña' : 'No se pudo iniciar sesión'));
+    const field = authForm.querySelector('input[name="password"]');
+    if (field) field.focus();
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function logout() {
+  logoutButton.disabled = true;
+  try {
+    await handleLogout({ request });
+  } catch (err) {
+    console.error('No se pudo cerrar la sesión en el servidor:', err);
+  } finally {
+    logoutButton.disabled = false;
+  }
+  authenticated = false;
+  stopRefresh();
+  showAuth('login');
+}
+
+async function submitChangePassword(event) {
+  event.preventDefault();
+  const changeForm = event.target;
+  const values = Object.fromEntries(new FormData(changeForm).entries());
+  setAuthError(changePasswordView, '');
+  const valid = validateNewPassword(values.newPassword, values.confirm);
+  if (!valid.ok) return setAuthError(changePasswordView, valid.error);
+  const button = changeForm.querySelector('button[type="submit"]');
+  if (button) button.disabled = true;
+  try {
+    await request(`${API_BASE}/auth/change-password`, { method: 'POST', body: JSON.stringify(buildChangePasswordPayload(values)) });
+    changeForm.reset();
+    setAuthStatus(changePasswordView, 'Contraseña cambiada');
+  } catch (err) {
+    if (err && err.status === 401) return; // onUnauthorized ya ha vuelto al login
+    setAuthError(changePasswordView, errorMessage(err, 'No se pudo cambiar la contraseña'));
+    const fieldName = err && err.payload && err.payload.field;
+    const field = fieldName ? changeForm.elements[fieldName] : null;
+    if (field && typeof field.focus === 'function') field.focus();
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function onChangePasswordClick(event) {
+  const target = event.target.closest('[data-action="cancel-change"]');
+  if (target) showPanel();
+}
+
+// ---------- Listado y detalle ----------
 
 function setLastUpdated(date) {
   lastUpdatedEl.textContent = timeFormatter.format(date);
@@ -61,7 +223,7 @@ function renderList() {
 }
 
 async function load() {
-  if (loading) return;
+  if (loading || !authenticated) return;
   loading = true;
   projectsEl.setAttribute('aria-busy', 'true');
   refreshButton.disabled = true;
@@ -72,6 +234,7 @@ async function load() {
     renderList();
     setLastUpdated(new Date());
   } catch (err) {
+    if (err && err.status === 401) return; // onUnauthorized ya ha mostrado el login
     console.error('No se pudo cargar el listado:', err);
     projectsEl.innerHTML = renderLoadError();
   } finally {
@@ -98,6 +261,7 @@ async function showDetail(id) {
     const back = detailView.querySelector('[data-action="back"]');
     if (back) back.focus();
   } catch (err) {
+    if (err && err.status === 401) return;
     console.error('No se pudo cargar el detalle:', err);
     window.alert(err.status === 404 ? 'El proyecto ya no está registrado.' : 'No se pudo cargar el detalle del proyecto.');
     if (err.status === 404) load();
@@ -113,11 +277,14 @@ async function deleteProject(id) {
     if (card) card.remove();
     if (projects.length === 0) renderList();
   } catch (err) {
+    if (err && err.status === 401) return;
     console.error('No se pudo eliminar:', err);
     window.alert(err.status === 404 ? 'El proyecto ya no está registrado.' : 'No se pudo eliminar el proyecto.');
     if (err.status === 404) load();
   }
 }
+
+// ---------- Alta ----------
 
 function clearFormError() {
   formErrorEl.innerHTML = '';
@@ -157,6 +324,7 @@ async function submitForm(event) {
     const card = projectsEl.querySelector(`.card[data-id="${CSS.escape(created.id)}"]`);
     if (card) card.scrollIntoView({ block: 'nearest' });
   } catch (err) {
+    if (err && err.status === 401) return;
     if (err.status && err.status >= 400 && err.status < 500) {
       showFormError(err.payload);
     } else {
@@ -167,6 +335,8 @@ async function submitForm(event) {
     submitButton.disabled = false;
   }
 }
+
+// ---------- Eventos ----------
 
 function onProjectsClick(event) {
   const target = event.target.closest('[data-action]');
@@ -182,14 +352,21 @@ function onDetailClick(event) {
   if (target) showList();
 }
 
+function onAuthClick(event) {
+  const target = event.target.closest('[data-action="retry"]');
+  if (target) boot();
+}
+
 projectsEl.addEventListener('click', onProjectsClick);
 detailView.addEventListener('click', onDetailClick);
+authView.addEventListener('submit', submitAuth);
+authView.addEventListener('click', onAuthClick);
+changePasswordView.addEventListener('submit', submitChangePassword);
+changePasswordView.addEventListener('click', onChangePasswordClick);
 form.addEventListener('submit', submitForm);
 form.addEventListener('input', clearFormError);
 refreshButton.addEventListener('click', () => load());
+logoutButton.addEventListener('click', logout);
+changePasswordButton.addEventListener('click', showChangePassword);
 
-load();
-setInterval(() => {
-  // No pisamos la vista de detalle mientras el usuario la está leyendo; el listado se refresca igualmente.
-  load();
-}, REFRESH_INTERVAL_MS);
+boot();
