@@ -12,7 +12,7 @@
       "id": 2,
       "slug": "puesto-de-mando-acceso-web",
       "description": "Puesto de mando MUVER (fase 2): acceso desde una URL pública con seguridad — login con contraseña (hash en disco, cookie de sesión firmada, límite de intentos), todas las rutas /api protegidas, publicación HTTPS mediante Cloudflare Tunnel (config y guía paso a paso), e instalación del panel como servicio de Windows que arranca solo con el PC.",
-      "status": "pending",
+      "status": "spec_ready",
       "sdd": true
     },
     {
