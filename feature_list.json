@@ -10,15 +10,29 @@
     },
     {
       "id": 2,
-      "slug": "puesto-de-mando-acciones",
-      "description": "Puesto de mando MUVER (fase 2): acciones de desarrollo desde el panel con confirmación previa — implementar siguiente tarea, aprobar spec, aprobar tests, ejecutar init.sh/tests, ver diff — con consola de salida en vivo.",
+      "slug": "puesto-de-mando-acceso-web",
+      "description": "Puesto de mando MUVER (fase 2): acceso desde una URL pública con seguridad — login con contraseña (hash en disco, cookie de sesión firmada, límite de intentos), todas las rutas /api protegidas, publicación HTTPS mediante Cloudflare Tunnel (config y guía paso a paso), e instalación del panel como servicio de Windows que arranca solo con el PC.",
       "status": "pending",
       "sdd": true
     },
     {
       "id": 3,
-      "slug": "puesto-de-mando-visual",
-      "description": "Puesto de mando MUVER (fase 3): visual de lo hecho por proyecto — captura automática de la app, changelog desde progress/history.md y git log, y avisos cuando un proyecto espera aprobación humana.",
+      "slug": "puesto-de-mando-descubrimiento-claude",
+      "description": "Puesto de mando MUVER (fase 3): los proyectos abiertos en Claude Code aparecen solos — lectura de %USERPROFILE%/.claude.json (projects) y de ~/.claude/projects/ (sesiones) para listar cada proyecto con su última actividad y sesiones recientes; projects.json pasa a ser una capa de ajustes (URL de app, etiquetas, ocultar, fijar); fusión con los proyectos manuales.",
+      "status": "pending",
+      "sdd": true
+    },
+    {
+      "id": 4,
+      "slug": "puesto-de-mando-trabajar",
+      "description": "Puesto de mando MUVER (fase 4): trabajar desde el panel sin abrir Claude — vista de chat por proyecto que lanza Claude Code CLI en la carpeta del proyecto con salida en vivo (streaming) e historial; botones SDD de un toque (implementar siguiente tarea, aprobar spec, aprobar tests, ejecutar init.sh/tests, ver diff, commit y push) con confirmación previa; cancelación de ejecuciones; registro de acciones.",
+      "status": "pending",
+      "sdd": true
+    },
+    {
+      "id": 5,
+      "slug": "puesto-de-mando-visual-y-avisos",
+      "description": "Puesto de mando MUVER (fase 5): visual de lo hecho por proyecto — captura automática de la app, changelog desde progress/history.md y git log — y avisos: notificación push al móvil (Web Push) cuando un proyecto espera una decisión humana o termina una ejecución.",
       "status": "pending",
       "sdd": true
     }
