@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   slugify,
@@ -307,7 +308,8 @@ test('[F4-R94] corrección T36: sin registro previo se siembra con projects.exam
 });
 
 test('[F4-R94] corrección T36: server.js usa <datos>/projects.json y existe panel/projects.example.json con los 4 proyectos', async () => {
-  const PANEL = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  // fileURLToPath: en Windows el pathname de la URL daría "/C:/…" y la ruta acabaría en "C:\\C:\\…".
+  const PANEL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const server = await fs.readFile(path.join(PANEL, 'server.js'), 'utf8');
   assert.ok(server.includes("path.join(config.dataDir, 'projects.json')"), 'registro vivo en el directorio de datos');
   assert.ok(server.includes('prepareProjectsFile'));

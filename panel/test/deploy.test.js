@@ -183,3 +183,24 @@ test('[F4-R94] docs: architecture.md con módulos, rutas y variables de la fase 
     assert.match(envTable, new RegExp(`\\|\\s*\`${variable}\`\\s*\\|`), `fila de ${variable} en la tabla de §5`);
   }
 });
+
+// ---------- Corrección T36: rutas de disco portables a Windows ----------
+
+test('[F4-R94] corrección T36: ningún fichero de panel/ obtiene rutas de disco con el pathname de una URL de fichero (usa fileURLToPath)', async () => {
+  // El patrón se compone por partes para que este mismo test no case consigo mismo.
+  const bad = new RegExp(['new URL\\(', '[^;\\n]*', '\\)\\.', 'pathname'].join(''));
+  const offenders = [];
+  async function walk(dir) {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      if (['node_modules', 'data', 'legacy'].includes(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.name.endsWith('.js') || entry.name.endsWith('.mjs')) {
+        const text = await read(full);
+        if (bad.test(text)) offenders.push(path.relative(PANEL_DIR, full));
+      }
+    }
+  }
+  await walk(PANEL_DIR);
+  assert.deepEqual(offenders, [], `en Windows .pathname da "/C:/…": usa fileURLToPath en ${offenders.join(', ')}`);
+});
