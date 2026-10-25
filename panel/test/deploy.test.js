@@ -271,3 +271,36 @@ test('[F14-R39] docs/architecture.md documenta la corrección de la revisión (l
     assert.ok(section.includes(needle), `la sección debe mencionar ${needle}`);
   }
 });
+
+// ---------- Feature 13: documentación (F13-R52) ----------
+
+test('[F13-R52] docs/architecture.md y docs/verification.md documentan la feature 13', async () => {
+  const architecture = await read(path.join(REPO_DIR, 'docs', 'architecture.md'));
+  for (const needle of [
+    'project-summary.js', 'repo-layout.js', 'summary-api.js', 'public/list.js', '/api/summaries/generate', '/api/summaries/batch',
+    '/api/summaries/batch/cancel', '/summary/generate', 'worktreeCount', 'parentId', 'groupKey', 'likelyWorktree', 'detailLevel',
+    'worktrees=full', 'summarySource', 'CLI_MODELS', 'Read,Glob,Grep', 'haiku', 'nada recortado', '--git-common-dir',
+  ]) {
+    assert.ok(architecture.includes(needle), `docs/architecture.md debe mencionar ${needle}`);
+  }
+  const verification = await read(path.join(REPO_DIR, 'docs', 'verification.md'));
+  assert.ok(verification.includes('[F13-R'), 'prefijo [F13-R<n>] en "Cómo se ejecutan"');
+  const start = verification.indexOf('## Mapa de trazabilidad — Feature 13: `vista-compacta-y-resumen` (prefijo `[F13-R<n>]`)');
+  assert.ok(start >= 0, 'título de la sección');
+  const end = verification.indexOf('\n## ', start + 1);
+  const section = verification.slice(start, end < 0 ? undefined : end);
+  const testsText = [];
+  for (const entry of await fs.readdir(path.join(PANEL_DIR, 'test'))) {
+    if (entry.endsWith('.js')) testsText.push(await read(path.join(PANEL_DIR, 'test', entry)));
+  }
+  const allTests = testsText.join('\n');
+  for (let n = 1; n <= 61; n++) {
+    const row = new RegExp(`^\\| R${n} \\|(.*)$`, 'm').exec(section);
+    assert.ok(row, `fila F13 de R${n}`);
+    if (n === 53 || n === 54) continue; // R53 = ./init.sh completo; R54 = comprobación manual (T26)
+    assert.ok(row[1].includes(`[F13-R${n}]`), `la fila de R${n} cita [F13-R${n}]`);
+    assert.ok(allTests.includes(`[F13-R${n}]`), `[F13-R${n}] aparece en panel/test/`);
+  }
+  assert.match(section, /^\| R54 \|.*MANUAL/m, 'R54 es manual');
+  assert.match(section, /^\| T26 \|.*MANUAL/m, 'fila de la comprobación manual T26');
+});

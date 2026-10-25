@@ -17,6 +17,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 ## Cómo se ejecutan
 
 - Todo se lanza desde `init.sh` (paso 3: `(cd panel && npm test)`, que ejecuta `node --test` sobre `panel/test/*.test.js`; también puede lanzarse a mano con `cd panel && npm test`). Los tests de la fase 1 llevan el prefijo `[R<n>]`, los de la fase 2 `[F2-R<n>]` y los de la fase 3 `[F3-R<n>]` (siempre con un `claudeHome` temporal) y los de la fase 4 `[F4-R<n>]` (siempre con el CLI de Claude falso `panel/test/fixtures/fake-claude.js`, repos git temporales con un remoto `--bare` local y claves de Cloudflare Access generadas en el test; nunca el `claude` real ni un remoto real); los de la fase 1 que tocan la API se autentican con la cookie de sesión del `before()` (`F2-R16`).
+- Los tests de la feature 13 llevan el prefijo `[F13-R<n>]`: siempre con el CLI de Claude falso (escenario por fichero `.fake-claude-scenario` en la carpeta del proyecto temporal), `claudeHome` y datos temporales, repos git reales en temporales con `git worktree add` y el registro `projects.json` temporal de `startApp`; nunca el `claude` real, el `~/.claude` del equipo ni un push real. La altura de las filas, la ausencia de texto recortado y el repintado sin cambios se comprueban además con un navegador sin cabeza (Playwright, script fuera del repo) a 360×780 y 1280×800, claro y oscuro.
 - Los requisitos **[MANUAL — Windows]** y **[MANUAL — Internet]** de la fase 2 no pueden ejecutarse en el entorno de tests (Linux, sin `cloudflared`): el humano los comprueba siguiendo `docs/acceso-web.md` y anota aquí el resultado.
 - El reviewer ejecuta `init.sh` y exige que esté **todo en verde** antes de aprobar.
 
@@ -385,6 +386,80 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R38 | `panel/test/claude-cli.test.js` → "[F14-R38] createStreamMapper: tras el tope de 50 no crecen las estructuras internas…" |
 | R39 | `panel/test/deploy.test.js` → "[F14-R39] docs/architecture.md documenta la corrección de la revisión…" |
 | T30 | **MANUAL — superado** (R12, R19, R25). 2026-10-25, Windows, Node 24.14.0, Git 2.52.0.windows.1, Claude Code 2.1.307, proyecto C:\prueba-m1 con `whoami.exe` copiado como `git.exe` y `claude.exe`: listado y detalle con rama y commit reales; «Ver cambios» correcto; «Ejecutar tests» (`git --version`) → `git version 2.52.0.windows.1`; aviso de comando amplio al autorizar `git --version`; diálogo de «Commit y push» con aviso de hooks (pre-commit) y commit + push a un remoto --bare correctos con el hook ejecutado; chat «Di hola» respondido por Claude real. En ningún paso se ejecutó `whoami`. **Superado.** Observación de UX: el humano escribió el comando de tests en el campo de comandos autorizados; los dos campos se confunden. |
+
+## Mapa de trazabilidad — Feature 13: `vista-compacta-y-resumen` (prefijo `[F13-R<n>]`)
+
+> Cambios declarados en tests anteriores (design.md §7.4): `git-info.test.js` "[R12][F4-R61]" añade la entrada
+> `CMD_REPO_LAYOUT` a la lista cerrada `GIT_COMMANDS`; `registry.test.js` "[F3-R34]" amplía `PATCHABLE_FIELDS` con
+> `summary` y `model`; `work-api.test.js` "[F4-R6]" amplía la respuesta de `GET /work` con `model` y `models`;
+> `fixtures/fake-claude.js` acepta `--model`, `--max-turns`, `--tools` y `--disallowedTools`, registra
+> `model`/`tools`/`disallowedTools`/`at` y admite el escenario por fichero `.fake-claude-scenario`. Ningún otro test de
+> las fases 1–4 ni de la feature 14 cambia.
+
+| Requisito | Test(s) que lo verifican |
+|-----------|--------------------------|
+| R1 | `panel/test/project-summary.test.js` → "[F13-R1] resolveSummary: manual → claude → package → readme → claude-md → null", "[F13-R1][F13-R2][F13-R3] ningún resumen automático contiene «…»" |
+| R2 | `panel/test/project-summary.test.js` → "[F13-R2] package.json: normal, saltos de línea, dos frases…", "[F13-R2][F13-R6] package.json de más de 16 KB…", "[F13-R2][F13-R3] clipAtWord…", "[F13-R2][F13-R6] constantes…" |
+| R3 | `panel/test/project-summary.test.js` → "[F13-R3] firstSentence…", "[F13-R3] extractFirstParagraph salta títulos, insignias, HTML, YAML, comentarios, código y setext", "[F13-R3] extractFirstParagraph: primera frase, 400 caracteres sin «…»…" |
+| R4 | `panel/test/project-summary.test.js` → "[F13-R4] findReadme…", "[F13-R4] readAutoSummary: README.md gana a README.txt, LEEME.md y CLAUDE.md como último origen" |
+| R5 | `panel/test/project-summary.test.js` → "[F13-R5] extractFirstParagraph descarta las plantillas…", "[F13-R5] una plantilla en README o en CLAUDE.md no es origen…" |
+| R6 | `panel/test/project-summary.test.js` → "[F13-R6] README de 1 MB: se leen como mucho 16 384 bytes", "[F13-R6] BOM, binario, README que es un directorio y carpeta inexistente: sin excepción" |
+| R7 | `panel/test/project-summary.test.js` → "[F13-R7] createSummaryReader: caché de 5 min por carpeta con reloj inyectado" |
+| R8 | `panel/test/summary-api.test.js` → "[F13-R8] GET /api/projects y /:id incluyen summary, summarySource y summaryAt" |
+| R9 | `panel/test/summary-api.test.js` → "[F13-R9] PATCH summary en un proyecto manual…", "[F13-R9] PATCH summary en un proyecto solo de Claude crea su entrada…", "[F13-R9][F13-R10][F13-R57] normalizeSettings…" |
+| R10 | `panel/test/summary-api.test.js` → "[F13-R10] PATCH summary vacío vuelve al automático; no texto o > 200 → 400…" |
+| R11 | `panel/test/claude-cli.test.js` → "[F13-R11] buildReadOnlyClaudeArgs: array exacto…", "[F13-R11] estático: buildReadOnlyClaudeArgs no usa DEFAULT_ALLOWED_TOOLS, shellRules ni allowedCommands" |
+| R12 | `panel/test/summary-api.test.js` → "[F13-R12] POST /summary/generate: argumentos de solo lectura, SUMMARY_PROMPT por stdin…", "[F13-R12] resolvedor que rechaza Claude → 409…" |
+| R13 | `panel/test/summary-api.test.js` → "[F13-R13] el resultado correcto se guarda como resumen claude (proyecto manual y solo de Claude)" |
+| R14 | `panel/test/claude-cli.test.js` → "[F13-R14] normalizeGeneratedSummary: comillas, Markdown, viñetas, prefijo, código, una frase, ≤ 140 sin «…» y vacío" |
+| R15 | `panel/test/summary-api.test.js` → "[F13-R15] error, cancelación y resultado en blanco no tocan projects.json" |
+| R16 | `panel/test/summary-api.test.js` → "[F13-R16] un resumen manual guardado durante la generación se conserva" |
+| R17 | `panel/test/summary-api.test.js` → "[F13-R17] allowExec: false → 403 sin proceso; por el túnel sin confirmación reciente → 401 reauthRequired" |
+| R18 | `panel/test/summary-api.test.js` → "[F13-R18] 404 sin proyecto, 409 sin carpeta, 409 con run activo y 429 con el máximo de runs…" |
+| R19 | `panel/test/summary-api.test.js` → "[F13-R19] audit.log: línea de la puerta summary.generate…", "[F13-R19] audit.log del lote…" |
+| R20 | `panel/test/summary-api.test.js` → "[F13-R20] POST /api/summaries/generate: 202 con el estado del lote y duplicados quitados" |
+| R21 | `panel/test/summary-api.test.js` → "[F13-R21] ids inválidos → 400; un segundo lote mientras otro sigue → 409" |
+| R22 | `panel/test/summary-api.test.js` → "[F13-R22] el lote procesa de uno en uno y en orden: saved, failed, saved" |
+| R23 | `panel/test/summary-api.test.js` → "[F13-R23] skipped: inexistente, sin carpeta y run activo", "[F13-R23] reintento por PANEL_MAX_RUNS cada 5 s…" |
+| R24 | `panel/test/summary-api.test.js` → "[F13-R24] GET /api/summaries/batch antes, durante y después" |
+| R25 | `panel/test/summary-api.test.js` → "[F13-R25] POST /api/summaries/batch/cancel…", "[F13-R25] cancelar el lote no pasa por la puerta de ejecución" |
+| R26 | `panel/test/repo-layout.test.js` → "[F13-R26] CMD_REPO_LAYOUT…", "[F13-R26] git real…", "[F13-R26] runner espía…", "[F13-R26] createGitRunner con execFileImpl espía…", "[F13-R26] salida de git en Windows…"; `panel/test/git-info.test.js` → "[R12][F4-R61][F13-R26] GIT_COMMANDS es la lista cerrada…" |
+| R27 | `panel/test/repo-layout.test.js` → "[F13-R27] createRepoLayoutCache: 10 min de caché, sin git para una carpeta inexistente" |
+| R28 | `panel/test/summary-api.test.js` → "[F13-R28] worktrees con su principal en el catálogo: parentId y worktreeCount (sin contar el oculto)" |
+| R29 | `panel/test/summary-api.test.js` → "[F13-R29] worktrees cuyo principal no está en el catálogo…"; `panel/test/repo-layout.test.js` → "[F13-R29] groupKeyFor y groupNameFor" |
+| R30 | `panel/test/summary-api.test.js` → "[F13-R30] likelyWorktree…"; `panel/test/repo-layout.test.js` → "[F13-R30] isLikelyWorktree…" |
+| R31 | `panel/test/summary-api.test.js` → "[F13-R31] modo ligero: sin worktrees=full no se lanza git…"; `panel/test/render.test.js` → "[F13-R31] buildProjectsUrl con fullWorktrees…" |
+| R32 | `panel/test/summary-api.test.js` → "[F13-R32] detalle del principal con worktrees[]…" |
+| R33 | `panel/test/list.test.js` → "[F13-R33] groupProjects: principal con sus tareas…", "[F13-R33] groupProjects con tareas sueltas…" |
+| R34 | `panel/test/list.test.js` → "[F13-R34] buildRowModel…", "[F13-R34] chips…", "[F13-R34] grupo virtual…", "[F13-R34][F13-R44] SUMMARY_SOURCE_LABELS…" |
+| R35 | `panel/test/list.test.js` → "[F13-R35] renderProjectRow…", "[F13-R35] fila y tarjeta de un grupo virtual…"; `panel/test/render.test.js` → "[F13-R35] la tarjeta conserva Eliminar solo en manuales" |
+| R36 | `panel/test/list.test.js` → "[F13-R36] renderGroupDetail…" |
+| R37 | `panel/test/render.test.js` → "[F13-R37] renderProjectCard compacta…" y los tests de `renderProjectCard` de las fases 1 y 3 sin cambios |
+| R38 | `panel/test/list.test.js` → "[F13-R38] loadListPrefs/saveListPrefs…" |
+| R39 | `panel/test/list.test.js` → "[F13-R39] filterRows: búsqueda sin mayúsculas ni acentos…" |
+| R40 | `panel/test/list.test.js` → "[F13-R40] filterRows: Todos, Activos (7 días), Fijados y Te necesitan…" |
+| R41 | `panel/test/list.test.js` → "[F13-R41] splitOld…" |
+| R42 | `panel/test/list.test.js` → "[F13-R42] renderListBody sin filas…" |
+| R43 | `panel/test/list.test.js` → "[F13-R43] planRowUpdate…", "[F13-R43] renderItemHtml es estable…"; navegador sin cabeza: un refresco sin cambios añade o quita 0 nodos (T23) |
+| R44 | `panel/test/render.test.js` → "[F13-R44] detalle: bloque «De qué va»…" |
+| R45 | `panel/test/render.test.js` → "[F13-R45] detalle del principal: «Tareas en curso»…" |
+| R46 | `panel/test/render.test.js` → "[F13-R46] ajustes: campo «De qué va (una frase)»…" |
+| R47 | `panel/test/list.test.js` → "[F13-R47] describeSummaryAction…" |
+| R48 | `panel/test/list.test.js` → "[F13-R48] summaryCandidates…" |
+| R49 | `panel/test/list.test.js` → "[F13-R49] renderBatchStatus…" |
+| R50 | `panel/test/styles.test.js` → "[F13-R50] regla «nada recortado»…", "[F13-R50] botón «⋯» y selector de modelo con 44 px…"; navegador sin cabeza (T23): filas con resumen de una línea ≤ 72 px a 1280 px (máx. 61 px con 100 proyectos), sin «…», sin texto recortado ni scroll horizontal a 360 y 1280 px, claro y oscuro |
+| R51 | `panel/test/styles.test.js` → "[F13-R51] index.html: barra de la lista…" |
+| R52 | `panel/test/deploy.test.js` → "[F13-R52] docs/architecture.md y docs/verification.md documentan la feature 13" |
+| R53 | `./init.sh` completo en verde (fases 1–4, feature 14 y feature 13) y `node sdd-lint.js` con 0 errores (T27) |
+| R54 | **MANUAL — pendiente** (T26, Windows + móvil, lista real del humano) |
+| R55 | `panel/test/claude-cli.test.js` → "[F13-R55] buildClaudeArgs con modelo…" |
+| R56 | `panel/test/work-api.test.js` → "[F13-R56] chat con sonnet, implement sin model (usa el recordado) y chat con default (quita el campo)" |
+| R57 | `panel/test/work-api.test.js` → "[F13-R57] model inválido en runs y botones SDD → 400…"; `panel/test/summary-api.test.js` → "[F13-R57] PATCH model…" |
+| R58 | `panel/test/work-api.test.js` → "[F13-R58] GET /work trae model (recordado o default) y models" |
+| R59 | `panel/test/work-render.test.js` → "[F13-R59] renderModelSelect y renderWorkView…", "[F13-R59] buildRunPayload con y sin model…" |
+| R60 | `panel/test/work-render.test.js` → "[F13-R60] modelLabel, renderRunHeader y renderRunList…" |
+| R61 | `panel/test/summary-api.test.js` → "[F13-R61] /api/attention excluye los runs de resumen…" |
+| T26 | **MANUAL — pendiente** (R54). El humano, en su PC Windows y en el móvil con su lista real: anotar `claude --version` y confirmar en `claude --help` `--model`, `--tools`, `--disallowedTools`, `--max-turns` y `--permission-mode default`; worktrees del CRM como "N tareas en curso" y en "Tareas en curso" del detalle; filas con resumen de una línea ≤ 72 px y ningún «…» en PC ni móvil; resúmenes comprensibles; buscar, filtrar, "Antiguos" y Lista/Tarjetas recordado tras recargar; chat con Haiku y con Opus (modelo en la ejecución, en el historial y recordado); "Generar con Claude" en un proyecto y "Generar resúmenes" con 3 con `git status` limpio después y un fallo que no aparece en "Te necesitan". Resultado: _(por anotar)_ |
 
 ## Qué NO se considera verificado
 

@@ -527,3 +527,94 @@ test('[F14-R38] createStreamMapper: tras el tope de 50 no crecen las estructuras
   for (let i = 0; i < 3000; i++) fresh.push(line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: `t-${i}`, name: 'Bash', input: { command: 'ls' } }] } }));
   assert.ok(fresh.stats().toolInputs <= 500, `toolInputs ${fresh.stats().toolInputs}`);
 });
+
+// ---------- Feature 13: llamada de solo lectura, modelo y normalización del resumen (F13-R11, F13-R14, F13-R55) ----------
+
+const {
+  CLI_MODELS,
+  MODEL_LABELS,
+  isValidModel,
+  SUMMARY_MODEL,
+  SUMMARY_MAX_TURNS,
+  READ_ONLY_TOOLS,
+  READ_ONLY_DENIED_TOOLS,
+  buildReadOnlyClaudeArgs,
+} = await import('../lib/claude-cli.js');
+
+test('[F13-R11] buildReadOnlyClaudeArgs: array exacto, haiku, sin acceptEdits, --allowedTools Read,Glob,Grep la última', () => {
+  const args = buildReadOnlyClaudeArgs();
+  assert.deepEqual(args, [
+    '-p', '--output-format', 'stream-json', '--verbose',
+    '--model', 'haiku',
+    '--permission-mode', 'default',
+    '--max-turns', '10',
+    '--tools', 'Read,Glob,Grep',
+    '--disallowedTools', 'Bash,PowerShell,Edit,MultiEdit,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent,mcp__*',
+    '--allowedTools', 'Read,Glob,Grep',
+  ]);
+  assert.ok(!args.includes('acceptEdits'));
+  assert.equal(args[args.indexOf('--model') + 1], 'haiku');
+  assert.equal(args.at(-2), '--allowedTools', '--allowedTools es la última opción');
+  const allowed = args.at(-1);
+  assert.equal(allowed, 'Read,Glob,Grep');
+  for (const tool of ['Bash', 'PowerShell', 'Edit', 'Write']) assert.ok(!allowed.split(',').includes(tool), `sin ${tool}`);
+  const denied = args[args.indexOf('--disallowedTools') + 1].split(',');
+  for (const tool of ['Bash', 'PowerShell', 'mcp__*']) assert.ok(denied.includes(tool), `deniega ${tool}`);
+  for (const arg of args) assert.ok(!FORBIDDEN_ARGS.includes(arg));
+  assert.equal(SUMMARY_MODEL, 'haiku');
+  assert.equal(SUMMARY_MAX_TURNS, 10);
+  assert.deepEqual(READ_ONLY_TOOLS, ['Read', 'Glob', 'Grep']);
+  assert.deepEqual(READ_ONLY_DENIED_TOOLS, ['Bash', 'PowerShell', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task', 'Agent', 'mcp__*']);
+  assert.deepEqual(buildReadOnlyClaudeArgs({ allowedCommands: ['npm test'], model: 'opus' }), args, 'ignora cualquier entrada');
+  assert.equal(CLI_FLAGS.model, '--model');
+  assert.equal(CLI_FLAGS.permissionDefault, 'default');
+  assert.equal(CLI_FLAGS.maxTurns, '--max-turns');
+  assert.equal(CLI_FLAGS.tools, '--tools');
+  assert.equal(CLI_FLAGS.disallowedTools, '--disallowedTools');
+});
+
+test('[F13-R11] estático: buildReadOnlyClaudeArgs no usa DEFAULT_ALLOWED_TOOLS, shellRules ni allowedCommands', () => {
+  const source = buildReadOnlyClaudeArgs.toString();
+  for (const needle of ['DEFAULT_ALLOWED_TOOLS', 'shellRules', 'allowedCommands', 'buildAllowedTools', 'acceptEdits']) {
+    assert.ok(!source.includes(needle), `buildReadOnlyClaudeArgs nombra ${needle}`);
+  }
+});
+
+test('[F13-R55] buildClaudeArgs con modelo: --model justo antes de --allowedTools; default, undefined y no permitidos sin --model', () => {
+  assert.deepEqual(CLI_MODELS, ['haiku', 'sonnet', 'opus']);
+  assert.ok(Object.isFrozen(CLI_MODELS));
+  assert.deepEqual(MODEL_LABELS, { default: 'Por defecto', haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' });
+  for (const model of ['haiku', 'sonnet', 'opus']) {
+    const args = buildClaudeArgs({ session: { mode: 'new' }, allowedCommands: [], model });
+    assert.deepEqual(args, [...BASE, '--model', model, '--allowedTools', DEFAULT_TOOLS_TEXT]);
+    const resume = buildClaudeArgs({ session: { mode: 'resume', id: 's-1' }, allowedCommands: [], model });
+    assert.deepEqual(resume, [...BASE, '--resume', 's-1', '--model', model, '--allowedTools', DEFAULT_TOOLS_TEXT]);
+  }
+  for (const model of ['default', undefined, null, 'opus --dangerously-skip-permissions', 'claude-opus-9', 'HAIKU', 3]) {
+    const args = buildClaudeArgs({ session: { mode: 'new' }, allowedCommands: [], model });
+    assert.deepEqual(args, [...BASE, '--allowedTools', DEFAULT_TOOLS_TEXT], `sin --model con ${String(model)}`);
+  }
+  assert.equal(isValidModel('default'), true);
+  assert.equal(isValidModel('opus'), true);
+  for (const bad of ['gpt-4', 3, 'haiku --verbose', '', null, undefined, 'Opus']) assert.equal(isValidModel(bad), false, String(bad));
+});
+
+test('[F13-R14] normalizeGeneratedSummary: comillas, Markdown, viñetas, prefijo, código, una frase, ≤ 140 sin «…» y vacío', async () => {
+  const { normalizeGeneratedSummary, GENERATED_MAX_CHARS } = await import('../lib/summary-api.js');
+  assert.equal(GENERATED_MAX_CHARS, 140);
+  assert.equal(normalizeGeneratedSummary('«Un CRM para pymes.»'), 'Un CRM para pymes.');
+  assert.equal(normalizeGeneratedSummary('"Un CRM para pymes."'), 'Un CRM para pymes.');
+  assert.equal(normalizeGeneratedSummary('“Un CRM para pymes.”'), 'Un CRM para pymes.');
+  assert.equal(normalizeGeneratedSummary('**Resumen:** CRM de clientes.'), 'CRM de clientes.');
+  assert.equal(normalizeGeneratedSummary('- CRM de clientes.\nSegunda línea'), 'CRM de clientes.');
+  assert.equal(normalizeGeneratedSummary('1. CRM de `clientes`.'), 'CRM de clientes.');
+  assert.equal(normalizeGeneratedSummary('```\nCRM de clientes en código.\n```'), 'CRM de clientes en código.');
+  assert.equal(normalizeGeneratedSummary('\n\n  Gestor   de  turnos.  Y algo más.'), 'Gestor de turnos.');
+  const long = `${'Herramienta que gestiona muchas cosas '.repeat(6).trim()}.`;
+  assert.ok([...long].length >= 200);
+  const clipped = normalizeGeneratedSummary(long);
+  assert.ok([...clipped].length <= 140);
+  assert.ok(!clipped.includes('…'));
+  assert.ok(long.startsWith(clipped) && long[clipped.length] === ' ', 'palabra entera');
+  for (const empty of ['', '   ', '```\n```', null, undefined, '""']) assert.equal(normalizeGeneratedSummary(empty), null, JSON.stringify(empty));
+});

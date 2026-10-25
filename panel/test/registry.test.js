@@ -178,7 +178,8 @@ test('[F3-R34] upsertSettings sustituye por id o añade al final sin mutar el re
 
 test('[F3-R34] validatePatch acepta cada campo válido, recorta e ignora campos ajenos', () => {
   // Fase 4 (F4-R62): se añaden allowedCommands y testCommand a la lista de campos admitidos.
-  assert.deepEqual(PATCHABLE_FIELDS, ['name', 'appUrl', 'repoUrl', 'tags', 'hidden', 'pinned', 'allowedCommands', 'testCommand']);
+  // Feature 13 (design.md §5.8, F13-R9/F13-R57): y summary y model (cambio declarado).
+  assert.deepEqual(PATCHABLE_FIELDS, ['name', 'appUrl', 'repoUrl', 'tags', 'hidden', 'pinned', 'allowedCommands', 'testCommand', 'summary', 'model']);
   const r = validatePatch({ name: '  Nuevo  ', appUrl: ' http://localhost:5173 ', repoUrl: '', tags: [' web ', '', 'crm'], hidden: false, pinned: true, path: '/otra', id: 'x' });
   assert.deepEqual(r, { ok: true, changes: { name: 'Nuevo', appUrl: 'http://localhost:5173', repoUrl: '', tags: ['web', 'crm'], hidden: false, pinned: true } });
   assert.deepEqual(validatePatch({ pinned: false }), { ok: true, changes: { pinned: false } });

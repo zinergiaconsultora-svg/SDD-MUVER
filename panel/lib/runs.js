@@ -11,7 +11,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-import { buildClaudeArgs, createStreamMapper } from './claude-cli.js';
+import { buildClaudeArgs, buildReadOnlyClaudeArgs, createStreamMapper, CLI_MODELS, SUMMARY_MODEL } from './claude-cli.js';
 import { defaultResolver, BIN_ERRORS } from './trusted-bin.js';
 import { pathKey, lastSegment, isWindowsPath } from './path-key.js';
 import { killProcessTree, KILL_GRACE_MS, MAX_LINE_BYTES } from './exec-utils.js';
@@ -132,7 +132,7 @@ export function createRunManager({
     return rec;
   }
 
-  function baseMeta({ projectId, kind, action, label, promptPreview, command, session }) {
+  function baseMeta({ projectId, kind, action, label, promptPreview, command, session, model = null }) {
     return {
       runId: newRunId(now),
       projectId,
@@ -142,6 +142,7 @@ export function createRunManager({
       promptPreview,
       command,
       session,
+      model, // feature 13: alias de CLI_MODELS o null (= por defecto; también en los runs de comando)
       state: 'queued',
       startedAt: iso(),
       endedAt: null,
@@ -376,11 +377,16 @@ export function createRunManager({
   /**
    * Lanza un run de Claude. → { ok: true, meta } | { ok: false, status, error, runId? }.
    * `session` = { mode: 'new'|'continue'|'resume', id? }; `claudeCommand` = { file, prefixArgs }.
+   * Feature 13 (design.md §5.6): `model` (alias de CLI_MODELS; otro valor = por defecto) y `profile`: 'work' (por
+   * defecto) o 'readonly' (resúmenes: buildReadOnlyClaudeArgs, Haiku, conversación nueva; ignora allowedCommands,
+   * session y model). El lanzamiento es el mismo: launchClaude → guardedSpawn con el prompt por stdin.
    */
-  async function startClaude({ project, prompt, session, action = 'chat', label = 'Chat', allowedCommands = [], claudeCommand, auditContext }) {
+  async function startClaude({ project, prompt, session, action = 'chat', label = 'Chat', allowedCommands = [], claudeCommand, auditContext, profile = 'work', model = null }) {
     const limit = checkLimits(project.id);
     if (limit) return limit;
-    const args = buildClaudeArgs({ session, allowedCommands });
+    const readOnly = profile === 'readonly';
+    const runSession = readOnly ? { mode: 'new' } : session;
+    const args = readOnly ? buildReadOnlyClaudeArgs() : buildClaudeArgs({ session, allowedCommands, model });
     const meta = baseMeta({
       projectId: project.id,
       kind: 'claude',
@@ -388,7 +394,8 @@ export function createRunManager({
       label,
       promptPreview: clipPreview(prompt),
       command: null,
-      session: { mode: session.mode, id: session.mode === 'resume' ? session.id : null },
+      session: { mode: runSession.mode, id: runSession.mode === 'resume' ? runSession.id : null },
+      model: readOnly ? SUMMARY_MODEL : CLI_MODELS.includes(model) ? model : null,
     });
     const rec = register(meta, { cwd: project.dir, auditContext });
     await persistNew(rec);
@@ -467,6 +474,12 @@ export function createRunManager({
     return { events, ended, unsubscribe: () => rec.subscribers.delete(fn) };
   }
 
+  /** Feature 13: promesa que resuelve con el RunMeta final de un run en memoria; null si no está en memoria. */
+  function waitFor(runId) {
+    const rec = records.get(runId);
+    return rec ? rec.done : null;
+  }
+
   /** Cancela todos los runs activos (cierre del servidor o señal). Devuelve una promesa que espera a su cierre. */
   function cancelAll() {
     const pending = liveRecords().map((rec) => {
@@ -476,5 +489,5 @@ export function createRunManager({
     return Promise.all(pending);
   }
 
-  return { startClaude, startCommand, cancel, get, subscribe, activeFor, activeCount, cancelAll };
+  return { startClaude, startCommand, cancel, get, subscribe, activeFor, activeCount, cancelAll, waitFor };
 }

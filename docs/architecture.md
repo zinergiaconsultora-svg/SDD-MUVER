@@ -78,6 +78,27 @@
     Cloudflare Access con `node:crypto`) y `lib/audit.js` (registro de auditoría).
   - Feature 14: `lib/trusted-bin.js` (resolvedor de ejecutables de confianza; ver "Seguridad de la ejecución").
     "Aprobar spec" responde `409` si hay un run activo en el proyecto.
+- **Feature 13 (vista compacta y resumen):**
+  - `projects.json` admite por entrada `summary`, `summarySource` (`manual` | `claude`) y `summaryAt` (resumen guardado,
+    1–200 caracteres) y `model` (modelo recordado: `haiku` | `sonnet` | `opus`; ausente = por defecto). `normalizeSettings`
+    quita los no válidos.
+  - `lib/project-summary.js`: resumen automático sin coste y **solo lectura**: `description` de `package.json` → primer
+    párrafo de texto del README (`README.md`, `.markdown`, `.txt`, `README`, `LEEME.md`) → primer párrafo de `CLAUDE.md`;
+    lectura acotada a 16 KB por fichero, plantillas descartadas, primera frase o 160 caracteres cortados en palabra sin
+    «…»; caché en memoria de 5 min por carpeta. Orden total: `manual` → `claude` → `package` → `readme` → `claude-md`.
+  - `lib/repo-layout.js`: clasifica cada carpeta en principal / worktree / ninguno con
+    `git --no-optional-locks rev-parse --git-dir --git-common-dir` (entrada nueva `CMD_REPO_LAYOUT` de la lista cerrada
+    `GIT_COMMANDS`), siempre por el **runner central** de la feature 14 (git de confianza + `GIT_SAFE_PREFIX`, sin
+    consultar filtros); caché de 10 min por carpeta; una carpeta inexistente no lanza git. `likelyWorktree` marca (sin
+    agrupar) las carpetas `<slug>-<hex6>` ya borradas con sesión en `claude/<carpeta>`.
+  - `lib/project-catalog.js`: anota `isWorktree`, `parentId`/`parentName`, `groupKey`/`groupName` (`g-` + 10 hex de la
+    ruta del principal, sin exponer la ruta), `worktreeCount` y `detailLevel`; los worktrees agrupados se calculan en
+    **modo ligero** (sin git, rama de la última sesión de Claude) salvo con `?worktrees=full`; el detalle de un principal
+    trae `worktrees[]` (git real en los 30 primeros).
+  - `lib/summary-api.js`: generación del resumen con Claude Code en **solo lectura** (individual y en lote en el
+    servidor, de uno en uno, con reintento cada 5 s si se alcanzó `PANEL_MAX_RUNS`, cancelación y estado en memoria).
+  - `public/list.js` (funciones puras): preferencias (`localStorage` `muver.listPrefs`), agrupación, modelo y marcado de
+    fila, filtros, "Antiguos", repintado por firma HTML (`planRowUpdate`), candidatos y textos del lote.
 - **Interfaz / frontend:** `panel/public/` (index.html, styles.css, app.js, render.js, api-client.js,
   app-config.js) en vanilla JS, mobile-first (usable a 360 px), tema claro/oscuro automático
   (`prefers-color-scheme`), `manifest.webmanifest` para "añadir a pantalla de inicio". Pantallas de
@@ -143,6 +164,16 @@
   `: ping` cada 15 s), `POST /api/runs/:runId/cancel`, `POST /api/runs/:runId/dismiss`, `GET /api/attention` y
   `POST /api/auth/reauth`. `PATCH /api/projects/:id` admite además `allowedCommands` y `testCommand`, y `appUrl`/
   `repoUrl` solo con `http(s)`. La carpeta de trabajo sale **siempre** del catálogo, nunca del cuerpo de la petición.
+- **Feature 13:** `GET /api/projects[?includeHidden=1][&worktrees=full]` añade a cada elemento `summary`,
+  `summarySource`, `summaryAt`, `isWorktree`, `parentId`, `parentName`, `groupKey`, `groupName`, `likelyWorktree`,
+  `worktreeCount` y `detailLevel` (`light` | `full`); `GET /api/projects/:id` añade `worktrees[]`; `PATCH
+  /api/projects/:id` admite `summary` (vacío = vuelve el automático) y `model` sin pasar por la puerta de ejecución;
+  `POST /api/projects/:id/runs`, `…/sdd/implement` y `…/sdd/approve-tests` admiten `model` (lista cerrada; `400` si no) y
+  lo recuerdan; `GET /api/projects/:id/work` trae `model` y `models`; rutas nuevas
+  `POST /api/projects/:id/summary/generate` (puerta `summary.generate`, cuerpo ignorado),
+  `POST /api/summaries/generate` (`{ ids }`, 1–50, puerta `summary.batch`), `GET /api/summaries/batch` y
+  `POST /api/summaries/batch/cancel` (sin puerta, como cancelar un run). `GET /api/attention` excluye los runs con
+  `action: "summary"`.
 - **Puerta de ejecución (fase 4):** toda acción de ejecución (lanzar Claude, tests, commit y push, aprobar spec,
   permitir un comando, cambiar los ajustes de ejecución) pasa por `gateExec`: sesión → `PANEL_ALLOW_EXEC` →
   si llega **por el túnel** (cabecera `CF-Connecting-IP`, `Cf-Ray` o `X-Forwarded-Proto: https`, se mire o no
@@ -255,6 +286,21 @@
   configurado (o `bash init.sh`) parseado por un parser propio sin significado especial para `|`, `&`, `;`, `>`…,
   y los pasos fijos de `git add -A` → `git commit -m <mensaje>` → `git push` (nunca forzado). Cada acción pide
   confirmación en la interfaz y queda en `audit.log`; `PANEL_ALLOW_EXEC=0` lo desactiva todo.
+- **Feature 13 — resúmenes con Claude en solo lectura:** el run de resumen usa el mismo resolvedor de confianza y
+  `guardedSpawn` de la feature 14 (`workApi.startReadOnlyClaude` → `runs.startClaude({ profile: 'readonly' })`) con
+  `--model haiku --permission-mode default --max-turns 10 --tools Read,Glob,Grep --disallowedTools
+  Bash,PowerShell,Edit,MultiEdit,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent,mcp__* --allowedTools Read,Glob,Grep`
+  (la última) y un prompt fijo por stdin: nunca edición, `acceptEdits`, `Bash` ni `PowerShell`; nunca automático (solo
+  cuando el humano lo pide y confirma). Ningún módulo nuevo llama a `spawn`/`execFile`, nada escribe en las carpetas de
+  los proyectos ni en `~/.claude`.
+- **Feature 13 — selector de modelo:** `CLI_MODELS` = `haiku`, `sonnet`, `opus` (lista cerrada en `claude-cli.js`);
+  `--model <alias>` solo con un valor de la lista, justo antes de `--allowedTools`; "Por defecto" no pasa la flag. El
+  modelo se recuerda por proyecto en `model` del registro y se guarda en `RunMeta.model` (`null` = por defecto).
+- **Feature 13 — "Te necesitan":** los runs de resumen nunca aparecen en la cola (ni fallidos); se ven en el historial
+  del proyecto y en el estado del lote.
+- **Feature 13 — regla "nada recortado":** ningún texto de la lista, las tarjetas ni el detalle se oculta con «…»,
+  `text-overflow`, `line-clamp` ni `max-height`; los resúmenes se acotan en origen (una frase, cortada en palabra
+  entera) y la fila crece si hace falta (una fila con resumen de una línea mide ≤ 72 px en escritorio).
 - No se exponen rutas absolutas del disco al cliente más allá de lo necesario. Nunca se registran
   contraseñas ni cookies en los logs; los secretos viven solo en `panel/data/` (fuera de git).
 - El equipo del humano es Windows (rutas `C:\...`): el código debe ser portable (usar

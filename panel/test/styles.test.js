@@ -215,3 +215,89 @@ test('[F4-R91] styles.css define los selectores de la fase 4 con colores en vari
   }
   assert.match(css, /\.prompt-form textarea[^{]*\{[^}]*width:\s*100%/s, 'caja de mensaje a todo el ancho');
 });
+
+// ---------- Feature 13: lista compacta sin recortes, barra de la lista y estado del lote (F13-R50, F13-R51) ----------
+
+/** Todas las reglas { selector, body } de un fragmento de CSS (sin anidar @media). */
+function rules(source) {
+  const out = [];
+  for (const m of source.replace(/@media[^{]*\{/g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)) out.push({ selector: m[1].trim(), body: m[2] });
+  return out;
+}
+
+/** Todos los bloques @media con esa condición (puede haber varios). */
+function mediaBlocks(source, query) {
+  const out = [];
+  let from = 0;
+  for (;;) {
+    const start = source.indexOf(query, from);
+    if (start < 0) return out;
+    const block = mediaBlock(source.slice(start), query);
+    out.push(block);
+    from = start + block.length;
+  }
+}
+
+const selectorMentions = (selector, cls) => new RegExp(`\\.${cls}(?![\\w-])`).test(selector);
+
+test('[F13-R50] regla "nada recortado": sin text-overflow ni line-clamp, y sin max-height en fila, nombre, resumen, chips y tarjeta', () => {
+  assert.ok(!/text-overflow/.test(css), 'text-overflow no aparece en styles.css');
+  assert.ok(!/line-clamp/.test(css), 'line-clamp no aparece en styles.css');
+  for (const cls of ['project-row', 'row-main', 'row-name', 'row-summary', 'row-chips', 'card', 'card-summary']) {
+    const matching = rules(css).filter((r) => selectorMentions(r.selector, cls));
+    assert.ok(matching.length > 0, `hay reglas para .${cls}`);
+    for (const r of matching) {
+      assert.ok(!/max-height/.test(r.body), `.${cls} sin max-height (${r.selector})`);
+      if (['project-row', 'row-name', 'row-summary', 'row-chips'].includes(cls)) assert.ok(!/overflow:\s*hidden/.test(r.body), `.${cls} sin overflow: hidden (${r.selector})`);
+    }
+  }
+  const base = baseCss(css);
+  assert.match(base, /\.row-name\s*\{[^}]*line-height:\s*20px/s);
+  assert.match(base, /\.row-name\s*\{[^}]*white-space:\s*normal/s);
+  assert.match(base, /\.row-summary\s*\{[^}]*line-height:\s*18px/s);
+  assert.match(base, /\.row-summary\s*\{[^}]*white-space:\s*normal/s);
+  assert.match(base, /\.row-chips\s*\{[^}]*flex-wrap:\s*wrap/s, 'los chips pasan de línea');
+  assert.match(base, /\.row-main\s*\{[^}]*min-height:\s*44px/s);
+  const wide = mediaBlocks(css, '@media (min-width: 601px)').join('\n');
+  assert.match(wide, /\.row-main\s*\{[^}]*padding:\s*10px\s/s, 'relleno vertical de 10 px desde 601 px');
+  assert.match(wide, /\.cards\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(260px,\s*1fr\)\)/s);
+});
+
+test('[F13-R50] botón "⋯" y selector de modelo con 44 px, menú y colores de chips en claro y oscuro', () => {
+  assert.match(css, /\.row-menu-button\s*\{[^}]*min-width:\s*44px/s);
+  assert.match(css, /\.row-menu-button\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(css, /#work-model\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(css, /\.row-menu-list\s*\{[^}]*position:\s*absolute/s);
+  assert.ok(rules(css).some((r) => selectorMentions(r.selector, 'filter') && selectorMentions(r.selector, 'view') && /min-height:\s*44px/.test(r.body)), '.filter y .view con 44 px');
+  assert.match(css, /\.old-projects\s*>\s*summary\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(css, /\.run-model\s*\{[^}]*:/s);
+  const base = baseCss(css);
+  const dark = mediaBlock(css, '@media (prefers-color-scheme: dark)');
+  for (const variable of ['--chip-bg', '--chip-fg', '--chip-approval', '--chip-worktrees', '--row-hover']) {
+    assert.match(base, new RegExp(`:root\\s*\\{[^}]*${variable}:`, 's'), `${variable} en tema claro`);
+    assert.ok(dark.includes(`${variable}:`), `${variable} en tema oscuro`);
+  }
+  assert.match(css, /#projects\.view-list[^{]*\{[^}]*display:\s*block/s, 'la lista anula la rejilla');
+});
+
+test('[F13-R51] index.html: barra de la lista con buscador, filtros, vista, tareas sueltas, Generar resúmenes y #batch-status', async () => {
+  const attention = indexHtml.indexOf('id="attention"');
+  const toolbar = indexHtml.indexOf('id="list-toolbar"');
+  const projects = indexHtml.indexOf('id="projects"');
+  assert.ok(attention < toolbar && toolbar < projects, 'la barra va entre #attention y #projects');
+  assert.match(indexHtml, /<div class="list-toolbar" id="list-toolbar">/);
+  assert.match(indexHtml, /<label for="project-search" class="visually-hidden">Buscar proyectos<\/label>/);
+  assert.match(indexHtml, /<input id="project-search" type="search" autocomplete="off" placeholder="Buscar por nombre, resumen o etiqueta">/);
+  assert.match(indexHtml, /<div class="filters" role="group" aria-label="Filtrar proyectos">/);
+  for (const [filter, label, pressed] of [['all', 'Todos', 'true'], ['active', 'Activos', 'false'], ['pinned', 'Fijados', 'false'], ['attention', 'Te necesitan', 'false']]) {
+    assert.ok(indexHtml.includes(`<button type="button" class="filter" data-filter="${filter}" aria-pressed="${pressed}">${label}</button>`), filter);
+  }
+  assert.match(indexHtml, /<div class="view-toggle" role="group" aria-label="Vista">/);
+  assert.ok(indexHtml.includes('<button type="button" class="view" data-view="list" aria-pressed="true">Lista</button>'));
+  assert.ok(indexHtml.includes('<button type="button" class="view" data-view="cards" aria-pressed="false">Tarjetas</button>'));
+  assert.ok(indexHtml.includes('<label class="loose-toggle"><input type="checkbox" id="loose-toggle"> Mostrar tareas sueltas</label>'));
+  assert.ok(indexHtml.includes('<button type="button" class="btn" id="generate-summaries">Generar resúmenes</button>'));
+  assert.ok(indexHtml.includes('<div id="batch-status" class="batch-status" hidden aria-live="polite"></div>'));
+  const appJs = await fs.readFile(path.join(PUBLIC_DIR, 'app.js'), 'utf8');
+  assert.match(appJs, /from '\.\/list\.js'/, 'app.js usa list.js');
+});

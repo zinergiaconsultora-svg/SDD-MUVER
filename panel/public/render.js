@@ -15,6 +15,16 @@ const FEATURE_STATUS_LABELS = Object.freeze({
   done: 'Hecha',
 });
 
+/** Feature 13 (design.md §6.2): origen del resumen "de qué va". */
+export const SUMMARY_SOURCE_LABELS = Object.freeze({
+  manual: 'Escrito por ti',
+  claude: 'Generado por Claude',
+  package: 'De package.json',
+  readme: 'Del README',
+  'claude-md': 'De CLAUDE.md',
+});
+export const NO_SUMMARY_TEXT = 'Sin descripción';
+
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 export function escapeHtml(value) {
@@ -108,7 +118,7 @@ export function safeHttpUrl(value) {
   return typeof value === 'string' && /^https?:\/\//i.test(value) ? value : '';
 }
 
-function renderOpenApp(appUrl) {
+export function renderOpenApp(appUrl) {
   const safe = safeHttpUrl(appUrl);
   if (safe) {
     return `<a class="btn primary" href="${escapeHtml(safe)}" target="_blank" rel="noopener">Abrir app</a>`;
@@ -139,13 +149,13 @@ function renderClaudeActivity(claude, now) {
   return `<p class="claude-activity">Última sesión: ${escapeHtml(relativeTime(claude.lastActivityAt, now))} · ${count} ${count === 1 ? 'sesión' : 'sesiones'}</p>`;
 }
 
-function renderPinButton(project, id) {
+export function renderPinButton(project, id) {
   const pinned = project.pinned === true;
   const label = pinned ? 'Desfijar' : 'Fijar';
   return `<button type="button" class="btn icon" data-action="pin" data-id="${id}" aria-pressed="${pinned}" aria-label="${label}" title="${label}">📌</button>`;
 }
 
-function renderHideButton(project, id) {
+export function renderHideButton(project, id) {
   return `<button type="button" class="btn" data-action="hide" data-id="${id}">${project.hidden === true ? 'Mostrar' : 'Ocultar'}</button>`;
 }
 
@@ -156,8 +166,19 @@ function cardClasses(project) {
   return classes.join(' ');
 }
 
-/** Tarjeta de un proyecto del listado (R28, R29; fase 3: F3-R41, F3-R42). */
-export function renderProjectCard(project, now = Date.now()) {
+/** Resumen "de qué va" de la tarjeta: entero (regla "nada recortado") o "Sin descripción". */
+function renderCardSummary(project) {
+  return typeof project.summary === 'string' && project.summary
+    ? `<p class="card-summary">${escapeHtml(project.summary)}</p>`
+    : `<p class="card-summary is-empty">${NO_SUMMARY_TEXT}</p>`;
+}
+
+/**
+ * Tarjeta de un proyecto del listado (R28, R29; fase 3: F3-R41, F3-R42). Feature 13 (§6.3): compacta, con el resumen
+ * entero, la cabecera dentro del botón principal (abre el detalle) y las acciones de siempre (Abrir app, Repositorio,
+ * fijar, ocultar, Eliminar) dentro del menú "⋯" en lugar del pie de botones grandes.
+ */
+export function renderProjectCard(project, now = Date.now(), { worktreeCount = 0 } = {}) {
   const id = escapeHtml(project.id);
   const activity = isFromClaude(project) ? renderClaudeActivity(project.claude, now) : '';
   const body = project.exists === false
@@ -170,23 +191,31 @@ export function renderProjectCard(project, now = Date.now()) {
   const deleteButton = isManual(project)
     ? `<button type="button" class="btn danger" data-action="delete" data-id="${id}">Eliminar</button>`
     : '';
+  const count = Number(worktreeCount) || 0;
+  const tasks = count > 0 ? `<span class="row-chips"><span class="chip chip-worktrees">${count} ${count === 1 ? 'tarea en curso' : 'tareas en curso'}</span></span>` : '';
 
   return `<article class="${cardClasses(project)}" data-id="${id}">
-    <header class="card-header">
-      <h2>${escapeHtml(project.name)}</h2>
-      ${renderSourceBadge(project)}
-      ${statusBadge(project.status)}
-    </header>
+    <button type="button" class="card-main" data-action="detail" data-id="${id}">
+      <span class="card-header">
+        <span class="card-title">${escapeHtml(project.name)}</span>
+        ${renderSourceBadge(project)}
+        ${statusBadge(project.status)}
+      </span>
+    </button>
+    ${renderCardSummary(project)}
+    ${tasks}
     ${renderTags(project.tags)}
     <div class="card-body">${body}</div>
-    <footer class="card-actions">
-      ${renderOpenApp(project.appUrl)}
-      <button type="button" class="btn" data-action="detail" data-id="${id}">Detalle</button>
-      ${repoLink}
-      ${renderPinButton(project, id)}
-      ${renderHideButton(project, id)}
-      ${deleteButton}
-    </footer>
+    <div class="row-menu">
+      <button type="button" class="btn icon row-menu-button" data-action="menu" aria-haspopup="true" aria-expanded="false" aria-controls="menu-${id}" aria-label="Más acciones de ${escapeHtml(project.name)}">⋯</button>
+      <div class="row-menu-list" id="menu-${id}" role="menu" hidden>
+        ${renderOpenApp(project.appUrl)}
+        ${repoLink}
+        ${renderPinButton(project, id)}
+        ${renderHideButton(project, id)}
+        ${deleteButton}
+      </div>
+    </div>
   </article>`;
 }
 
@@ -204,9 +233,12 @@ export function renderClaudeNotice(status) {
   return '<p class="notice" role="status">Claude Code no detectado en este equipo: solo se muestran los proyectos añadidos a mano.</p>';
 }
 
-/** URL del listado (F3-R49). */
-export function buildProjectsUrl(showHidden) {
-  return showHidden === true ? '/api/projects?includeHidden=1' : '/api/projects';
+/** URL del listado (F3-R49). Feature 13: `fullWorktrees` añade worktrees=full (con "Mostrar tareas sueltas"). */
+export function buildProjectsUrl(showHidden, { fullWorktrees = false } = {}) {
+  const params = [];
+  if (showHidden === true) params.push('includeHidden=1');
+  if (fullWorktrees === true) params.push('worktrees=full');
+  return params.length ? `/api/projects?${params.join('&')}` : '/api/projects';
 }
 
 /** Separa los ocultos conservando el orden (F3-R49). */
@@ -236,6 +268,10 @@ export function renderSettingsForm(project) {
   const p = project || {};
   const id = escapeHtml(p.id);
   const tags = Array.isArray(p.tags) ? p.tags.join(', ') : '';
+  // Feature 13 (R46): el campo se rellena solo con un resumen guardado; el automático sale como placeholder.
+  const stored = p.summarySource === 'manual' || p.summarySource === 'claude';
+  const storedSummary = stored && typeof p.summary === 'string' ? p.summary : '';
+  const summaryPlaceholder = !stored && typeof p.summary === 'string' && p.summary ? p.summary : 'Ej.: CRM para gestionar los clientes de la consultora';
   return `<form id="settings-form" data-id="${id}" class="settings-form" novalidate>
     <div class="field">
       <label for="settings-name">Nombre</label>
@@ -253,6 +289,10 @@ export function renderSettingsForm(project) {
       <label for="settings-tags">Etiquetas separadas por comas</label>
       <input id="settings-tags" name="tags" type="text" autocomplete="off" placeholder="web, crm" value="${escapeHtml(tags)}">
     </div>
+    <div class="field">
+      <label for="settings-summary">De qué va (una frase)</label>
+      <textarea id="settings-summary" name="summary" rows="2" maxlength="200" autocomplete="off" placeholder="${escapeHtml(summaryPlaceholder)}" data-initial="${escapeHtml(storedSummary)}">${escapeHtml(storedSummary)}</textarea>
+    </div>
     <div id="settings-error" class="form-error-slot"></div>
     <div class="form-actions">
       <button type="submit" class="btn primary" id="settings-submit">Guardar ajustes</button>
@@ -260,16 +300,21 @@ export function renderSettingsForm(project) {
   </form>`;
 }
 
-/** Cuerpo del PATCH de ajustes: siempre los cuatro campos, para que vaciar uno lo borre (F3-R47). */
-export function buildSettingsPayload(formValues) {
+/**
+ * Cuerpo del PATCH de ajustes: siempre los cuatro campos, para que vaciar uno lo borre (F3-R47). Feature 13 (R46):
+ * `summary` solo si cambió respecto a `summaryInitial` (vaciarlo envía '' y vuelve el resumen automático).
+ */
+export function buildSettingsPayload(formValues, { summaryInitial } = {}) {
   const v = formValues || {};
   const clean = (value) => (typeof value === 'string' ? value.trim() : '');
-  return {
+  const payload = {
     name: clean(v.name),
     appUrl: clean(v.appUrl),
     repoUrl: clean(v.repoUrl),
     tags: clean(v.tags).split(',').map((t) => t.trim()).filter(Boolean),
   };
+  if (typeof v.summary === 'string' && clean(v.summary) !== clean(summaryInitial)) payload.summary = clean(v.summary);
+  return payload;
 }
 
 /** PATCH /api/projects/:id (F3-R48). */
@@ -297,7 +342,53 @@ function renderFeatureRow(feature) {
     </li>`;
 }
 
-/** Vista de detalle de un proyecto (R30). */
+/** Bloque "De qué va" del detalle (feature 13, R44). */
+function renderAboutSection(detail) {
+  const has = typeof detail.summary === 'string' && detail.summary;
+  const text = has
+    ? `<p class="about-summary">${escapeHtml(detail.summary)}</p>`
+    : `<p class="about-summary is-empty">${NO_SUMMARY_TEXT}</p>`;
+  const source = has && SUMMARY_SOURCE_LABELS[detail.summarySource] ? `<p class="muted about-source">Origen: ${escapeHtml(SUMMARY_SOURCE_LABELS[detail.summarySource])}</p>` : '';
+  return `<section class="detail-section about">
+      <h3>De qué va</h3>
+      ${text}
+      ${source}
+      <div class="about-actions">
+        <button type="button" class="btn" data-action="generate-summary">Generar con Claude</button>
+        <span id="summary-status" class="summary-status" role="status"></span>
+      </div>
+    </section>`;
+}
+
+/** Sección "Tareas en curso" del detalle de un principal (feature 13, R45); '' sin worktrees. */
+function renderWorktreesSection(worktrees, now) {
+  const list = Array.isArray(worktrees) ? worktrees : [];
+  if (!list.length) return '';
+  const items = list.map((w) => {
+    const id = escapeHtml(w.id);
+    const session = w.lastSessionAt ? `Última sesión: ${escapeHtml(relativeTime(w.lastSessionAt, now))}` : 'Sin sesiones';
+    const dirty = Number.isInteger(w.dirtyCount)
+      ? (w.dirtyCount > 0 ? `<span class="dirty">${w.dirtyCount} ${w.dirtyCount === 1 ? 'fichero' : 'ficheros'} sin commitear</span>` : '<span class="muted">Sin cambios sin commitear</span>')
+      : '';
+    const hidden = w.hidden === true;
+    return `<li class="worktree-item${hidden ? ' is-hidden' : ''}">
+        <span class="worktree-name">${escapeHtml(w.name)}${hidden ? ' <span class="muted">(oculta)</span>' : ''}</span>
+        ${w.branch ? `<span class="branch">${escapeHtml(w.branch)}</span>` : ''}
+        <span class="muted">${session}</span>
+        ${dirty}
+        <span class="worktree-actions">
+          <button type="button" class="btn" data-action="detail" data-id="${id}">Ver detalle</button>
+          <button type="button" class="btn" data-action="toggle-worktree" data-id="${id}" data-hidden="${hidden}">${hidden ? 'Mostrar' : 'Ocultar'}</button>
+        </span>
+      </li>`;
+  });
+  return `<section class="detail-section worktrees">
+      <h3>Tareas en curso</h3>
+      <ul class="worktree-list">${items.join('')}</ul>
+    </section>`;
+}
+
+/** Vista de detalle de un proyecto (R30). Feature 13: "De qué va", enlace al principal y "Tareas en curso". */
 export function renderProjectDetail(detail, now = Date.now()) {
   const features = (detail.sdd && detail.sdd.features) || [];
   const featuresHtml = detail.sdd && detail.sdd.present
@@ -335,9 +426,12 @@ export function renderProjectDetail(detail, now = Date.now()) {
       ${renderSourceBadge(detail)}
       ${statusBadge(detail.status)}
     </header>
+    ${renderAboutSection(detail)}
+    ${detail.parentId ? `<p class="parent-link"><button type="button" class="btn link" data-action="detail" data-id="${escapeHtml(detail.parentId)}">Tarea de ${escapeHtml(detail.parentName)}</button></p>` : ''}
     <p class="muted detail-id">id: ${escapeHtml(detail.id)}</p>
     ${detail.exists === false ? '<p class="missing">Ruta no encontrada</p>' : ''}
     ${detail.unresolved === true ? '<p class="missing">Ruta no resuelta</p>' : ''}
+    ${renderWorktreesSection(detail.worktrees, now)}
     <section class="detail-section">
       <h3>Features</h3>
       ${featuresHtml}

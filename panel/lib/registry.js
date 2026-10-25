@@ -4,13 +4,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { isValidAllowedCommand, normalizeCommand } from './claude-cli.js';
+import { isValidAllowedCommand, normalizeCommand, isValidModel, CLI_MODELS } from './claude-cli.js';
 import { parseCommandLine } from './exec-utils.js';
 
 export const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** Campos que admite PATCH /api/projects/:id (fase 3). */
-export const PATCHABLE_FIELDS = Object.freeze(['name', 'appUrl', 'repoUrl', 'tags', 'hidden', 'pinned', 'allowedCommands', 'testCommand']);
+export const PATCHABLE_FIELDS = Object.freeze(['name', 'appUrl', 'repoUrl', 'tags', 'hidden', 'pinned', 'allowedCommands', 'testCommand', 'summary', 'model']);
 
 /** Campos de ejecución: un PATCH que los trae es una acción de ejecución (F4-R63). */
 export const EXEC_FIELDS = Object.freeze(['allowedCommands', 'testCommand']);
@@ -21,6 +21,13 @@ export const EXEC_ERRORS = Object.freeze({
   tooManyCommands: 'Como mucho 30 comandos autorizados',
   invalidTestCommand: (reason) => `Comando de tests no válido: ${reason}`,
   invalidUrl: 'La URL debe empezar por http:// o https://',
+});
+
+/** Feature 13 (design.md §4.3): textos de error del resumen y del modelo. */
+export const SETTINGS_ERRORS = Object.freeze({
+  summaryNotText: 'El resumen debe ser un texto',
+  summaryTooLong: 'El resumen no puede superar 200 caracteres',
+  invalidModel: 'Modelo no válido: elige Por defecto, Haiku, Sonnet u Opus',
 });
 
 const PATCH_ERRORS = Object.freeze({
@@ -72,7 +79,36 @@ export function normalizeSettings(entry) {
   };
   if ('allowedCommands' in source) normalized.allowedCommands = cleanAllowedCommands(source.allowedCommands);
   if ('testCommand' in source) normalized.testCommand = typeof source.testCommand === 'string' ? source.testCommand : '';
+  // Feature 13 (§3.1): el resumen guardado se conserva solo si es válido; si no, se quitan sus tres campos.
+  const stored = storedSummaryOf(source);
+  delete normalized.summary;
+  delete normalized.summarySource;
+  delete normalized.summaryAt;
+  if (stored) {
+    normalized.summary = stored.summary;
+    normalized.summarySource = stored.summarySource;
+    if (stored.summaryAt) normalized.summaryAt = stored.summaryAt;
+  }
+  if ('model' in source && !CLI_MODELS.includes(source.model)) delete normalized.model;
   return normalized;
+}
+
+/** Copia de la entrada con el resumen manual `value` y su hora, o sin resumen guardado si `value` es '' (pura). */
+export function applySummaryChange(entry, value, nowIso) {
+  const { summary, summarySource, summaryAt, ...rest } = entry || {};
+  if (value === '') return rest;
+  return { ...rest, summary: value, summarySource: 'manual', summaryAt: nowIso };
+}
+
+/** Copia de la entrada con el modelo recordado, o sin él con 'default' (pura). */
+export function applyModelChange(entry, value) {
+  const { model, ...rest } = entry || {};
+  return value === 'default' ? rest : { ...rest, model: value };
+}
+
+/** Modelo recordado válido de una entrada o 'default'. */
+export function modelOf(entry) {
+  return entry && CLI_MODELS.includes(entry.model) ? entry.model : 'default';
 }
 
 /** Ajustes de ejecución efectivos de una entrada (o null): { allowedCommands: [], testCommand: '' } por defecto. */
@@ -81,6 +117,32 @@ export function execSettingsOf(entry) {
   return {
     allowedCommands: cleanAllowedCommands(source.allowedCommands),
     testCommand: typeof source.testCommand === 'string' ? source.testCommand.trim() : '',
+  };
+}
+
+// ---------- Feature 13: resumen guardado (design.md §3.1, §5.8) ----------
+
+export const STORED_SUMMARY_MAX_CHARS = 200;
+export const SUMMARY_SOURCES_STORED = Object.freeze(['manual', 'claude']);
+
+/** Texto con los espacios colapsados y recortado. */
+export function collapseSpaces(value) {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+}
+
+/**
+ * Resumen guardado de una entrada ({ summary, summarySource, summaryAt }) o null: `summary` de 1 a 200 caracteres;
+ * un `summarySource` distinto de "claude" (o ausente, p. ej. editado a mano) se trata como "manual".
+ */
+export function storedSummaryOf(entry) {
+  if (!entry || typeof entry !== 'object' || typeof entry.summary !== 'string') return null;
+  const summary = collapseSpaces(entry.summary);
+  const length = [...summary].length;
+  if (length === 0 || length > STORED_SUMMARY_MAX_CHARS) return null;
+  return {
+    summary,
+    summarySource: entry.summarySource === 'claude' ? 'claude' : 'manual',
+    summaryAt: typeof entry.summaryAt === 'string' && entry.summaryAt ? entry.summaryAt : null,
   };
 }
 
@@ -238,6 +300,12 @@ function patchValue(field, value) {
     return isHttpUrl(trimmed) ? { ok: true, value: trimmed } : { ok: false, error: EXEC_ERRORS.invalidUrl };
   }
   if (field === 'allowedCommands') return patchAllowedCommands(value);
+  if (field === 'summary') {
+    if (typeof value !== 'string') return { ok: false, error: SETTINGS_ERRORS.summaryNotText };
+    const clean = collapseSpaces(value);
+    return [...clean].length > STORED_SUMMARY_MAX_CHARS ? { ok: false, error: SETTINGS_ERRORS.summaryTooLong } : { ok: true, value: clean };
+  }
+  if (field === 'model') return isValidModel(value) ? { ok: true, value } : { ok: false, error: SETTINGS_ERRORS.invalidModel };
   if (field === 'testCommand') return patchTestCommand(value);
   if (field === 'tags') {
     if (!Array.isArray(value) || !value.every((t) => typeof t === 'string')) return { ok: false };

@@ -455,3 +455,59 @@ test('[F14-R37] "Ajustes de ejecución": texto de ayuda bajo cada campo para no 
   assert.ok(html.indexOf(help2) > html.indexOf('id="exec-test"'));
   assert.ok(html.includes('aria-describedby="exec-allowed-help"') && html.includes('aria-describedby="exec-test-help"'));
 });
+
+// ---------- Feature 13: selector de modelo y modelo en la ejecución y el historial (F13-R59, F13-R60) ----------
+
+const { renderModelSelect, buildSddPayload, modelLabel, renderRunHeader } = await import('../public/work.js');
+
+const MODELS = [
+  { value: 'default', label: 'Por defecto' },
+  { value: 'haiku', label: 'Haiku' },
+  { value: 'sonnet', label: 'Sonnet' },
+  { value: 'opus', label: 'Opus' },
+];
+
+test('[F13-R59] renderModelSelect y renderWorkView con el modelo recordado seleccionado', () => {
+  const select = renderModelSelect(MODELS, 'opus');
+  assert.ok(select.startsWith('<label for="work-model">Modelo</label><select id="work-model" name="model">'));
+  assert.ok(select.includes('<option value="opus" selected>Opus</option>'));
+  assert.ok(select.includes('<option value="default">Por defecto</option>'));
+  assert.equal(select.split('<option').length - 1, 4);
+  assert.ok(!renderModelSelect([{ value: '<x>', label: '<b>' }], '<x>').includes('<b>'), 'escapado');
+  const html = renderWorkView(work({ models: MODELS, model: 'sonnet' }), { runs: [], now: NOW });
+  const form = html.slice(html.indexOf('<form id="prompt-form"'), html.indexOf('</form>'));
+  assert.ok(form.includes('<option value="sonnet" selected>Sonnet</option>'), 'dentro del formulario');
+  assert.ok(form.indexOf('id="work-model"') > form.indexOf('id="work-session"'), 'debajo del selector de sesión');
+  assert.ok(!renderWorkView(work(), { runs: [], now: NOW }).includes('work-model'), 'sin models (respuesta antigua) no se pinta');
+});
+
+test('[F13-R59] buildRunPayload con y sin model, buildSddPayload y describeAction con el modelo', () => {
+  assert.deepEqual(buildRunPayload({ prompt: 'hola', session: 'new', model: 'opus' }), { prompt: 'hola', session: { mode: 'new' }, model: 'opus' });
+  assert.deepEqual(buildRunPayload({ prompt: 'hola', session: 'new' }), { prompt: 'hola', session: { mode: 'new' } }, 'sin model, el cuerpo de la fase 4');
+  assert.deepEqual(buildSddPayload({ model: 'haiku' }), { model: 'haiku' });
+  assert.deepEqual(buildSddPayload({ session: { mode: 'continue' }, model: 'default' }), { session: { mode: 'continue' }, model: 'default' });
+  assert.deepEqual(buildSddPayload({}), {});
+  assert.deepEqual(buildSddPayload(), {});
+  const ctx = { projectName: 'A', allowedCommands: [], prompt: 'p', session: { mode: 'new' } };
+  assert.ok(describeAction('chat', { ...ctx, model: 'opus' }).endsWith(' Modelo: Opus.'));
+  assert.ok(describeAction('implement', { projectName: 'A', model: 'default' }).endsWith(' Modelo: el configurado en Claude Code.'));
+  assert.ok(describeAction('approve-tests', { projectName: 'A', model: 'haiku' }).endsWith(' Modelo: Haiku.'));
+  assert.equal(describeAction('implement', { projectName: 'A', allowedCommands: ['npm test'] }), 'Se lanzará Claude Code en A con «implementa la siguiente tarea pendiente» (nueva conversación). Claude puede editar ficheros y ejecutar solo: git status, git diff, git log y npm test.', 'sin ctx.model, el texto de la fase 4');
+});
+
+test('[F13-R60] modelLabel, renderRunHeader y renderRunList con model: "opus", null y sin campo', () => {
+  assert.equal(modelLabel('opus'), 'Opus');
+  assert.equal(modelLabel('haiku'), 'Haiku');
+  assert.equal(modelLabel('sonnet'), 'Sonnet');
+  assert.equal(modelLabel(null), 'Modelo por defecto');
+  assert.equal(modelLabel(undefined), '');
+  assert.equal(renderRunHeader({ model: 'opus' }), '<span class="run-model">Opus</span>');
+  assert.equal(renderRunHeader({ model: null }), '<span class="run-model">Modelo por defecto</span>');
+  assert.equal(renderRunHeader({}), '');
+  assert.equal(renderRunHeader(null), '');
+  const base = { label: 'Chat', state: 'succeeded', startedAt: new Date(NOW - MIN).toISOString(), durationMs: 1000, costUsd: null };
+  const html = renderRunList([{ ...base, runId: 'aaaaaa-00000001', model: 'opus' }, { ...base, runId: 'aaaaaa-00000002', model: null }, { ...base, runId: 'aaaaaa-00000003' }], NOW);
+  assert.ok(html.includes('<span class="run-model">Opus</span>'));
+  assert.ok(html.includes('<span class="run-model">Modelo por defecto</span>'));
+  assert.equal(html.split('class="run-model"').length - 1, 2, 'el run antiguo sin campo no muestra modelo');
+});

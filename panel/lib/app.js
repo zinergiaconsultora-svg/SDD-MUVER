@@ -9,7 +9,18 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { loadRegistry, saveRegistry, validateNewProject, removeProject, validatePatch, upsertSettings, execSettingsOf, EXEC_FIELDS } from './registry.js';
+import {
+  loadRegistry,
+  saveRegistry,
+  validateNewProject,
+  removeProject,
+  validatePatch,
+  upsertSettings,
+  execSettingsOf,
+  applySummaryChange,
+  applyModelChange,
+  EXEC_FIELDS,
+} from './registry.js';
 import { createClaudeDiscovery, DEFAULT_TTL_MS } from './claude-discovery.js';
 import { buildCatalog, findMerged, buildCatalogDetail, buildCatalogSummary, mergeProjects } from './project-catalog.js';
 import {
@@ -34,6 +45,9 @@ import { createGitRunner } from './git-info.js';
 import { isTunnelRequest } from './reauth.js';
 import { createAccessVerifier, ACCESS_HEADER } from './cf-access.js';
 import { createAuditLog } from './audit.js';
+import { createRepoLayoutCache } from './repo-layout.js';
+import { createSummaryReader } from './project-summary.js';
+import { createSummaryApi } from './summary-api.js';
 
 const API_PREFIX = '/api/';
 const AUTH_PREFIX = '/api/auth/';
@@ -125,8 +139,12 @@ export function createApp({
   let projectDirsSnapshot = [];
   const resolver = binaryResolver ?? createBinaryResolver({ platform, env, bashBin, panelDir, getProjectDirs: () => projectDirsSnapshot });
   const gitRunner = runner ?? createGitRunner({ resolver, platform });
+  // Feature 13 (design.md §5.9): clasificación de worktrees en caché (10 min) con el runner central de git y resumen
+  // automático en caché (5 min).
+  const layoutCache = createRepoLayoutCache({ runner: gitRunner, now });
+  const summaryReader = createSummaryReader({ now });
 
-  const catalogOptions = () => ({ now, runner: gitRunner });
+  const catalogOptions = () => ({ now, runner: gitRunner, layoutCache, summaryReader });
 
   const accessConfigured = Boolean(cfAccess && !cfAccess.error && cfAccess.team && cfAccess.aud);
   const accessVerifier = accessConfigured
@@ -159,6 +177,9 @@ export function createApp({
     extraEnv,
     audit,
   });
+
+  // Feature 13 (design.md §4.2, §5.5): generación de resúmenes en solo lectura (individual y en lote).
+  const summaryApi = createSummaryApi({ projectsFile, loadSources: () => loadSources(), workApi, audit, now, trustProxy });
 
   // ---------- Estado de autenticación ----------
 
@@ -360,15 +381,16 @@ export function createApp({
     console.error('[panel] No se pudo leer el catálogo al arrancar:', err && err.message ? err.message : err);
   });
 
-  async function listProjects(res, { includeHidden }) {
+  async function listProjects(res, { includeHidden, fullWorktrees }) {
     const sources = await loadSources();
-    sendJson(res, 200, await buildCatalog({ ...sources, includeHidden, ...catalogOptions() }));
+    sendJson(res, 200, await buildCatalog({ ...sources, includeHidden, fullWorktrees, ...catalogOptions() }));
   }
 
   async function getProject(res, id) {
-    const merged = findMerged(await loadSources(), id);
+    const sources = await loadSources();
+    const merged = findMerged(sources, id);
     if (!merged) return sendJson(res, 404, { error: ERRORS.projectNotFound });
-    sendJson(res, 200, await buildCatalogDetail(merged, catalogOptions()));
+    sendJson(res, 200, await buildCatalogDetail(merged, { ...catalogOptions(), sources }));
   }
 
   async function createProject(req, res) {
@@ -416,12 +438,16 @@ export function createApp({
       hidden: false,
       pinned: false,
     };
-    const next = { ...entry, ...valid.changes };
+    // Feature 13 (§5.9): summary y model no se copian tal cual; pasan por sus funciones puras.
+    const { summary, model, ...plainChanges } = valid.changes;
+    let next = { ...entry, ...plainChanges };
+    if (summary !== undefined) next = applySummaryChange(next, summary, new Date(now()).toISOString());
+    if (model !== undefined) next = applyModelChange(next, model);
     const registry = upsertSettings(sources.registry, next);
     await saveRegistry(projectsFile, registry);
     // Se recalcula la fusión con el registro nuevo (el proyecto pasa a "both" si era solo de Claude).
     const updated = findMerged({ registry, discovery: sources.discovery }, id);
-    return reply(200, await buildCatalogSummary(updated, catalogOptions()));
+    return reply(200, await buildCatalogSummary(updated, { ...catalogOptions(), sources: { registry, discovery: sources.discovery } }));
   }
 
   async function deleteProject(res, id) {
@@ -445,7 +471,9 @@ export function createApp({
     const method = req.method;
     if (pathname === '/api/claude/status' && method === 'GET') return claudeStatus(res);
     if (pathname === '/api/projects') {
-      if (method === 'GET') return listProjects(res, { includeHidden: url.searchParams.get('includeHidden') === '1' });
+      if (method === 'GET') {
+        return listProjects(res, { includeHidden: url.searchParams.get('includeHidden') === '1', fullWorktrees: url.searchParams.get('worktrees') === 'full' });
+      }
       if (method === 'POST') return createProject(req, res);
       return sendJson(res, 404, { error: ERRORS.notFound });
     }
@@ -480,6 +508,7 @@ export function createApp({
     const { renewed } = await sessions.touch(session.id);
     if (renewed) setSessionCookie(req, res, sessionToken(req));
     if (await workApi.route(req, res, url, session)) return undefined;
+    if (await summaryApi.route(req, res, url, session)) return undefined;
     return routeApi(req, res, url, session);
   }
 
@@ -533,10 +562,15 @@ export function createApp({
   // que de otro modo mantendrían abiertas sus conexiones e impedirían el cierre (F4-R33).
   const originalClose = server.close.bind(server);
   server.close = (callback) => {
+    summaryApi.close();
     workApi.close();
     return originalClose(callback);
   };
-  server.on('close', () => workApi.close());
+  server.on('close', () => {
+    summaryApi.close();
+    workApi.close();
+  });
   server.workApi = workApi;
+  server.summaryApi = summaryApi;
   return server;
 }

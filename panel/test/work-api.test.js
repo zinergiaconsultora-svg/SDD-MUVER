@@ -352,6 +352,14 @@ test('[F4-R6] GET /api/projects/:id/work: con arnés, git, init.sh y allowedComm
     activeRun: null,
     sessions: [{ id: 's-1', title: 'primera sesión', lastActivityAt: '2026-10-24T09:00:00.000Z' }],
     broadCommands: [], // feature 14 (F14-R18)
+    // Feature 13 (F13-R58, design.md §3.7): modelo recordado y opciones del selector (ajuste declarado).
+    model: 'default',
+    models: [
+      { value: 'default', label: 'Por defecto' },
+      { value: 'haiku', label: 'Haiku' },
+      { value: 'sonnet', label: 'Sonnet' },
+      { value: 'opus', label: 'Opus' },
+    ],
   });
   const b = await ctx.authed('/api/projects/bare/work');
   assert.equal(b.json.hasSdd, false);
@@ -635,4 +643,90 @@ test('[F14-R34] POST /permissions y PATCH exigen acknowledgeBroad para git fetch
   assert.equal(patch.status, 400);
   assert.deepEqual(patch.json.broadCommands, ['git fetch', 'npx.cmd', 'Invoke-Expression', 'git grep']);
   assert.deepEqual((await readJsonFile(ctx.registryFile)).projects[0].allowedCommands ?? [], []);
+});
+
+// ---------- Feature 13: modelo de Claude en los runs de trabajo (F13-R56, F13-R57, F13-R58) ----------
+
+const MODEL_FEATURES = { features: [{ id: 1, slug: 'uno', description: 'Uno', status: 'in_progress' }] };
+
+/** Argumentos de la última invocación del CLI falso. */
+async function lastArgv(ctx) {
+  const log = (await readFakeLog(ctx.app.fakeLog)).filter((e) => e.argv);
+  return log.at(-1);
+}
+
+test('[F13-R56] chat con sonnet, implement sin model (usa el recordado) y chat con default (quita el campo)', async () => {
+  const dir = await makeProjectDir({ featureList: MODEL_FEATURES });
+  const ctx = await setup({ dir });
+  const readEntry = async () => JSON.parse(await fs.readFile(ctx.registryFile, 'utf8')).projects.find((p) => p.id === 'proy');
+
+  const chat = await ctx.post('/api/projects/proy/runs', { prompt: 'Hola', model: 'sonnet' });
+  assert.equal(chat.status, 202, chat.text);
+  assert.equal(chat.json.model, 'sonnet');
+  await wait(ctx, chat.json.runId);
+  let entry = await lastArgv(ctx);
+  assert.equal(entry.model, 'sonnet');
+  const idx = entry.argv.indexOf('--model');
+  assert.ok(idx > 0 && entry.argv[idx + 1] === 'sonnet');
+  assert.equal(entry.argv.at(-2), '--allowedTools', '--allowedTools sigue siendo la última');
+  assert.ok(idx < entry.argv.indexOf('--allowedTools'));
+  assert.equal((await readEntry()).model, 'sonnet', 'modelo recordado en el registro');
+
+  const implement = await ctx.post('/api/projects/proy/sdd/implement', {});
+  assert.equal(implement.status, 202, implement.text);
+  assert.equal(implement.json.model, 'sonnet', 'sin model usa el recordado');
+  await wait(ctx, implement.json.runId);
+  entry = await lastArgv(ctx);
+  assert.equal(entry.model, 'sonnet');
+
+  const plain = await ctx.post('/api/projects/proy/runs', { prompt: 'Otra', model: 'default' });
+  assert.equal(plain.status, 202);
+  assert.equal(plain.json.model, null);
+  await wait(ctx, plain.json.runId);
+  entry = await lastArgv(ctx);
+  assert.ok(!entry.argv.includes('--model'), 'default no pasa --model');
+  assert.ok(!('model' in (await readEntry())), 'default quita el campo del registro');
+
+  const approve = await ctx.post('/api/projects/proy/sdd/approve-tests', { model: 'opus' });
+  assert.equal(approve.status, 202, approve.text);
+  assert.equal(approve.json.model, 'opus');
+  await wait(ctx, approve.json.runId);
+  assert.equal((await lastArgv(ctx)).model, 'opus');
+
+  const runs = await ctx.authed('/api/projects/proy/runs');
+  assert.deepEqual(runs.json.map((m) => m.model), ['opus', null, 'sonnet', 'sonnet']);
+  const audit = (await fs.readFile(path.join(ctx.app.dataDir, 'audit.log'), 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.ok(audit.some((a) => a.action === 'run.chat' && a.detail && a.detail.model === 'sonnet'), 'detail.model en la auditoría');
+});
+
+test('[F13-R57] model inválido en runs y botones SDD → 400 sin proceso ni escritura del registro', async () => {
+  const dir = await makeProjectDir({ featureList: MODEL_FEATURES });
+  const ctx = await setup({ dir });
+  const before = await fs.readFile(ctx.registryFile);
+  for (const model of ['gpt-4', 3, 'haiku --verbose']) {
+    for (const [url, body] of [['/api/projects/proy/runs', { prompt: 'Hola', model }], ['/api/projects/proy/sdd/implement', { model }], ['/api/projects/proy/sdd/approve-tests', { model }]]) {
+      const r = await ctx.post(url, body);
+      assert.equal(r.status, 400, `${url} ${JSON.stringify(model)}`);
+      assert.deepEqual(r.json, { error: 'Modelo no válido: elige Por defecto, Haiku, Sonnet u Opus', field: 'model' });
+    }
+  }
+  assert.equal(await fileExists(ctx.app.fakeLog), false, 'ningún proceso');
+  assert.ok((await fs.readFile(ctx.registryFile)).equals(before), 'registro sin cambios');
+});
+
+test('[F13-R58] GET /work trae model (recordado o default) y models', async () => {
+  const dir = await makeProjectDir();
+  const other = await makeProjectDir();
+  cleanup.push(other);
+  const ctx = await setup({ dir, entries: [{ id: 'proy', name: 'Proy', path: dir }, { id: 'opus', name: 'Opus', path: other, model: 'opus' }] });
+  const plain = await ctx.authed('/api/projects/proy/work');
+  assert.equal(plain.json.model, 'default');
+  assert.deepEqual(plain.json.models, [
+    { value: 'default', label: 'Por defecto' },
+    { value: 'haiku', label: 'Haiku' },
+    { value: 'sonnet', label: 'Sonnet' },
+    { value: 'opus', label: 'Opus' },
+  ]);
+  const remembered = await ctx.authed('/api/projects/opus/work');
+  assert.equal(remembered.json.model, 'opus');
 });

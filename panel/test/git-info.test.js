@@ -93,13 +93,15 @@ test('[R12] runner espía: binario git, argumentos permitidos, cwd y timeout 500
   assert.equal(info.lastCommit.date, '2026-10-20T17:03:11+02:00');
 });
 
-test('[R12][F4-R61] GIT_COMMANDS es la lista cerrada documentada en design.md (status con --no-optional-locks)', () => {
+test('[R12][F4-R61][F13-R26] GIT_COMMANDS es la lista cerrada documentada en design.md (status con --no-optional-locks)', () => {
+  // Feature 13 (design.md §5.7, §7.4): entrada nueva al final para clasificar worktrees (cambio declarado).
   assert.deepEqual(GIT_COMMANDS, [
     ['rev-parse', '--is-inside-work-tree'],
     ['rev-parse', '--abbrev-ref', 'HEAD'],
     ['log', '-1', '--format=%H%x1f%cI%x1f%s'],
     ['log', '-10', '--format=%H%x1f%cI%x1f%s'],
     ['--no-optional-locks', 'status', '--porcelain'],
+    ['--no-optional-locks', 'rev-parse', '--git-dir', '--git-common-dir'],
   ]);
 });
 

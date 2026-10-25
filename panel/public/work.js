@@ -13,6 +13,9 @@ export const STATE_LABELS = Object.freeze({
 });
 
 export const ACTIVE_STATES = Object.freeze(['queued', 'running']);
+
+/** Feature 13 (§6.7): etiquetas del modelo (mismo texto que MODEL_LABELS de lib/claude-cli.js). */
+export const MODEL_LABELS = Object.freeze({ default: 'Por defecto', haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' });
 export const MAX_LOG_EVENTS = 2000;
 const PROMPT_PREVIEW_IN_DIALOG = 300;
 const DEFAULT_COMMANDS = ['git status', 'git diff', 'git log'];
@@ -65,7 +68,19 @@ export function renderSessionSelect(sessions) {
   return `<select id="work-session" name="session">${options.join('')}</select>`;
 }
 
+/** Feature 13 (R59): selector "Modelo" con las opciones de GET …/work y el recordado seleccionado. */
+export function renderModelSelect(models, selected) {
+  const list = Array.isArray(models) ? models : [];
+  const options = list.map((m) => `<option value="${escapeHtml(m.value)}"${m.value === selected ? ' selected' : ''}>${escapeHtml(m.label)}</option>`);
+  return `<label for="work-model">Modelo</label><select id="work-model" name="model">${options.join('')}</select>`;
+}
+
 function renderPromptForm(work) {
+  const model = Array.isArray(work.models) && work.models.length
+    ? `<div class="field">
+        ${renderModelSelect(work.models, work.model || 'default')}
+      </div>`
+    : '';
   return `<form id="prompt-form" class="prompt-form" novalidate>
       <div class="field">
         <label for="work-prompt">Mensaje para Claude Code</label>
@@ -75,6 +90,7 @@ function renderPromptForm(work) {
         <label for="work-session">Sesión</label>
         ${renderSessionSelect(work.sessions)}
       </div>
+      ${model}
       <div class="form-actions">
         <button type="submit" class="btn primary" data-action="send-prompt">Enviar</button>
       </div>
@@ -138,6 +154,7 @@ export function renderWorkView(work, { runs = [], now = Date.now() } = {}) {
       <div class="run-panel-header">
         <h3 id="run-panel-title">Ejecución</h3>
         <span id="run-state" class="run-state"></span>
+        <span id="run-model" class="run-model-slot"></span>
         <button type="button" class="btn danger" data-action="cancel-run" hidden>Cancelar</button>
       </div>
       <div id="run-permission" class="run-permission"></div>
@@ -166,17 +183,25 @@ function promptPreview(prompt) {
   return chars.length > PROMPT_PREVIEW_IN_DIALOG ? chars.slice(0, PROMPT_PREVIEW_IN_DIALOG).join('') + '…' : chars.join('');
 }
 
+/** Feature 13 (R59): frase del modelo para el diálogo ('' sin ctx.model: texto de la fase 4). */
+function modelText(model) {
+  if (model === undefined || model === null) return '';
+  if (model === 'default') return ' Modelo: el configurado en Claude Code.';
+  return MODEL_LABELS[model] ? ` Modelo: ${MODEL_LABELS[model]}.` : '';
+}
+
 /** Texto (HTML ya escapado) del diálogo de confirmación de cada acción (design.md §6.3). */
 export function describeAction(action, ctx = {}) {
   const name = escapeHtml(ctx.projectName);
   const tools = escapeHtml(commandsText(ctx.allowedCommands));
+  const model = modelText(ctx.model);
   switch (action) {
     case 'chat':
-      return `Se lanzará Claude Code en ${name} con el mensaje: «${escapeHtml(promptPreview(ctx.prompt))}». Sesión: ${sessionText(ctx.session)}. Claude puede editar ficheros y ejecutar solo: ${tools}.`;
+      return `Se lanzará Claude Code en ${name} con el mensaje: «${escapeHtml(promptPreview(ctx.prompt))}». Sesión: ${sessionText(ctx.session)}. Claude puede editar ficheros y ejecutar solo: ${tools}.${model}`;
     case 'implement':
-      return `Se lanzará Claude Code en ${name} con «implementa la siguiente tarea pendiente» (nueva conversación). Claude puede editar ficheros y ejecutar solo: ${tools}.`;
+      return `Se lanzará Claude Code en ${name} con «implementa la siguiente tarea pendiente» (nueva conversación). Claude puede editar ficheros y ejecutar solo: ${tools}.${model}`;
     case 'approve-tests':
-      return `Se lanzará Claude Code en ${name} con «tests aprobados, lanza al reviewer» continuando la última sesión. Claude puede editar ficheros y ejecutar solo: ${tools}.`;
+      return `Se lanzará Claude Code en ${name} con «tests aprobados, lanza al reviewer» continuando la última sesión. Claude puede editar ficheros y ejecutar solo: ${tools}.${model}`;
     case 'approve-spec':
       return `Se cambiará la feature #${escapeHtml(ctx.featureId)} ${escapeHtml(ctx.featureSlug)} de spec_ready a in_progress en feature_list.json de ${name}. Después podrás lanzar «Implementar siguiente tarea».`;
     case 'tests':
@@ -309,6 +334,19 @@ export function renderRunLog(events) {
 
 // ---------- Historial (R88) ----------
 
+/** Feature 13 (R60): nombre del modelo de un run; null = por defecto; sin campo (run antiguo) = ''. */
+export function modelLabel(model) {
+  if (model === undefined) return '';
+  if (model === null) return 'Modelo por defecto';
+  return MODEL_LABELS[model] && model !== 'default' ? MODEL_LABELS[model] : 'Modelo por defecto';
+}
+
+/** Etiqueta del modelo en la cabecera de la ejecución y en el historial ('' para runs anteriores a la feature 13). */
+export function renderRunHeader(meta) {
+  if (!meta || typeof meta !== 'object' || !('model' in meta)) return '';
+  return `<span class="run-model">${escapeHtml(modelLabel(meta.model))}</span>`;
+}
+
 /** Historial de runs con etiqueta, estado, fecha relativa, duración, coste y botón para reabrir. */
 export function renderRunList(runs, now = Date.now()) {
   const list = Array.isArray(runs) ? runs : [];
@@ -317,6 +355,7 @@ export function renderRunList(runs, now = Date.now()) {
     const extra = [formatDuration(run.durationMs), formatCost(run.costUsd)].filter(Boolean).map(escapeHtml);
     return `<li class="run-item">
         <span class="run-label">${escapeHtml(run.label)}</span>
+        ${renderRunHeader(run)}
         ${stateBadge(run.state)}
         <time datetime="${escapeHtml(run.startedAt)}">${escapeHtml(relativeTime(run.startedAt, now))}</time>
         ${extra.length ? `<span class="run-meta">${extra.join(' · ')}</span>` : ''}
@@ -445,7 +484,18 @@ export function buildRunPayload(formValues) {
   let session = { mode: 'new' };
   if (value === 'continue') session = { mode: 'continue' };
   else if (value.startsWith('resume:')) session = { mode: 'resume', id: value.slice('resume:'.length) };
-  return { prompt: typeof v.prompt === 'string' ? v.prompt : '', session };
+  const payload = { prompt: typeof v.prompt === 'string' ? v.prompt : '', session };
+  // Feature 13 (R59): el modelo elegido; sin él, el cuerpo de la fase 4.
+  if (typeof v.model === 'string' && v.model) payload.model = v.model;
+  return payload;
+}
+
+/** Cuerpo de "Implementar siguiente tarea" / "Aprobar tests" con los campos presentes (feature 13). */
+export function buildSddPayload({ session, model } = {}) {
+  const payload = {};
+  if (session) payload.session = session;
+  if (typeof model === 'string' && model) payload.model = model;
+  return payload;
 }
 
 /** Cuerpo del PATCH de ajustes de ejecución (comandos uno por línea). */

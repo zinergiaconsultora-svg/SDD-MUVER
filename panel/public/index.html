@@ -35,6 +35,25 @@
       </div>
       <div id="claude-notice" class="claude-notice"></div>
       <section id="attention" class="attention" hidden aria-live="polite"></section>
+      <div class="list-toolbar" id="list-toolbar">
+        <div class="search-field">
+          <label for="project-search" class="visually-hidden">Buscar proyectos</label>
+          <input id="project-search" type="search" autocomplete="off" placeholder="Buscar por nombre, resumen o etiqueta">
+        </div>
+        <div class="filters" role="group" aria-label="Filtrar proyectos">
+          <button type="button" class="filter" data-filter="all" aria-pressed="true">Todos</button>
+          <button type="button" class="filter" data-filter="active" aria-pressed="false">Activos</button>
+          <button type="button" class="filter" data-filter="pinned" aria-pressed="false">Fijados</button>
+          <button type="button" class="filter" data-filter="attention" aria-pressed="false">Te necesitan</button>
+        </div>
+        <div class="view-toggle" role="group" aria-label="Vista">
+          <button type="button" class="view" data-view="list" aria-pressed="true">Lista</button>
+          <button type="button" class="view" data-view="cards" aria-pressed="false">Tarjetas</button>
+        </div>
+        <label class="loose-toggle"><input type="checkbox" id="loose-toggle"> Mostrar tareas sueltas</label>
+        <button type="button" class="btn" id="generate-summaries">Generar resúmenes</button>
+      </div>
+      <div id="batch-status" class="batch-status" hidden aria-live="polite"></div>
       <div id="projects" class="projects" aria-live="polite" aria-busy="true">
         <p class="muted" id="loading-message">Cargando el estado de los proyectos…</p>
       </div>

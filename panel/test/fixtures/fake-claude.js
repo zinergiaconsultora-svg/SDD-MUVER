@@ -4,6 +4,9 @@
 // - Como el CLI real: --allowedTools es variádica y el prompt se lee de stdin (o de un argumento posicional suelto);
 //   sin prompt → el mismo error que el CLI real y código 1. El escenario es la primera marca [[nombre]] del prompt.
 // - Escribe stream-json (una línea JSON por mensaje) en stdout, como `claude -p --output-format stream-json --verbose`.
+// - Feature 13 (design.md §7.1): acepta --model y --max-turns (con valor) y --tools / --disallowedTools (variádicas),
+//   registra model/tools/disallowedTools y, si el cwd contiene `.fake-claude-scenario`, su primera línea es el
+//   escenario (gana a la marca del prompt) y la segunda, opcional, el texto del result.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -24,18 +27,35 @@ if (argv.length === 0) process.exit(0);
  * Parseo como el CLI real (Claude Code 2.1.x): `--allowedTools` es VARIÁDICA y consume todos los argumentos
  * siguientes que no empiecen por "-" (incluido un prompt colocado detrás). Lo que queda suelto es el prompt posicional.
  */
-const VALUE_FLAGS = new Set(['--output-format', '--permission-mode', '--resume']);
-const VARIADIC_FLAGS = new Set(['--allowedTools']);
+const VALUE_FLAGS = new Set(['--output-format', '--permission-mode', '--resume', '--max-turns', '--model']);
+const VARIADIC_FLAGS = new Set(['--allowedTools', '--tools', '--disallowedTools']);
 const positional = [];
-const allowedTools = [];
+const variadic = { '--allowedTools': [], '--tools': [], '--disallowedTools': [] };
+const values = {};
 for (let i = 0; i < argv.length; i++) {
   const arg = argv[i];
   if (VARIADIC_FLAGS.has(arg)) {
-    while (i + 1 < argv.length && !argv[i + 1].startsWith('-')) allowedTools.push(argv[++i]);
+    while (i + 1 < argv.length && !argv[i + 1].startsWith('-')) variadic[arg].push(argv[++i]);
   } else if (VALUE_FLAGS.has(arg)) {
+    values[arg] = argv[i + 1];
     i += 1;
   } else if (!arg.startsWith('-')) {
     positional.push(arg);
+  }
+}
+const allowedTools = variadic['--allowedTools'];
+const model = values['--model'] ?? null;
+const tools = variadic['--tools'];
+const disallowedTools = variadic['--disallowedTools'];
+
+/** Escenario por fichero en el cwd (feature 13): [escenario, texto del result | null] o null. */
+function scenarioFromFile() {
+  try {
+    const lines = fs.readFileSync(path.join(process.cwd(), '.fake-claude-scenario'), 'utf8').split(/\r?\n/);
+    const name = lines[0].trim();
+    return name ? { name, text: lines.length > 1 && lines[1] !== '' ? lines[1] : null } : null;
+  } catch {
+    return null;
   }
 }
 
@@ -52,14 +72,16 @@ function readStdin() {
 
 const stdinText = await readStdin();
 const prompt = positional.length ? positional.join(' ') : stdinText;
-log({ argv, cwd: process.cwd(), pid: process.pid, prompt, stdin: stdinText, allowedTools });
+log({ argv, cwd: process.cwd(), pid: process.pid, prompt, stdin: stdinText, allowedTools, model, tools, disallowedTools, at: Date.now() });
 if (!prompt.trim()) {
   process.stderr.write('Error: Input must be provided either through stdin or as a prompt argument when using --print\n');
   process.exit(1);
 }
 
 const marker = /\[\[([a-z_]+)\]\]/.exec(prompt);
-const scenario = marker ? marker[1] : 'ok';
+const fileScenario = scenarioFromFile();
+const scenario = fileScenario ? fileScenario.name : marker ? marker[1] : 'ok';
+const DEFAULT_SUMMARY = 'Un CRM de prueba para gestionar clientes.';
 const SESSION_ID = 'fake-session-1';
 
 function out(obj) {
@@ -161,6 +183,25 @@ switch (scenario) {
     process.exitCode = 0;
     break;
   }
+  case 'summary':
+  case 'summary_slow': {
+    // Feature 13: generación de resumen en solo lectura (una lectura Read y un result con la frase).
+    const finish = () => {
+      init();
+      toolUse('tu-read', 'Read', { file_path: path.join(process.cwd(), 'README.md') });
+      toolResult('tu-read', '# Proyecto');
+      result({ result: (fileScenario && fileScenario.text) || DEFAULT_SUMMARY });
+      process.exitCode = 0;
+    };
+    if (scenario === 'summary_slow') setTimeout(finish, 1500);
+    else finish();
+    break;
+  }
+  case 'blank':
+    init();
+    result({ result: '   ' });
+    process.exitCode = 0;
+    break;
   case 'error':
     init();
     result({ subtype: 'error_during_execution', is_error: true, result: 'Algo falló' });

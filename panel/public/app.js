@@ -2,6 +2,9 @@
 // detalle, alta y baja; fase 3: proyectos de Claude Code (fijar, ocultar, ajustes, aviso); fase 4: pestaña
 // "Trabajar" (Claude Code, botones SDD, tests, cambios, commit y push, salida en vivo con EventSource), diálogos de
 // confirmación y de contraseña, y "Te necesitan". Usa render.js y work.js (puros), api-client.js y app-config.js.
+// Feature 13: vista Lista compacta por defecto (list.js, puro) con buscador, filtros, "Antiguos", Lista/Tarjetas y
+// tareas sueltas (preferencias en localStorage), repintado solo de las filas que cambian, menú "⋯", grupos virtuales,
+// "Generar con Claude" y lote de resúmenes, y selector de modelo en "Trabajar".
 import { REFRESH_INTERVAL_MS, API_BASE } from './app-config.js';
 import { createApiClient } from './api-client.js';
 import {
@@ -30,6 +33,21 @@ import {
   splitHidden,
 } from './render.js';
 import {
+  loadListPrefs,
+  saveListPrefs,
+  groupProjects,
+  buildRowModel,
+  filterRows,
+  splitOld,
+  renderItemHtml,
+  renderListBody,
+  planRowUpdate,
+  summaryCandidates,
+  describeSummaryAction,
+  renderBatchStatus,
+  renderGroupDetail,
+} from './list.js';
+import {
   renderWorkView,
   describeAction,
   renderConfirmDialogBody,
@@ -48,6 +66,8 @@ import {
   renderBroadWarning,
   renderHooksWarning,
   renderRepoConfigWarning,
+  buildSddPayload,
+  renderRunHeader,
   STATE_LABELS,
   ACTIVE_STATES,
   MAX_LOG_EVENTS,
@@ -77,6 +97,11 @@ const reauthDialog = document.getElementById('reauth-dialog');
 const reauthForm = document.getElementById('reauth-form');
 const reauthPassword = document.getElementById('reauth-password');
 const reauthError = document.getElementById('reauth-error');
+const searchInput = document.getElementById('project-search');
+const toolbarEl = document.getElementById('list-toolbar');
+const looseToggle = document.getElementById('loose-toggle');
+const generateSummariesButton = document.getElementById('generate-summaries');
+const batchStatusEl = document.getElementById('batch-status');
 
 let projects = [];
 let loading = false;
@@ -88,6 +113,30 @@ let currentDetail = null; // detalle del proyecto abierto
 let currentWork = null; // GET /api/projects/:id/work
 let currentRun = null; // { runId, events, meta }
 let runStream = null; // EventSource del run actual
+// Feature 13: preferencias de la lista (por dispositivo), búsqueda, antiguos, repintado por filas y lote.
+let prefs = loadListPrefs(browserStorage());
+let searchQuery = '';
+let searchTimer = null;
+let oldOpen = false;
+let attentionIds = new Set();
+let lastModels = [];
+let candidates = { ids: [], total: 0 };
+let rendered = emptyRendered();
+let batchTimer = null;
+let lastSavedCount = null;
+
+/** localStorage o null si el navegador lo bloquea (modo privado, permisos). */
+function browserStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function emptyRendered() {
+  return { view: null, hasOld: false, full: false, main: new Map(), old: new Map(), mainEl: null, oldEl: null };
+}
 
 const timeFormatter = new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -135,8 +184,10 @@ function showPanel() {
   authView.innerHTML = '';
   listView.hidden = false;
   sessionActions.hidden = false;
+  applyToolbar();
   load();
   loadClaudeStatus();
+  resumeBatch();
   if (!refreshTimer) {
     refreshTimer = setInterval(() => {
       // No pisamos la vista de detalle mientras el usuario la está leyendo; el listado se refresca igualmente.
@@ -265,18 +316,145 @@ function setLastUpdated(date) {
   lastUpdatedEl.setAttribute('datetime', date.toISOString());
 }
 
+/** Pinta un mensaje fijo en el listado (sin filas) y olvida el repintado por filas. */
+function renderListMessage(html) {
+  projectsEl.innerHTML = html;
+  rendered = emptyRendered();
+  updateGenerateButton({ ids: [], total: 0 });
+}
+
+/** Crea un nodo a partir de su HTML (firma de la fila). */
+function nodeFromHtml(html) {
+  const template = document.createElement('template');
+  template.innerHTML = html.trim();
+  return template.content.firstElementChild;
+}
+
+/** Aplica planRowUpdate a un contenedor: sustituye solo las filas cambiadas, quita las que sobran y reordena. */
+function patchContainer(container, map, next) {
+  const plan = planRowUpdate(new Map([...map].map(([key, value]) => [key, value.html])), next);
+  if (!plan.changed) return;
+  for (const key of plan.toRemove) {
+    map.get(key).el.remove();
+    map.delete(key);
+  }
+  const htmlByKey = new Map(next.map((item) => [item.key, item.html]));
+  for (const key of plan.toRender) {
+    const el = nodeFromHtml(htmlByKey.get(key));
+    const previous = map.get(key);
+    if (previous) previous.el.replaceWith(el);
+    map.set(key, { html: htmlByKey.get(key), el });
+  }
+  const desired = plan.order.map((key) => map.get(key).el);
+  const current = [...container.children];
+  if (desired.length !== current.length || desired.some((el, i) => current[i] !== el)) {
+    for (const el of desired) container.append(el);
+  }
+}
+
+/** Índice key → { html, el } de un contenedor recién pintado (los hijos van en el orden de `items`). */
+function indexContainer(container, items) {
+  const map = new Map();
+  if (!container) return map;
+  const children = [...container.children];
+  items.forEach((item, i) => {
+    if (children[i]) map.set(item.key, { html: item.html, el: children[i] });
+  });
+  return map;
+}
+
+function applyToolbar() {
+  for (const button of toolbarEl.querySelectorAll('[data-filter]')) button.setAttribute('aria-pressed', String(button.dataset.filter === prefs.filter));
+  for (const button of toolbarEl.querySelectorAll('[data-view]')) button.setAttribute('aria-pressed', String(button.dataset.view === prefs.view));
+  looseToggle.checked = prefs.loose;
+  projectsEl.classList.toggle('view-list', prefs.view === 'list');
+  projectsEl.classList.toggle('view-cards', prefs.view === 'cards');
+}
+
+function updateGenerateButton(next) {
+  candidates = next;
+  const none = next.ids.length === 0;
+  generateSummariesButton.disabled = none;
+  if (none) generateSummariesButton.title = 'No hay proyectos visibles sin descripción';
+  else generateSummariesButton.removeAttribute('title');
+}
+
 function renderList() {
   const now = Date.now();
   // Se piden siempre todos (incluidos los ocultos) y se filtran aquí: así el recuento de ocultos es exacto.
   const { visible, hiddenCount } = splitHidden(projects, showHidden);
   hiddenToggleEl.innerHTML = renderHiddenToggle(hiddenCount, showHidden);
   if (visible.length === 0) {
-    projectsEl.innerHTML = projects.length === 0
+    lastModels = [];
+    renderListMessage(projects.length === 0
       ? '<p class="muted">No hay proyectos registrados. Abre un proyecto en Claude Code o añade el primero con el formulario de abajo.</p>'
-      : '<p class="muted">Todos los proyectos están ocultos.</p>';
+      : '<p class="muted">Todos los proyectos están ocultos.</p>');
     return;
   }
-  projectsEl.innerHTML = visible.map((p) => renderProjectCard(p, now)).join('');
+  const rows = groupProjects(projects, { loose: prefs.loose, showHidden });
+  const models = rows.map((row) => buildRowModel(row, { now, attentionIds }));
+  lastModels = models;
+  const filtered = filterRows(models, { filter: prefs.filter, query: searchQuery, now });
+  const { recent, old } = splitOld(filtered, { filter: prefs.filter, query: searchQuery, now });
+  const projectsById = new Map(projects.map((p) => [p.id, p]));
+  const item = (m) => ({ key: m.key, html: renderItemHtml(m, prefs.view, projectsById.get(m.id), now) });
+  const nextMain = recent.map(item);
+  const nextOld = old.map(item);
+  updateGenerateButton(summaryCandidates(filtered, { oldOpen, oldKeys: new Set(old.map((m) => m.key)) }));
+  const empty = !recent.length && !old.length;
+  const full = empty || !rendered.full || rendered.view !== prefs.view || rendered.hasOld !== (old.length > 0);
+  if (full) {
+    const searchFocused = document.activeElement === searchInput;
+    projectsEl.innerHTML = renderListBody({ recent, old, view: prefs.view, oldOpen, now, projectsById });
+    rendered = emptyRendered();
+    if (!empty) {
+      const containerSelector = prefs.view === 'cards' ? '.cards' : '.project-list';
+      rendered.full = true;
+      rendered.view = prefs.view;
+      rendered.hasOld = old.length > 0;
+      rendered.mainEl = projectsEl.querySelector(`:scope > ${containerSelector}`);
+      rendered.oldEl = projectsEl.querySelector(`:scope > .old-projects > ${containerSelector}`);
+      rendered.main = indexContainer(rendered.mainEl, nextMain);
+      rendered.old = indexContainer(rendered.oldEl, nextOld);
+    }
+    if (searchFocused) searchInput.focus();
+    return;
+  }
+  patchContainer(rendered.mainEl, rendered.main, nextMain);
+  if (rendered.oldEl) {
+    patchContainer(rendered.oldEl, rendered.old, nextOld);
+    const summary = projectsEl.querySelector(':scope > .old-projects > summary');
+    const label = `Antiguos (${old.length})`;
+    if (summary && summary.textContent !== label) summary.textContent = label;
+  }
+}
+
+function savePrefs() {
+  saveListPrefs(browserStorage(), prefs);
+}
+
+/** Cierra los menús "⋯" abiertos (salvo `except`). */
+function closeMenus(except = null) {
+  for (const button of document.querySelectorAll('[data-action="menu"][aria-expanded="true"]')) {
+    if (button === except) continue;
+    button.setAttribute('aria-expanded', 'false');
+    const list = document.getElementById(button.getAttribute('aria-controls'));
+    if (list) list.hidden = true;
+  }
+}
+
+function toggleMenu(button) {
+  const open = button.getAttribute('aria-expanded') === 'true';
+  closeMenus(button);
+  button.setAttribute('aria-expanded', String(!open));
+  const list = document.getElementById(button.getAttribute('aria-controls'));
+  if (list) {
+    list.hidden = open;
+    if (!open) {
+      const first = list.querySelector('button:not([disabled]), a[href]');
+      if (first) first.focus();
+    }
+  }
 }
 
 /** Pide una vez el estado de Claude Code y pinta el aviso discreto si no se detecta (F3-R44). */
@@ -297,7 +475,7 @@ async function load() {
   projectsEl.setAttribute('aria-busy', 'true');
   refreshButton.disabled = true;
   try {
-    const data = await request(buildProjectsUrl(true));
+    const data = await request(buildProjectsUrl(true, { fullWorktrees: prefs.loose }));
     if (!Array.isArray(data)) throw new Error('Respuesta inesperada');
     projects = data;
     renderList();
@@ -306,7 +484,7 @@ async function load() {
   } catch (err) {
     if (err && err.status === 401) return; // onUnauthorized ya ha mostrado el login
     console.error('No se pudo cargar el listado:', err);
-    projectsEl.innerHTML = renderLoadError();
+    renderListMessage(renderLoadError());
   } finally {
     loading = false;
     projectsEl.setAttribute('aria-busy', 'false');
@@ -376,6 +554,170 @@ async function showDetail(id, { tab = 'summary', runId = null } = {}) {
   }
 }
 
+/** Detalle de un grupo virtual (feature 13, R36): se pinta con los datos ya cargados, sin petición. */
+function showGroupDetail(groupKey) {
+  const model = lastModels.find((m) => m.kind === 'group' && m.id === groupKey);
+  if (!model) return;
+  closeRunStream();
+  currentDetail = null;
+  detailView.innerHTML = renderGroupDetail(model, Date.now());
+  listView.hidden = true;
+  detailView.hidden = false;
+  window.scrollTo({ top: 0 });
+  const back = detailView.querySelector('[data-action="back"]');
+  if (back) back.focus();
+}
+
+const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Consulta GET /api/runs/:runId cada 2 s hasta un estado final y devuelve el RunMeta final. */
+async function waitRunFinal(runId) {
+  for (;;) {
+    const { run } = await request(`${API_BASE}/runs/${encodeURIComponent(runId)}`);
+    if (!ACTIVE_STATES.includes(run.state)) return run;
+    await sleepMs(2000);
+  }
+}
+
+function setSummaryStatus(text) {
+  const slot = detailView.querySelector('#summary-status');
+  if (slot) slot.textContent = text;
+}
+
+/** "Generar con Claude" (feature 13, R47): confirmación, run de solo lectura, seguimiento y recarga del detalle. */
+async function generateSummaryAction(button) {
+  if (!currentDetail) return;
+  const { id, name } = currentDetail;
+  const { confirmed } = await confirmAction(describeSummaryAction('summary', { projectName: name, hasSummary: Boolean(currentDetail.summary) }));
+  if (!confirmed) return;
+  if (button) button.disabled = true;
+  setSummaryStatus('Generando resumen con Claude…');
+  let failure = null;
+  try {
+    const meta = await execRequest(`${API_BASE}/projects/${encodeURIComponent(id)}/summary/generate`, { method: 'POST', body: '{}' });
+    if (!meta) {
+      setSummaryStatus('');
+      if (button && button.isConnected) button.disabled = false;
+      return;
+    }
+    const final = await waitRunFinal(meta.runId);
+    // El servidor guarda el resumen justo después del final del run.
+    await sleepMs(600);
+    let saved = false;
+    if (final.state === 'succeeded') {
+      const detail = await request(`${API_BASE}/projects/${encodeURIComponent(id)}`);
+      saved = detail.summarySource === 'manual' || (detail.summarySource === 'claude' && Date.parse(detail.summaryAt) >= Date.parse(final.startedAt));
+    }
+    if (!saved) failure = `No se pudo generar el resumen (${STATE_LABELS[final.state] || final.state})`;
+  } catch (err) {
+    if (err && err.status === 401 && !(err.payload && err.payload.reauthRequired)) return;
+    failure = errorMessage(err, 'No se pudo generar el resumen');
+  }
+  if (currentDetail && currentDetail.id === id && !detailView.hidden) {
+    await showDetail(id);
+    if (failure) setSummaryStatus(failure);
+  }
+  load();
+}
+
+/** Ocultar / mostrar una tarea en curso desde el detalle de su principal (feature 13, R45). */
+async function toggleWorktree(target) {
+  const parentId = currentDetail && currentDetail.id;
+  target.disabled = true;
+  try {
+    await toggleHidden({ id: target.dataset.id, hidden: target.dataset.hidden === 'true' }, { request });
+  } catch (err) {
+    if (err && err.status === 401) return;
+    window.alert('No se pudo guardar el cambio.');
+  }
+  if (parentId) await showDetail(parentId);
+  load();
+}
+
+// ---------- Feature 13: lote de resúmenes ----------
+
+function showBatch(batch) {
+  batchStatusEl.innerHTML = renderBatchStatus(batch);
+  batchStatusEl.hidden = !batch;
+}
+
+function stopBatchPolling() {
+  if (batchTimer) {
+    clearInterval(batchTimer);
+    batchTimer = null;
+  }
+}
+
+/** Consulta el lote cada 3 s mientras siga en marcha; recarga la lista cuando cambia el número de guardados. */
+function pollBatch() {
+  stopBatchPolling();
+  batchTimer = setInterval(async () => {
+    try {
+      const { batch } = await request(`${API_BASE}/summaries/batch`);
+      showBatch(batch);
+      if (!batch) return stopBatchPolling();
+      if (batch.counts.saved !== lastSavedCount) {
+        lastSavedCount = batch.counts.saved;
+        load();
+      }
+      if (batch.state !== 'running') {
+        stopBatchPolling();
+        load();
+      }
+    } catch (err) {
+      if (err && err.status === 401) stopBatchPolling();
+    }
+  }, 3000);
+}
+
+/** Al arrancar el panel: si hay un lote en marcha, se retoma su seguimiento. */
+async function resumeBatch() {
+  try {
+    const { batch } = await request(`${API_BASE}/summaries/batch`);
+    if (batch && batch.state === 'running') {
+      lastSavedCount = batch.counts.saved;
+      showBatch(batch);
+      pollBatch();
+    }
+  } catch (err) {
+    if (!err || err.status !== 401) console.error('No se pudo consultar el lote de resúmenes:', err);
+  }
+}
+
+async function generateBatch() {
+  const { ids, total } = candidates;
+  if (!ids.length) return;
+  const { confirmed } = await confirmAction(describeSummaryAction('summary-batch', { count: ids.length, total }));
+  if (!confirmed) return;
+  try {
+    const result = await execRequest(`${API_BASE}/summaries/generate`, { method: 'POST', body: JSON.stringify({ ids }) });
+    if (!result) return;
+    lastSavedCount = 0;
+    showBatch(result.batch);
+    pollBatch();
+  } catch (err) {
+    showActionError(err, 'No se pudo lanzar la generación de resúmenes');
+  }
+}
+
+async function onBatchClick(event) {
+  const target = event.target.closest('[data-action]');
+  if (!target) return;
+  if (target.dataset.action === 'close-batch') {
+    batchStatusEl.hidden = true;
+    batchStatusEl.innerHTML = '';
+  } else if (target.dataset.action === 'cancel-batch') {
+    target.disabled = true;
+    try {
+      const { batch } = await request(`${API_BASE}/summaries/batch/cancel`, { method: 'POST' });
+      showBatch(batch);
+    } catch (err) {
+      if (err && err.status === 409) return;
+      showActionError(err, 'No se pudo cancelar la generación');
+    }
+  }
+}
+
 /** Fijar / ocultar desde la tarjeta (F3-R42, F3-R48). */
 async function runCardToggle(id, action, button) {
   const project = projects.find((p) => p.id === id);
@@ -406,7 +748,8 @@ async function submitSettings(event) {
   event.preventDefault();
   const settingsForm = event.target;
   const id = settingsForm.dataset.id;
-  const payload = buildSettingsPayload(Object.fromEntries(new FormData(settingsForm).entries()));
+  const summaryField = settingsForm.querySelector('#settings-summary');
+  const payload = buildSettingsPayload(Object.fromEntries(new FormData(settingsForm).entries()), { summaryInitial: summaryField ? summaryField.dataset.initial : undefined });
   setSettingsMessage('');
   const button = settingsForm.querySelector('button[type="submit"]');
   if (button) button.disabled = true;
@@ -481,7 +824,7 @@ async function submitForm(event) {
     }
     renderList();
     setLastUpdated(new Date());
-    const card = projectsEl.querySelector(`.card[data-id="${CSS.escape(created.id)}"]`);
+    const card = projectsEl.querySelector(`[data-key="p:${CSS.escape(created.id)}"], .card[data-id="${CSS.escape(created.id)}"]`);
     if (card) card.scrollIntoView({ block: 'nearest' });
   } catch (err) {
     if (err && err.status === 401) return;
@@ -626,6 +969,12 @@ function appendRunEvent(event) {
   if (event.type === 'state') setRunState(event.state);
 }
 
+/** Modelo del run en la cabecera de la ejecución (feature 13, R60). */
+function setRunModel(meta) {
+  const slot = workEl('#run-model');
+  if (slot) slot.innerHTML = renderRunHeader(meta);
+}
+
 /** Pinta el aviso de permisos del run terminado (R84). */
 function showPermissions(meta) {
   const slot = workEl('#run-permission');
@@ -638,6 +987,7 @@ async function finishRun(runId) {
     const { run } = await request(`${API_BASE}/runs/${encodeURIComponent(runId)}`);
     if (currentRun && currentRun.runId === runId) currentRun.meta = run;
     setRunState(run.state);
+    setRunModel(run);
     showPermissions(run);
   } catch (err) {
     if (!err || err.status !== 401) console.error('No se pudo leer el final de la ejecución:', err);
@@ -680,6 +1030,7 @@ async function openRun(runId) {
     currentRun.events = events.slice();
     if (log) log.innerHTML = renderRunLog(events);
     setRunState(run.state);
+    setRunModel(run);
     if (ACTIVE_STATES.includes(run.state)) streamRun(runId);
     else showPermissions(run);
     const panel = workEl('.run-panel');
@@ -691,6 +1042,17 @@ async function openRun(runId) {
 
 function runContext(extra = {}) {
   return { projectName: currentDetail.name, allowedCommands: currentWork ? currentWork.allowedCommands : [], ...extra };
+}
+
+/** Modelo elegido en el selector de "Trabajar" (feature 13); undefined si no hay selector (respuesta antigua). */
+function selectedModel() {
+  const select = workEl('#work-model');
+  return select ? select.value : undefined;
+}
+
+/** Tras lanzar un run, el servidor ya recordó el modelo elegido. */
+function rememberModel(model) {
+  if (currentWork && model) currentWork.model = model;
 }
 
 /** Feature 14: la API pide la confirmación expresa de comandos de ejecución libre (400 con needsAcknowledge). */
@@ -740,20 +1102,28 @@ async function submitPrompt(event) {
     const found = currentWork.sessions.find((s) => s.id === session.id);
     session.title = found ? found.title : session.id;
   }
-  const { confirmed } = await confirmAction(describeAction('chat', runContext({ prompt: payload.prompt, session })));
+  const { confirmed } = await confirmAction(describeAction('chat', runContext({ prompt: payload.prompt, session, model: payload.model })));
   if (!confirmed) return;
   try {
-    if (await startRun(projectUrl('/runs'), payload)) form.reset();
+    if (await startRun(projectUrl('/runs'), payload)) {
+      rememberModel(payload.model);
+      // Se vacía el mensaje y la sesión vuelve a "Nueva conversación"; el modelo elegido se queda seleccionado.
+      const promptField = form.querySelector('#work-prompt');
+      if (promptField) promptField.value = '';
+      const sessionField = form.querySelector('#work-session');
+      if (sessionField) sessionField.value = 'new';
+    }
   } catch (err) {
     showActionError(err, 'No se pudo lanzar Claude Code');
   }
 }
 
 async function runSdd(kind) {
-  const { confirmed } = await confirmAction(describeAction(kind, runContext()));
+  const model = selectedModel();
+  const { confirmed } = await confirmAction(describeAction(kind, runContext({ model })));
   if (!confirmed) return;
   try {
-    await startRun(projectUrl(`/sdd/${kind}`), {});
+    if (await startRun(projectUrl(`/sdd/${kind}`), buildSddPayload({ model }))) rememberModel(model);
   } catch (err) {
     showActionError(err, 'No se pudo lanzar Claude Code');
   }
@@ -768,8 +1138,9 @@ async function approveSpecAction(target) {
     if (!result) return;
     await openWork();
     // Spec aprobada: se ofrece lanzar "Implementar siguiente tarea" con una confirmación nueva.
-    const next = await confirmAction(`Spec #${result.feature.id} aprobada. ${describeAction('implement', runContext())}`);
-    if (next.confirmed) await startRun(projectUrl('/sdd/implement'), {});
+    const model = selectedModel();
+    const next = await confirmAction(`Spec #${result.feature.id} aprobada. ${describeAction('implement', runContext({ model }))}`);
+    if (next.confirmed) await startRun(projectUrl('/sdd/implement'), buildSddPayload({ model }));
   } catch (err) {
     showActionError(err, 'No se pudo aprobar la spec');
   }
@@ -901,6 +1272,11 @@ async function loadAttention() {
     const html = renderAttention(data, Date.now());
     attentionEl.innerHTML = html;
     attentionEl.hidden = !html;
+    // Feature 13: los runs de "Te necesitan" marcan sus filas para el filtro "Te necesitan".
+    const ids = new Set((Array.isArray(data.runs) ? data.runs : []).map((r) => r.projectId));
+    const changed = ids.size !== attentionIds.size || [...ids].some((id) => !attentionIds.has(id));
+    attentionIds = ids;
+    if (changed) renderList();
   } catch (err) {
     if (!err || err.status !== 401) console.error('No se pudo cargar "Te necesitan":', err);
   }
@@ -929,10 +1305,69 @@ function onProjectsClick(event) {
   const target = event.target.closest('[data-action]');
   if (!target) return;
   const { action, id } = target.dataset;
+  if (action === 'menu') return toggleMenu(target);
+  closeMenus();
   if (action === 'detail') showDetail(id);
+  else if (action === 'group') showGroupDetail(target.dataset.group);
   else if (action === 'delete') deleteProject(id);
   else if (action === 'pin' || action === 'hide') runCardToggle(id, action, target);
   else if (action === 'retry') load();
+  else if (action === 'clear-filters') clearFilters();
+  return undefined;
+}
+
+function clearFilters() {
+  prefs = { ...prefs, filter: 'all' };
+  searchQuery = '';
+  searchInput.value = '';
+  savePrefs();
+  applyToolbar();
+  renderList();
+}
+
+function onToolbarClick(event) {
+  const target = event.target.closest('[data-filter], [data-view], #generate-summaries');
+  if (!target) return;
+  if (target.id === 'generate-summaries') return generateBatch();
+  if (target.dataset.filter) prefs = { ...prefs, filter: target.dataset.filter };
+  else if (target.dataset.view) prefs = { ...prefs, view: target.dataset.view };
+  savePrefs();
+  applyToolbar();
+  renderList();
+  return undefined;
+}
+
+function onSearchInput() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    searchQuery = searchInput.value;
+    renderList();
+  }, 150);
+}
+
+function onLooseChange() {
+  prefs = { ...prefs, loose: looseToggle.checked };
+  savePrefs();
+  load();
+}
+
+/** Apertura y cierre del bloque "Antiguos" (el evento toggle no burbujea: se escucha en captura). */
+function onOldToggle(event) {
+  if (!event.target.classList || !event.target.classList.contains('old-projects')) return;
+  oldOpen = event.target.open;
+  renderList();
+}
+
+function onDocumentClick(event) {
+  if (!event.target.closest('.row-menu')) closeMenus();
+}
+
+function onDocumentKeydown(event) {
+  if (event.key !== 'Escape') return;
+  const open = document.querySelector('[data-action="menu"][aria-expanded="true"]');
+  if (!open) return;
+  closeMenus();
+  open.focus();
 }
 
 function onHiddenToggleClick(event) {
@@ -948,6 +1383,9 @@ function onDetailClick(event) {
   const { action } = target.dataset;
   if (action === 'back') showList();
   else if (action === 'tab') selectTab(target.dataset.tab);
+  else if (action === 'detail') showDetail(target.dataset.id);
+  else if (action === 'generate-summary') generateSummaryAction(target);
+  else if (action === 'toggle-worktree') toggleWorktree(target);
   else onWorkAction(action, target);
 }
 
@@ -965,6 +1403,13 @@ function onAuthClick(event) {
 }
 
 projectsEl.addEventListener('click', onProjectsClick);
+projectsEl.addEventListener('toggle', onOldToggle, true);
+toolbarEl.addEventListener('click', onToolbarClick);
+searchInput.addEventListener('input', onSearchInput);
+looseToggle.addEventListener('change', onLooseChange);
+batchStatusEl.addEventListener('click', onBatchClick);
+document.addEventListener('click', onDocumentClick);
+document.addEventListener('keydown', onDocumentKeydown);
 detailView.addEventListener('click', onDetailClick);
 detailView.addEventListener('submit', onDetailSubmit);
 attentionEl.addEventListener('click', onAttentionClick);

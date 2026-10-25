@@ -12,8 +12,8 @@ import { findMerged } from './project-catalog.js';
 import { createRunStore, RUN_ID_RE } from './run-store.js';
 import { createRunManager } from './runs.js';
 import { openSse } from './sse.js';
-import { MAX_PROMPT_CHARS, SDD_PROMPTS, DEFAULT_ALLOWED_TOOLS, isValidAllowedCommand, normalizeCommand, isBroadCommand, resolveClaudeCommand } from './claude-cli.js';
-import { execSettingsOf, loadRegistry, saveRegistry, upsertSettings, EXEC_FIELDS, MAX_ALLOWED_COMMANDS } from './registry.js';
+import { MAX_PROMPT_CHARS, SDD_PROMPTS, DEFAULT_ALLOWED_TOOLS, isValidAllowedCommand, normalizeCommand, isBroadCommand, resolveClaudeCommand, isValidModel, MODEL_LABELS } from './claude-cli.js';
+import { execSettingsOf, loadRegistry, saveRegistry, upsertSettings, EXEC_FIELDS, MAX_ALLOWED_COMMANDS, modelOf, applyModelChange, SETTINGS_ERRORS } from './registry.js';
 import { readFeatureList } from './project-state.js';
 import { approveSpec, readHarness, resolveTestCommand } from './sdd-actions.js';
 import { getChanges, getFileDiff, planCommitPush, isGitRepo } from './git-actions.js';
@@ -58,6 +58,9 @@ export const WORK_ERRORS = Object.freeze({
   tooManyCommands: 'Como mucho 30 comandos autorizados',
   notFound: 'Ruta no encontrada',
 });
+
+/** Feature 13 (design.md §3.7): opciones del selector de modelo de la vista Trabajar. */
+export const MODEL_OPTIONS = Object.freeze(['default', 'haiku', 'sonnet', 'opus'].map((value) => Object.freeze({ value, label: MODEL_LABELS[value] })));
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
 const ATTENTION_STATES = new Set(['needs_permission', 'failed', 'timeout']);
@@ -250,13 +253,40 @@ export function createWorkApi({
     return { ok: true, session: { mode: 'resume', id: raw.id } };
   }
 
-  /** Lanza un run de Claude ya validado el proyecto; responde por `ctx`. */
-  async function launchClaudeRun(res, ctx, { merged, dir, prompt, session, action, label }) {
-    // Feature 14 (D5): Claude se resuelve en cada lanzamiento con el cwd del run y el catálogo vigente (con caché).
+  /** Ejecutable de Claude de confianza para un run en `dir` (feature 14, D5) o { error }. */
+  function claudeFor(dir) {
+    // Claude se resuelve en cada lanzamiento con el cwd del run y el catálogo vigente (con caché).
     const command = claudeCommand ?? resolveClaudeCommand(claudeBin, { platform, env, execPath, resolver, cwd: dir, panelDir });
-    if (!command || command.error) {
-      return ctx.respond(res, 409, { error: command && command.error ? command.error : 'No se pudo ejecutar Claude Code: sin ejecutable' });
+    if (!command || command.error) return { error: command && command.error ? command.error : 'No se pudo ejecutar Claude Code: sin ejecutable' };
+    return command;
+  }
+
+  /**
+   * Modelo de un run (feature 13, §5.10): el del cuerpo si es válido, el recordado si no viene; null si el cuerpo trae
+   * uno no válido (la ruta responde 400 sin lanzar nada).
+   */
+  function modelFor(body, merged) {
+    if (body.model === undefined) return modelOf(merged.settingsEntry);
+    return isValidModel(body.model) ? body.model : null;
+  }
+
+  /** Recuerda en el registro el modelo elegido si cambió (crea la entrada si el proyecto era solo de Claude). */
+  async function rememberModel(merged, model) {
+    try {
+      const sources = await loadSources();
+      const fresh = findMerged(sources, merged.id) ?? merged;
+      if (modelOf(fresh.settingsEntry) === model) return;
+      const registry = upsertSettings(sources.registry, applyModelChange(settingsEntryFor(fresh), model));
+      await saveRegistry(projectsFile, registry);
+    } catch (err) {
+      console.error('[panel] No se pudo recordar el modelo del proyecto:', err && err.message ? err.message : err);
     }
+  }
+
+  /** Lanza un run de Claude ya validado el proyecto; responde por `ctx`. */
+  async function launchClaudeRun(res, ctx, { merged, dir, prompt, session, action, label, model = 'default', remember = false }) {
+    const command = claudeFor(dir);
+    if (command.error) return ctx.respond(res, 409, { error: command.error });
     const { allowedCommands } = execSettingsOf(merged.settingsEntry);
     const started = await runs.startClaude({
       project: { id: merged.id, dir },
@@ -267,9 +297,31 @@ export function createWorkApi({
       allowedCommands,
       claudeCommand: command,
       auditContext: ctx.auditContext,
+      model,
     });
     if (!started.ok) return ctx.respond(res, started.status, errorBody(started));
+    if (remember) await rememberModel(merged, model);
     return ctx.respond(res, 202, started.meta, { runId: started.meta.runId });
+  }
+
+  /**
+   * Feature 13 (§5.10): run de Claude en SOLO LECTURA (resúmenes) con el mismo resolvedor de confianza y el mismo
+   * gestor de runs (profile 'readonly': Haiku, Read/Glob/Grep). No pasa por gateExec: lo hace quien lo llama.
+   * → { ok: true, meta } | { ok: false, status, error, runId? }.
+   */
+  async function startReadOnlyClaude({ merged, dir, prompt, action, label, auditContext }) {
+    const command = claudeFor(dir);
+    if (command.error) return { ok: false, status: 409, error: command.error };
+    return runs.startClaude({
+      project: { id: merged.id, dir },
+      prompt,
+      session: { mode: 'new' },
+      action,
+      label,
+      profile: 'readonly',
+      claudeCommand: command,
+      auditContext,
+    });
   }
 
   // ---------- POST /api/projects/:id/runs ----------
@@ -279,8 +331,10 @@ export function createWorkApi({
     if (!body) return undefined;
     const detail = typeof body.prompt === 'string' ? { promptPreview: clipPrompt(body.prompt) } : {};
     if (body.session && typeof body.session === 'object' && typeof body.session.mode === 'string') detail.session = body.session.mode;
+    if (isValidModel(body.model)) detail.model = body.model;
     const ctx = await gateExec(req, res, session, { projectId: id, action: 'run.chat', detail });
     if (!ctx) return undefined;
+    if (body.model !== undefined && !isValidModel(body.model)) return ctx.respond(res, 400, { error: SETTINGS_ERRORS.invalidModel, field: 'model' });
     const { merged } = await resolveProject(id);
     if (!merged) return ctx.respond(res, 404, { error: WORK_ERRORS.projectNotFound });
     const dir = await projectDir(merged);
@@ -289,7 +343,9 @@ export function createWorkApi({
     if (!prompt.ok) return ctx.respond(res, prompt.status, errorBody(prompt));
     const sessionCheck = await validateSession(body.session, merged, 'new');
     if (!sessionCheck.ok) return ctx.respond(res, sessionCheck.status, errorBody(sessionCheck));
-    return launchClaudeRun(res, ctx, { merged, dir, prompt: body.prompt, session: sessionCheck.session, action: 'chat', label: 'Chat' });
+    const model = modelFor(body, merged);
+    ctx.setDetail({ model });
+    return launchClaudeRun(res, ctx, { merged, dir, prompt: body.prompt, session: sessionCheck.session, action: 'chat', label: 'Chat', model, remember: body.model !== undefined });
   }
 
   // ---------- Botones SDD (§5.7) ----------
@@ -304,8 +360,10 @@ export function createWorkApi({
     const body = await readBody(req, res);
     if (!body) return undefined;
     const detail = { promptPreview: spec.prompt, ...(body.session && typeof body.session.mode === 'string' ? { session: body.session.mode } : {}) };
+    if (isValidModel(body.model)) detail.model = body.model;
     const ctx = await gateExec(req, res, session, { projectId: id, action: `run.${spec.action}`, detail });
     if (!ctx) return undefined;
+    if (body.model !== undefined && !isValidModel(body.model)) return ctx.respond(res, 400, { error: SETTINGS_ERRORS.invalidModel, field: 'model' });
     const { merged } = await resolveProject(id);
     if (!merged) return ctx.respond(res, 404, { error: WORK_ERRORS.projectNotFound });
     const dir = await projectDir(merged);
@@ -313,7 +371,9 @@ export function createWorkApi({
     if (!(await readHarness(dir)).ok) return ctx.respond(res, 409, { error: WORK_ERRORS.noSdd });
     const sessionCheck = await validateSession(body.session, merged, spec.defaultMode);
     if (!sessionCheck.ok) return ctx.respond(res, sessionCheck.status, errorBody(sessionCheck));
-    return launchClaudeRun(res, ctx, { merged, dir, prompt: spec.prompt, session: sessionCheck.session, action: spec.action, label: spec.label });
+    const model = modelFor(body, merged);
+    ctx.setDetail({ model });
+    return launchClaudeRun(res, ctx, { merged, dir, prompt: spec.prompt, session: sessionCheck.session, action: spec.action, label: spec.label, model, remember: body.model !== undefined });
   }
 
   function isValidFeatureId(value) {
@@ -477,6 +537,9 @@ export function createWorkApi({
       activeRun: runs.activeFor(merged.id),
       sessions,
       broadCommands: broadCommandsOf(allowedCommands),
+      // Feature 13 (§3.7): modelo recordado y opciones del selector.
+      model: modelOf(merged.settingsEntry),
+      models: MODEL_OPTIONS.map((m) => ({ ...m })),
     };
     if (!dir) return sendJson(res, 200, base);
     const [sdd, repo] = await Promise.all([readFeatureList(dir), isGitRepo(dir, { runner })]);
@@ -550,7 +613,8 @@ export function createWorkApi({
     for (const p of catalog) names.set(p.id, p.name);
     const since = now() - ATTENTION_WINDOW_MS;
     const items = (await store.listAll())
-      .filter((m) => (ATTENTION_STATES.has(m.state) || hasDenials(m)) && !m.dismissed && Date.parse(m.endedAt) >= since)
+      // Feature 13 (R61, D15): los runs de resumen nunca van a "Te necesitan" (se ven en el historial del proyecto).
+      .filter((m) => m.action !== 'summary' && (ATTENTION_STATES.has(m.state) || hasDenials(m)) && !m.dismissed && Date.parse(m.endedAt) >= since)
       .sort((a, b) => Date.parse(b.endedAt) - Date.parse(a.endedAt))
       .slice(0, ATTENTION_MAX_RUNS)
       .map((m) => ({
@@ -720,5 +784,5 @@ export function createWorkApi({
     return runs.cancelAll();
   }
 
-  return { route, runs, store, ready, gateExec, isExecPatch, close };
+  return { route, runs, store, ready, gateExec, isExecPatch, close, startReadOnlyClaude, findRun };
 }

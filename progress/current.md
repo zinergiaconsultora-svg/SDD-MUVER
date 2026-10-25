@@ -5,8 +5,8 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #13 `vista-compacta-y-resumen` — lista compacta, resumen de cada proyecto, worktrees agrupados y filtros
-- **Estado:** `in_progress` (spec aprobada por el humano; implementer trabajando)
-- **Tarea actual:** Implementación TDD de `specs/vista-compacta-y-resumen/tasks.md` (T1→T27)
+- **Estado:** `in_progress` — implementación terminada (574 tests en verde, `init.sh` OK, comprobación visual con Playwright); pendiente: worktrees repetidos en «Te necesitan», revisión humana (puerta 2) y T26 en Windows
+- **Tarea actual:** T26 (prueba manual del humano con su lista real); T1–T25 y T27 hechas
 - **Siguiente paso:** Humano aprueba la spec → `in_progress` → implementer → tests → reviewer → done; después la feature 15 (endurecimiento 2).
 - **Bloqueos / esperando:** —
 

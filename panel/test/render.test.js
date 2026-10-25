@@ -579,3 +579,103 @@ test('[F4-R90] renderProjectCard y renderProjectDetail no generan href con URLs 
   assert.equal(safeHttpUrl('HTTP://ok.example'), 'HTTP://ok.example');
   assert.equal(safeHttpUrl(5), '');
 });
+
+// ---------- Feature 13: tarjeta compacta, detalle con "De qué va" y "Tareas en curso", ajustes (F13-R35, R37, R44–R46) ----------
+
+const { SUMMARY_SOURCE_LABELS } = await import('../public/render.js');
+
+test('[F13-R37] renderProjectCard compacta: resumen entero, botón principal, menú "⋯" oculto y sin card-actions', () => {
+  const long = 'Resumen muy largo del proyecto que no se debe recortar nunca '.repeat(3).trim() + '.';
+  const html = renderProjectCard({ ...CLAUDE_BOTH, summary: long, summarySource: 'readme' }, NOW);
+  assert.ok(html.includes(`<p class="card-summary">${long}</p>`), 'resumen entero');
+  assert.ok(!html.includes('…'));
+  assert.ok(!html.includes('class="card-actions"'), 'sin el pie de botones grandes');
+  assert.match(html, /<button type="button" class="card-main" data-action="detail" data-id="app-flyder">/);
+  assert.match(html, /<button type="button" class="btn icon row-menu-button" data-action="menu" aria-haspopup="true" aria-expanded="false" aria-controls="menu-app-flyder" aria-label="Más acciones de app-flyder">⋯<\/button>/);
+  assert.match(html, /<div class="row-menu-list" id="menu-app-flyder" role="menu" hidden>/);
+  const menu = html.slice(html.indexOf('class="row-menu-list"'));
+  for (const action of ['pin', 'hide']) assert.ok(menu.includes(`data-action="${action}"`), `${action} dentro del menú`);
+  assert.ok(menu.includes('Abrir app') && menu.includes('Repositorio'), 'Abrir app y Repositorio dentro del menú');
+  const empty = renderProjectCard({ ...FULL_PROJECT, summary: null }, NOW);
+  assert.ok(empty.includes('<p class="card-summary is-empty">Sin descripción</p>'));
+  const withTasks = renderProjectCard({ ...FULL_PROJECT }, NOW, { worktreeCount: 3 });
+  assert.ok(withTasks.includes('3 tareas en curso'));
+  const evil = renderProjectCard({ ...FULL_PROJECT, summary: '<img src=x onerror=alert(1)>' }, NOW);
+  assert.ok(!evil.includes('<img src=x'));
+});
+
+test('[F13-R35] la tarjeta conserva Eliminar solo en manuales (dentro del menú)', () => {
+  const manual = renderProjectCard({ ...FULL_PROJECT, source: 'manual' }, NOW);
+  assert.ok(manual.slice(manual.indexOf('row-menu-list')).includes('data-action="delete"'));
+  assert.ok(!renderProjectCard(CLAUDE_BOTH, NOW).includes('data-action="delete"'));
+});
+
+const DETAIL_BASE = {
+  ...FULL_PROJECT,
+  sdd: { ...FULL_PROJECT.sdd, features: [] },
+  progress: { ...FULL_PROJECT.progress, text: null },
+  git: { ...FULL_PROJECT.git, recentCommits: [], dirtyFiles: [] },
+  source: 'manual',
+  claude: null,
+  worktrees: [],
+};
+
+test('[F13-R44] detalle: bloque "De qué va" con el resumen, su origen y "Generar con Claude"', () => {
+  assert.deepEqual(SUMMARY_SOURCE_LABELS, { manual: 'Escrito por ti', claude: 'Generado por Claude', package: 'De package.json', readme: 'Del README', 'claude-md': 'De CLAUDE.md' });
+  for (const [source, label] of Object.entries(SUMMARY_SOURCE_LABELS)) {
+    const html = renderProjectDetail({ ...DETAIL_BASE, summary: 'Un CRM <b>para</b> pymes.', summarySource: source }, NOW);
+    assert.ok(html.includes('<h3>De qué va</h3>'), source);
+    assert.ok(html.includes('<p class="about-summary">Un CRM &lt;b&gt;para&lt;/b&gt; pymes.</p>'), source);
+    assert.ok(html.includes(`Origen: ${label}`), source);
+    assert.match(html, /<button type="button" class="btn" data-action="generate-summary">Generar con Claude<\/button>/);
+  }
+  const none = renderProjectDetail({ ...DETAIL_BASE, summary: null, summarySource: null }, NOW);
+  assert.ok(none.includes('<p class="about-summary is-empty">Sin descripción</p>'));
+  assert.ok(!none.includes('Origen:'));
+  assert.ok(none.indexOf('De qué va') < none.indexOf('<h3>Features</h3>'), 'arriba de la pestaña Resumen');
+});
+
+test('[F13-R45] detalle del principal: "Tareas en curso" con rama, última sesión, ficheros sin commitear, Ver detalle y Ocultar/Mostrar', () => {
+  const worktrees = [
+    { id: 'wt-uno', name: 'wt-uno-a1b2c3', branch: 'claude/wt-uno-a1b2c3', lastSessionAt: new Date(NOW - 2 * HOUR).toISOString(), lastActivityAt: null, dirtyCount: 2, exists: true, hidden: false, status: 'ok', summary: null },
+    { id: 'wt-dos', name: 'wt-<b>dos</b>', branch: null, lastSessionAt: null, lastActivityAt: null, dirtyCount: null, exists: true, hidden: true, status: 'ok', summary: null },
+  ];
+  const html = renderProjectDetail({ ...DETAIL_BASE, worktreeCount: 1, worktrees }, NOW);
+  assert.ok(html.includes('<h3>Tareas en curso</h3>'));
+  assert.ok(html.includes('wt-uno-a1b2c3'));
+  assert.ok(html.includes('<span class="branch">claude/wt-uno-a1b2c3</span>'));
+  assert.ok(html.includes('Última sesión: hace 2 h'));
+  assert.ok(html.includes('2 ficheros sin commitear'));
+  assert.ok(html.includes('data-action="detail" data-id="wt-uno">Ver detalle</button>'));
+  assert.ok(html.includes('data-action="toggle-worktree" data-id="wt-uno" data-hidden="false">Ocultar</button>'));
+  assert.ok(html.includes('data-action="toggle-worktree" data-id="wt-dos" data-hidden="true">Mostrar</button>'));
+  assert.ok(html.includes('(oculta)'));
+  assert.ok(html.includes('wt-&lt;b&gt;dos&lt;/b&gt;') && !html.includes('<b>dos</b>'));
+  assert.ok(!renderProjectDetail(DETAIL_BASE, NOW).includes('Tareas en curso'), 'sin worktrees no hay sección');
+  const child = renderProjectDetail({ ...DETAIL_BASE, isWorktree: true, parentId: 'crm', parentName: 'CRM <RAPIDO>' }, NOW);
+  assert.ok(child.includes('<button type="button" class="btn link" data-action="detail" data-id="crm">Tarea de CRM &lt;RAPIDO&gt;</button>'));
+});
+
+test('[F13-R46] ajustes: campo "De qué va (una frase)" prerrellenado solo con un resumen guardado; buildSettingsPayload con summary solo si cambió', () => {
+  const readme = renderSettingsForm({ id: 'a', name: 'A', summary: 'Del README del proyecto.', summarySource: 'readme' });
+  assert.ok(readme.includes('<label for="settings-summary">De qué va (una frase)</label>'));
+  // Área de texto (no input): el texto de ayuda largo pasa de línea en lugar de recortarse.
+  assert.match(readme, /<textarea id="settings-summary" name="summary" rows="2" maxlength="200" autocomplete="off" placeholder="Del README del proyecto\." data-initial=""><\/textarea>/);
+  const manual = renderSettingsForm({ id: 'a', name: 'A', summary: 'Escrito <a mano>', summarySource: 'manual' });
+  assert.ok(manual.includes('data-initial="Escrito &lt;a mano&gt;">Escrito &lt;a mano&gt;</textarea>'));
+  const claude = renderSettingsForm({ id: 'a', name: 'A', summary: 'Generado.', summarySource: 'claude' });
+  assert.ok(claude.includes('>Generado.</textarea>'));
+  const base = { name: 'A', appUrl: '', repoUrl: '', tags: '' };
+  assert.deepEqual(buildSettingsPayload({ ...base, summary: 'Igual' }, { summaryInitial: 'Igual' }), { name: 'A', appUrl: '', repoUrl: '', tags: [] }, 'sin cambios no trae summary');
+  assert.deepEqual(buildSettingsPayload({ ...base, summary: ' Nuevo ' }, { summaryInitial: 'Viejo' }), { name: 'A', appUrl: '', repoUrl: '', tags: [], summary: 'Nuevo' });
+  assert.deepEqual(buildSettingsPayload({ ...base, summary: '' }, { summaryInitial: 'Viejo' }), { name: 'A', appUrl: '', repoUrl: '', tags: [], summary: '' }, 'vaciado');
+  assert.deepEqual(buildSettingsPayload({ ...base, summary: '' }, { summaryInitial: '' }), { name: 'A', appUrl: '', repoUrl: '', tags: [] });
+  assert.deepEqual(buildSettingsPayload(base), { name: 'A', appUrl: '', repoUrl: '', tags: [] }, 'compatibilidad fase 3');
+});
+
+test('[F13-R31] buildProjectsUrl con fullWorktrees; con un solo argumento, las URL de siempre', () => {
+  assert.equal(buildProjectsUrl(true, { fullWorktrees: true }), '/api/projects?includeHidden=1&worktrees=full');
+  assert.equal(buildProjectsUrl(false, { fullWorktrees: true }), '/api/projects?worktrees=full');
+  assert.equal(buildProjectsUrl(true, { fullWorktrees: false }), '/api/projects?includeHidden=1');
+  assert.equal(buildProjectsUrl(true), '/api/projects?includeHidden=1');
+});

@@ -16,7 +16,27 @@ export const CLI_FLAGS = Object.freeze({
   allowedTools: '--allowedTools',
   continueLast: '--continue',
   resume: '--resume',
+  // Feature 13 (design.md §5.4): modelo y llamada de solo lectura para los resúmenes.
+  model: '--model',
+  permissionDefault: 'default',
+  maxTurns: '--max-turns',
+  tools: '--tools',
+  disallowedTools: '--disallowedTools',
 });
+
+// ---------- Feature 13: modelo de Claude (design.md §5.4, D13) ----------
+
+/** Alias de modelo admitidos por `--model` (doc oficial del CLI, 2026-10-25). Nunca texto libre en el argv. */
+export const CLI_MODELS = Object.freeze(['haiku', 'sonnet', 'opus']);
+export const MODEL_LABELS = Object.freeze({ default: 'Por defecto', haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' });
+/** true solo para los textos exactos 'default', 'haiku', 'sonnet' u 'opus'. */
+export const isValidModel = (v) => v === 'default' || CLI_MODELS.includes(v);
+/** Resúmenes: siempre Haiku, como mucho 10 turnos y solo herramientas de lectura. */
+export const SUMMARY_MODEL = 'haiku';
+export const SUMMARY_MAX_TURNS = 10;
+export const READ_ONLY_TOOLS = Object.freeze(['Read', 'Glob', 'Grep']);
+export const READ_ONLY_DENIED_TOOLS = Object.freeze(['Bash', 'PowerShell', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit',
+  'WebFetch', 'WebSearch', 'Task', 'Agent', 'mcp__*']);
 
 /** Regla de --allowedTools para un comando Bash (sintaxis actual; la antigua era `Bash(cmd:*)`). */
 export const BASH_RULE = (cmd) => `Bash(${cmd} *)`;
@@ -172,7 +192,7 @@ export function buildAllowedTools(allowedCommands) {
  * 2.1.307: --allowedTools es una opción variádica y consumía también un prompt colocado detrás. Por eso además debe
  * ser la última opción (nada posicional después). Lanza si algún elemento es un argumento prohibido.
  */
-export function buildClaudeArgs({ session, allowedCommands } = {}) {
+export function buildClaudeArgs({ session, allowedCommands, model } = {}) {
   const args = [
     CLI_FLAGS.print,
     CLI_FLAGS.outputFormat,
@@ -184,11 +204,45 @@ export function buildClaudeArgs({ session, allowedCommands } = {}) {
   const mode = session && session.mode;
   if (mode === 'continue') args.push(CLI_FLAGS.continueLast);
   else if (mode === 'resume') args.push(CLI_FLAGS.resume, String(session.id));
+  // Feature 13 (R55): solo un alias de la lista cerrada llega al argv, justo antes de --allowedTools.
+  if (CLI_MODELS.includes(model)) args.push(CLI_FLAGS.model, model);
   args.push(CLI_FLAGS.allowedTools, buildAllowedTools(allowedCommands));
+  return assertNoForbidden(args);
+}
+
+function assertNoForbidden(args) {
   for (const arg of args) {
     if (FORBIDDEN_ARGS.includes(arg)) throw new Error('Argumento no permitido en la llamada a Claude Code');
   }
   return args;
+}
+
+/**
+ * Feature 13 (design.md §5.4): llamada de SOLO LECTURA para generar resúmenes. Modelo Haiku, modo de permisos
+ * `default` (nunca la aceptación automática de ediciones), 10 turnos, herramientas limitadas a lectura, denegaciones
+ * explícitas de edición, shell, web, subagentes y MCP y, la última, la lista de lectura permitida (opción variádica).
+ * No recibe nada del cliente; el prompt va por stdin.
+ */
+export function buildReadOnlyClaudeArgs() {
+  const readOnly = READ_ONLY_TOOLS.join(',');
+  return assertNoForbidden([
+    CLI_FLAGS.print,
+    CLI_FLAGS.outputFormat,
+    CLI_FLAGS.streamJson,
+    CLI_FLAGS.verbose,
+    CLI_FLAGS.model,
+    SUMMARY_MODEL,
+    CLI_FLAGS.permissionMode,
+    CLI_FLAGS.permissionDefault,
+    CLI_FLAGS.maxTurns,
+    String(SUMMARY_MAX_TURNS),
+    CLI_FLAGS.tools,
+    readOnly,
+    CLI_FLAGS.disallowedTools,
+    READ_ONLY_DENIED_TOOLS.join(','),
+    CLI_FLAGS.allowedTools,
+    readOnly,
+  ]);
 }
 
 function isAbsoluteAny(bin) {

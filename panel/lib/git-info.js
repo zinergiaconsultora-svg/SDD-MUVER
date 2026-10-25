@@ -17,9 +17,13 @@ export const GIT_COMMANDS = Object.freeze([
   Object.freeze(['log', '-10', '--format=%H%x1f%cI%x1f%s']),
   // Fase 4 (F4-R61, mejora M4): sin tomar el bloqueo opcional del índice mientras Claude trabaja en el repo.
   Object.freeze(['--no-optional-locks', 'status', '--porcelain']),
+  // Feature 13 (design.md §5.7): clasificación de worktrees (lib/repo-layout.js). getGitInfo no la usa.
+  Object.freeze(['--no-optional-locks', 'rev-parse', '--git-dir', '--git-common-dir']),
 ]);
 
-const [CMD_IS_REPO, CMD_BRANCH, CMD_LAST_COMMIT, CMD_RECENT_COMMITS, CMD_STATUS] = GIT_COMMANDS;
+const [CMD_IS_REPO, CMD_BRANCH, CMD_LAST_COMMIT, CMD_RECENT_COMMITS, CMD_STATUS, REPO_LAYOUT] = GIT_COMMANDS;
+/** Feature 13: `git --no-optional-locks rev-parse --git-dir --git-common-dir` (entrada de la lista cerrada). */
+export const CMD_REPO_LAYOUT = REPO_LAYOUT;
 
 /**
  * Opciones globales que se anteponen a TODA llamada git del panel (design.md §5.2, D7): sin core.fsmonitor del repo y,
