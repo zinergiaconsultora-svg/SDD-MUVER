@@ -5,10 +5,10 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #13 `vista-compacta-y-resumen` — lista compacta, resumen de cada proyecto, worktrees agrupados y filtros
-- **Estado:** `spec_ready` (61 requisitos, 27 tareas; lint 0/0) — **esperando aprobación humana (puerta 1)**
-- **Tarea actual:** Revisión humana de `specs/vista-compacta-y-resumen/`; antes de implementar, el implementer debe partir del código de la feature 14
+- **Estado:** `in_progress` (spec aprobada por el humano; implementer trabajando)
+- **Tarea actual:** Implementación TDD de `specs/vista-compacta-y-resumen/tasks.md` (T1→T27)
 - **Siguiente paso:** Humano aprueba la spec → `in_progress` → implementer → tests → reviewer → done; después la feature 15 (endurecimiento 2).
-- **Bloqueos / esperando:** aprobación humana de la spec de la feature 13
+- **Bloqueos / esperando:** —
 
 ## Decisiones tomadas con el humano
 
@@ -29,8 +29,9 @@
 - Dominio propio: el humano lo comprará más adelante (uso personal). Hasta entonces, URL
   temporal + contraseña + reconfirmación. Revisar antes de la fase 5 (Web Push necesita
   una URL fija).
+- Feature 13 (decisión del humano): selector de modelo, nada recortado, resúmenes fuera de «Te necesitan».
 - Decisión del humano: la seguridad (feature 14) va antes que la vista compacta (feature 13).
-- Pendiente del humano: T36 de la fase 4 desde el móvil y Commit y push real; T37 (Internet); T27 (fase 1), T30/T31 (fase 2) y T27 (fase 3) manuales en Windows/móvil; rutas
+- Pendiente del humano: T36 de la fase 4 desde el móvil y T37 (Internet); T27 (fase 1), T30/T31 (fase 2) y T27 (fase 3) manuales en Windows/móvil; rutas
   reales y `appUrl` en `panel/projects.json`; aportar `muver.html` para `panel/legacy/`.
 
 ---
