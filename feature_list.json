@@ -1,5 +1,5 @@
 {
-  "_comentario": "Lista de features del proyecto. El 'leader' la lee para saber qué hacer. 'status': pending | spec_ready | in_progress | done. 'sdd': true = pasa por todo el ritual SDD; false = cambio pequeño, sin ceremonia. Regla: solo UNA feature in_progress a la vez.",
+  "_comentario": "Lista de features del proyecto. El 'leader' la lee para saber qué hacer. 'status': pending | spec_ready | in_progress | done. 'sdd': true = pasa por todo el ritual SDD; false = cambio pequeño, sin ceremonia. Regla: solo UNA feature in_progress a la vez. Orden de ejecución = orden de esta lista (no el id): la fase 5 va tras la 10 porque necesita dominio propio.",
   "features": [
     {
       "id": 1,
@@ -30,9 +30,58 @@
       "sdd": true
     },
     {
+      "id": 6,
+      "slug": "agentes-endurecidos",
+      "description": "Endurecer los 4 agentes del arnés con las capacidades oficiales de los subagentes de Claude Code: reviewer y leader sin herramientas de edición (disallowedTools: Edit, Write), modelo y esfuerzo por agente (spec_author y reviewer el más capaz; implementer equilibrado), implementer con isolation: worktree, descripciones que guíen la delegación. Probar que el reviewer no puede editar.",
+      "status": "pending",
+      "sdd": false
+    },
+    {
+      "id": 7,
+      "slug": "puertas-de-calidad",
+      "description": "Puertas de calidad automáticas con hooks de Claude Code instalables en cualquier proyecto: lint y comprobación de tipos tras cada edición (PostToolUse) devolviendo el error al agente; hook Stop que impide terminar si init.sh falla; ficheros protegidos (.env, credenciales, feature_list.json fuera del flujo). En el panel: nota de calidad por proyecto (tests, cobertura, lint, tipos, vulnerabilidades de dependencias) con evolución y aviso si baja.",
+      "status": "pending",
+      "sdd": true
+    },
+    {
+      "id": 8,
+      "slug": "memoria-del-estudio",
+      "description": "Memoria del estudio compartida entre todos los proyectos: lecciones aprendidas generadas automáticamente de cada rechazo del reviewer (~/.claude/estudio/lecciones.md) que spec_author e implementer leen antes de empezar; biblioteca de skills de Claude Code con recetas probadas (login con contraseña de la fase 2, pagos, subida de ficheros, despliegue, PWA); ADN de marca (sistema de diseño, tipografía, componentes, tono). En el panel: sección Estudio con lecciones, recetas y uso.",
+      "status": "pending",
+      "sdd": true
+    },
+    {
+      "id": 9,
+      "slug": "equipo-y-fabrica",
+      "description": "Equipo de agentes especialistas y fábrica de proyectos: agentes ux-ui, backend-datos, qa-tests, seguridad, devops y producto que el leader elige según la tarea, con reparto en paralelo en worktrees aislados y verificación de conjunto por el reviewer; botón Nuevo proyecto con plantillas (app web, PWA, landing, API, panel interno) que crea repo con arnés SDD y agentes instalados y lanza la entrevista de descubrimiento; prototipos clicables (2-3 estilos) para elegir en el móvil antes de programar; vista Equipo en el panel (qué agente trabaja en qué proyecto, fase, tiempo y qué espera del humano).",
+      "status": "pending",
+      "sdd": true
+    },
+    {
+      "id": 10,
+      "slug": "ojos-verificacion-visual",
+      "description": "Ojos: agente qa-visual con navegador automático (Playwright) que tras cada cambio captura cada pantalla en móvil y escritorio, claro y oscuro, compara con la versión anterior (regresión visual), mide accesibilidad y rendimiento (Lighthouse) y recorre los flujos principales; el agente corrige lo que ve mal. En el panel: galería de lo hecho por proyecto con antes y después de cada feature.",
+      "status": "pending",
+      "sdd": true
+    },
+    {
       "id": 5,
       "slug": "puesto-de-mando-visual-y-avisos",
-      "description": "Puesto de mando MUVER (fase 5): visual de lo hecho por proyecto — captura automática de la app, changelog desde progress/history.md y git log — y avisos: notificación push al móvil (Web Push) cuando un proyecto espera una decisión humana o termina una ejecución.",
+      "description": "Puesto de mando MUVER (fase 5): avisos y changelog — notificación push al móvil (Web Push) cuando un proyecto espera una decisión humana, termina una ejecución o el piloto nocturno deja su informe; changelog por proyecto desde progress/history.md y git log. Requiere URL fija (dominio propio): las suscripciones push van ligadas al origen. Las capturas de la app pasan a la feature 10 (ojos).",
+      "status": "pending",
+      "sdd": true
+    },
+    {
+      "id": 11,
+      "slug": "vista-previa-movil",
+      "description": "Vista previa en el móvil de cada feature: el agente devops despliega cada rama en su URL de vista previa (Cloudflare Pages o Vercel, plan gratuito); la tarjeta muestra Probar en el móvil y desde ahí el humano aprueba los tests (puerta 2) o envía Hay un problema con texto o captura, que llega al implementer como corrección.",
+      "status": "pending",
+      "sdd": true
+    },
+    {
+      "id": 12,
+      "slug": "piloto-nocturno",
+      "description": "Piloto nocturno con presupuesto: cola de trabajo que el humano deja antes de dormir; tareas programadas lanzan los agentes en paralelo, cada proyecto aislado, avanzando solo hasta la siguiente puerta de aprobación humana; presupuesto por proyecto y noche; vuelta al checkpoint tras dos fallos; informe de la mañana en el móvil con aprobaciones de un toque, fallos y coste.",
       "status": "pending",
       "sdd": true
     }

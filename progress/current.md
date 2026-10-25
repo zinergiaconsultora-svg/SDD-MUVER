@@ -22,6 +22,10 @@
   ejecutar solo los comandos de una lista autorizada por proyecto; protección extra con
   **Cloudflare Access + contraseña** para las acciones que ejecutan cosas (requiere dominio
   propio en Cloudflare; mientras no lo haya, repetir contraseña en acciones críticas).
+- Roadmap ampliado (aprobado por el humano): tras la fase 4 → 6 agentes endurecidos
+  (sdd:false), 7 puertas de calidad, 8 memoria del estudio, 9 equipo de especialistas y
+  fábrica de proyectos, 10 ojos (verificación visual), 5 avisos push, 11 vista previa en el
+  móvil, 12 piloto nocturno.
 - Dominio propio: el humano lo comprará más adelante (uso personal). Hasta entonces, URL
   temporal + contraseña + reconfirmación. Revisar antes de la fase 5 (Web Push necesita
   una URL fija).
