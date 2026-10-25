@@ -19,7 +19,7 @@
       "id": 3,
       "slug": "puesto-de-mando-descubrimiento-claude",
       "description": "Puesto de mando MUVER (fase 3): los proyectos abiertos en Claude Code aparecen solos — lectura de %USERPROFILE%/.claude.json (projects) y de ~/.claude/projects/ (sesiones) para listar cada proyecto con su última actividad y sesiones recientes; projects.json pasa a ser una capa de ajustes (URL de app, etiquetas, ocultar, fijar); fusión con los proyectos manuales.",
-      "status": "in_progress",
+      "status": "done",
       "sdd": true
     },
     {

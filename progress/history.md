@@ -60,3 +60,25 @@
   futuras anotadas: CF-Connecting-IP falsificable desde la LAN, cerrojo en setup
   concurrente, uninstall no cierra cloudflared.exe, PUT/PATCH sin anti-CSRF, rotación de
   panel.log. Informe: `progress/review_puesto-de-mando-acceso-web.md`.
+
+## 2026-10-25 · Feature 3: puesto-de-mando-descubrimiento-claude (Puesto de Mando MUVER, fase 3)
+- **Qué se hizo:** Los proyectos abiertos en Claude Code aparecen solos en el panel:
+  lectura en solo lectura de `~/.claude.json` y `~/.claude/projects/` (sesiones, títulos,
+  última actividad, nº de mensajes, rama) con caché por ruta+mtime+size y límite para
+  ficheros grandes; fusión con `projects.json` (ahora capa de ajustes) por ruta
+  normalizada, ids estables, fijar/ocultar, orden por fijados y actividad; PATCH de
+  ajustes, DELETE 409 en proyectos de Claude, `GET /api/claude/status`; anti-CSRF en
+  todo método distinto de GET/HEAD. UI: badge Claude Code, última sesión, fijar/ocultar,
+  mostrar ocultos, sesiones recientes y formulario de ajustes en el detalle.
+- **Ficheros cambiados:** `panel/lib/{path-key,claude-discovery,project-catalog}.js` (nuevos),
+  `panel/lib/{app,registry,config}.js`, `panel/server.js`, `panel/public/*`, `panel/test/*`,
+  `docs/architecture.md`, `docs/verification.md`.
+- **Requisitos cubiertos:** R1–R53 (`specs/puesto-de-mando-descubrimiento-claude/requirements.md`).
+- **Tests añadidos:** 78 (246 en total). `bash init.sh` en verde.
+- **Notas / decisiones:** Aprobado a la primera; probado con datos reales de Claude Code
+  sin modificar nada en `~/.claude`. Mejoras anotadas (no bloqueantes): recortar títulos
+  de `summary`, límite de longitud de línea en modo truncado, caché compartida con el
+  escaneo de arranque, git en cada GET también para ocultos (`--no-optional-locks`),
+  validar esquema http/https de `appUrl`/`repoUrl`, `scan({force})` concurrente. Nota:
+  las versiones recientes de Claude Code guardan el historial en `~/.claude/history.jsonl`
+  (no leído en esta fase). Informe: `progress/review_puesto-de-mando-descubrimiento-claude.md`.
