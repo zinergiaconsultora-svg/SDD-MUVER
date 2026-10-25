@@ -3,15 +3,24 @@
   "features": [
     {
       "id": 1,
-      "description": "EJEMPLO — borra esto. Ej: Alta de cliente con validación de datos",
-      "status": "pending",
+      "slug": "puesto-de-mando-base",
+      "description": "Puesto de mando MUVER (fase 1): panel web que lista los proyectos registrados (app-flyder, appcc-real, crm-zinergia, app-finanzas-restaurante), lee su estado real en disco (feature_list.json, progress, git), muestra tarjetas con semáforo y acceso directo a cada app, permite dar de alta proyectos nuevos desde la propia interfaz y es usable desde el móvil (responsive + accesible en la red local).",
+      "status": "spec_ready",
       "sdd": true
     },
     {
       "id": 2,
-      "description": "EJEMPLO — cambio pequeño que no merece el ritual. Ej: cambiar el texto de un botón",
+      "slug": "puesto-de-mando-acciones",
+      "description": "Puesto de mando MUVER (fase 2): acciones de desarrollo desde el panel con confirmación previa — implementar siguiente tarea, aprobar spec, aprobar tests, ejecutar init.sh/tests, ver diff — con consola de salida en vivo.",
       "status": "pending",
-      "sdd": false
+      "sdd": true
+    },
+    {
+      "id": 3,
+      "slug": "puesto-de-mando-visual",
+      "description": "Puesto de mando MUVER (fase 3): visual de lo hecho por proyecto — captura automática de la app, changelog desde progress/history.md y git log, y avisos cuando un proyecto espera aprobación humana.",
+      "status": "pending",
+      "sdd": true
     }
   ]
 }
