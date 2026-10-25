@@ -82,3 +82,25 @@
   validar esquema http/https de `appUrl`/`repoUrl`, `scan({force})` concurrente. Nota:
   las versiones recientes de Claude Code guardan el historial en `~/.claude/history.jsonl`
   (no leído en esta fase). Informe: `progress/review_puesto-de-mando-descubrimiento-claude.md`.
+
+## 2026-10-25 · Feature 4: puesto-de-mando-trabajar (Puesto de Mando MUVER, fase 4)
+- **Qué se hizo:** Trabajar con Claude Code desde el panel: vista Trabajar por proyecto con chat
+  (nueva, continuar o retomar sesión), salida en vivo por SSE con reconexión, cancelar, límites de
+  ejecuciones/tiempo/salida e historial en disco; permisos acotados (acceptEdits + comandos
+  autorizados por proyecto como reglas Bash y PowerShell) con «Permitir y reintentar»; botones SDD
+  (implementar, aprobar spec, aprobar tests, ejecutar tests, ver cambios con diff, commit y push sin
+  --force); reconfirmación de contraseña por el túnel cada 15 min, verificación de Cloudflare
+  Access, PANEL_ALLOW_EXEC, audit.log; portada con «Te necesitan».
+- **Ficheros cambiados:** `panel/lib/{claude-cli,exec-utils,run-store,runs,command-runner,sse,
+  sdd-actions,git-actions,cf-access,reauth,audit,work-api}.js` (nuevos), `panel/public/work.js`,
+  cambios en app/config/registry/sessions/git-info/http-utils/rate-limit, UI, tests y docs.
+- **Requisitos cubiertos:** R1–R99 (`specs/puesto-de-mando-trabajar/requirements.md`); R95–R99 manuales.
+- **Tests añadidos:** 165 (411 en total); suite en verde en Linux y en el Windows del humano.
+- **Notas / decisiones:** La prueba real T36 (Windows, Claude Code 2.1.307) destapó 7 fallos que los
+  tests simulados no veían, corregidos antes de aprobar: prompt por stdin (--allowedTools variádica),
+  reglas PowerShell, texto recortado/duplicado, estado con permisos denegados, registro movido a
+  panel/data/, IP real del limitador solo desde loopback, tests que leían datos locales y rutas
+  Windows. Pendiente del humano: T36 desde el móvil y Commit y push real; T37 (Internet).
+  Reviewer: APROBADO con mejoras de seguridad M1 (alta: git.exe del proyecto en Windows), M2
+  (comandos autorizados demasiado amplios), M3 (hooks y core.fsmonitor), M4, M5 y notas N1–N6.
+  Informe: `progress/review_puesto-de-mando-trabajar.md`.

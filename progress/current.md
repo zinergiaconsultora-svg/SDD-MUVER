@@ -4,10 +4,10 @@
 > leader y el implementer. Si cierras la sesión y la abres mañana, esto te dice por
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
-- **Feature en curso:** #4 `puesto-de-mando-trabajar` — trabajar con Claude Code desde el panel (fase 4)
-- **Estado:** `in_progress` — **puerta 2 aprobada por el humano** tras la prueba T36 real en Windows (Claude Code 2.1.307): 411 tests (410 pasan y 1 se omite en Windows, el previsto), chat, sesiones, permisos, cancelar sin procesos huérfanos, ejecutar tests y ver cambios; reviewer revisando
-- **Tarea actual:** Revisión final de la fase 4 por el reviewer. T37 (prueba por Internet) pendiente del humano, no bloqueante.
-- **Siguiente paso:** reviewer → done → aprobar spec de la feature 13 (ya en `spec_ready`) → implementer.
+- **Feature en curso:** #14 `endurecimiento-ejecucion` — seguridad de la ejecución (hallazgos del reviewer de la fase 4)
+- **Estado:** `pending` → spec_author redactando la spec
+- **Tarea actual:** Redacción de `specs/endurecimiento-ejecucion/`
+- **Siguiente paso:** Humano aprueba la spec → implementer → tests → reviewer → done; después la feature 13 (vista compacta, ya en `spec_ready`).
 - **Bloqueos / esperando:** —
 
 ## Decisiones tomadas con el humano
@@ -33,7 +33,8 @@
   denegación: "This Bash command contains multiple operations. The following part requires approval: …".
 - Pendiente de diseño: `panel/projects.json` está versionado pero el panel lo modifica en el PC del humano
   (fijados, ocultos, proyectos añadidos) → moverlo a `panel/data/` (ignorado por git) para evitar conflictos.
-- Pendiente del humano: T27 (fase 1), T30/T31 (fase 2) y T27 (fase 3) manuales en Windows/móvil; rutas
+- Decisión del humano: la seguridad (feature 14) va antes que la vista compacta (feature 13).
+- Pendiente del humano: T36 de la fase 4 desde el móvil y Commit y push real; T37 (Internet); T27 (fase 1), T30/T31 (fase 2) y T27 (fase 3) manuales en Windows/móvil; rutas
   reales y `appUrl` en `panel/projects.json`; aportar `muver.html` para `panel/legacy/`.
 
 ---
