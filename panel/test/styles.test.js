@@ -130,3 +130,8 @@ test('[F2-R43] .auth-card ocupa el ancho completo con inputs al 100 %, max-width
   assert.match(logout, /class="btn[" ]/);
   assert.match(change, /class="btn[" ]/);
 });
+
+test('[F2-R37][F2-R41] #session-actions arranca hidden y la CSS respeta hidden pese a display: flex', () => {
+  assert.match(indexHtml, /<nav[^>]*id="session-actions"[^>]*\shidden[\s>]/, 'el contenedor de acciones del encabezado lleva hidden por defecto');
+  assert.match(css, /\.topbar-actions\[hidden\]\s*\{[^}]*display:\s*none/s, 'sin esta regla, .topbar-actions { display: flex } anula el atributo hidden');
+});

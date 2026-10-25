@@ -147,6 +147,10 @@ code {
   flex-basis: 100%;
 }
 
+.topbar-actions[hidden] {
+  display: none; /* la clase define display: flex y anularía el atributo hidden sin esta regla */
+}
+
 .topbar-actions .btn {
   background: transparent;
   color: var(--accent-fg);
