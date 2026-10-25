@@ -18,6 +18,10 @@
   (Claude Code CLI + botones SDD), 5 visual y avisos push.
 - Publicación en Internet con **Cloudflare Tunnel**; el humano tiene Claude Code CLI
   instalado en su PC Windows.
+- Fase 4 (decisión del humano): Claude lanzado desde el panel puede editar ficheros y
+  ejecutar solo los comandos de una lista autorizada por proyecto; protección extra con
+  **Cloudflare Access + contraseña** para las acciones que ejecutan cosas (requiere dominio
+  propio en Cloudflare; mientras no lo haya, repetir contraseña en acciones críticas).
 - Pendiente del humano: T27 (fase 1), T30/T31 (fase 2) y T27 (fase 3) manuales en Windows/móvil; rutas
   reales y `appUrl` en `panel/projects.json`; aportar `muver.html` para `panel/legacy/`.
 
