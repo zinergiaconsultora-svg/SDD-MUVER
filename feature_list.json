@@ -33,7 +33,7 @@
       "id": 14,
       "slug": "endurecimiento-ejecucion",
       "description": "Endurecimiento de seguridad de la ejecución (hallazgos del reviewer de la fase 4): M1 resolver git/node/claude/bash por ruta absoluta desde PATH y nunca desde la carpeta del proyecto (Windows busca primero en el cwd del hijo), en git-info, git-actions, exec-utils y claude-cli; M2 no sugerir ni aceptar sin aviso comandos autorizados que equivalen a ejecución libre (intérpretes, shells, env, git a secas) y exigir subcomando; M3 llamadas git del panel con -c core.fsmonitor=false y decisión documentada sobre hooks en commit; M4 push por SSH en modo no interactivo (BatchMode); M5 límite de salida y de permissionDenials para todos los eventos; N3 --literal-pathspecs en diffs; N4 approve-spec rechaza si hay un run activo en el proyecto; N1/N2 corregir design.md de la fase 4.",
-      "status": "spec_ready",
+      "status": "in_progress",
       "sdd": true
     },
     {
