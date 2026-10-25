@@ -25,6 +25,8 @@ import {
   BROAD_TEXTS,
   renderBroadWarning,
   renderHooksWarning,
+  renderRepoConfigWarning,
+  renderExecSettingsForm,
 } from '../public/work.js';
 import { createApiClient } from '../public/api-client.js';
 
@@ -430,4 +432,26 @@ test('[F14-R25] renderHooksWarning: texto exacto, variante core.hooksPath, escap
   assert.equal(renderHooksWarning(undefined), '');
   const html = renderHooksWarning({ hooks: ['<script>'] });
   assert.ok(!html.includes('<script>') && html.includes('&lt;script&gt;'));
+});
+
+// ---------- Corrección revisión F14 (M3, M4) ----------
+
+test('[F14-R36] renderRepoConfigWarning: aviso con cada riesgo de la configuración del repo, escapado; sin riesgos → cadena vacía', () => {
+  const all = { gpgSign: true, sshCommand: true, askPass: true, credentialHelper: true, receivePack: true, filters: ['lfs', '<x>'] };
+  assert.equal(
+    renderRepoConfigWarning(all),
+    '<p class="warning" role="status">Atención: la configuración de este repositorio ejecutará programas al hacer commit y push: firma de commits (commit.gpgsign ejecuta gpg.program); core.sshCommand propio del repositorio; core.askPass; credential.helper del repositorio; remote.*.receivepack/uploadpack; filtros de .gitattributes (lfs, &lt;x&gt;). Revísala si no la has configurado tú.</p>',
+  );
+  assert.equal(renderRepoConfigWarning({ gpgSign: false, filters: [] }), '');
+  assert.equal(renderRepoConfigWarning(undefined), '');
+});
+
+test('[F14-R37] "Ajustes de ejecución": texto de ayuda bajo cada campo para no confundir comandos autorizados y comando de tests', () => {
+  const html = renderExecSettingsForm({ allowedCommands: [], testCommand: '' });
+  const help1 = 'Comandos que Claude podrá ejecutar por su cuenta (uno por línea). No es el comando de tests.';
+  const help2 = 'Lo que ejecuta el botón Ejecutar tests, p. ej. npm test';
+  assert.ok(html.includes(help1) && html.includes(help2));
+  assert.ok(html.indexOf(help1) > html.indexOf('id="exec-allowed"') && html.indexOf(help1) < html.indexOf('id="exec-test"'), 'la ayuda va bajo su campo');
+  assert.ok(html.indexOf(help2) > html.indexOf('id="exec-test"'));
+  assert.ok(html.includes('aria-describedby="exec-allowed-help"') && html.includes('aria-describedby="exec-test-help"'));
 });

@@ -23,6 +23,9 @@ export const GIT_ACTION_ARGS = Object.freeze({
   diffWorktree: Object.freeze(['--no-optional-locks', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--']), // repo sin commits
   hooksDir: Object.freeze(['--no-optional-locks', 'rev-parse', '--git-path', 'hooks']),
   hooksPathConfig: Object.freeze(['--no-optional-locks', 'config', '--get', 'core.hooksPath']),
+  // Corrección revisión F14 (M3): configuración LOCAL que ejecuta programas en el commit o el push.
+  repoConfigRisks: Object.freeze(['--no-optional-locks', 'config', '--local', '--includes', '--get-regexp',
+    '^(commit\\.gpgsign|core\\.sshcommand|core\\.askpass|credential\\..*helper|remote\\..*\\.(receivepack|uploadpack)|filter\\..*\\.(clean|smudge|process))$']),
   add: Object.freeze(['--no-optional-locks', 'add', '-A']),
   commit: Object.freeze(['--no-optional-locks', 'commit', '-m']), // + mensaje
   push: Object.freeze(['--no-optional-locks', 'push']),
@@ -130,6 +133,48 @@ export async function listActiveHooks(dir, { runner, readdir = fs.promises.readd
   }
 }
 
+const MAX_LISTED_FILTERS = 20;
+
+/** Nombres de filtro (`filter=<nombre>`) de un fichero .gitattributes (sin comentarios). */
+function attributeFilters(text) {
+  const names = [];
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    if (line.trim().startsWith('#')) continue;
+    for (const match of line.matchAll(/(?:^|\s)filter=(\S+)/g)) names.push(match[1]);
+  }
+  return names;
+}
+
+/**
+ * Corrección revisión F14 (M3): configuración del repo que ejecutará programas en "Commit y push" (además de los
+ * hooks): commit.gpgsign (gpg.program), core.sshCommand y core.askPass locales, credential.helper local,
+ * remote.*.receivepack/uploadpack y filtros (configurados localmente o citados en .gitattributes). Solo lectura.
+ */
+export async function listRepoConfigRisks(dir, { runner, readFile = fs.promises.readFile } = {}) {
+  const risks = { gpgSign: false, sshCommand: false, askPass: false, credentialHelper: false, receivePack: false, filters: [] };
+  const filters = [];
+  const config = await tryGit(dir, GIT_ACTION_ARGS.repoConfigRisks, { runner });
+  for (const line of config.stdout.split(/\r?\n/)) {
+    const space = line.indexOf(' ');
+    const key = (space >= 0 ? line.slice(0, space) : line).toLowerCase();
+    const value = space >= 0 ? line.slice(space + 1).trim() : '';
+    if (!key) continue;
+    if (key === 'commit.gpgsign') risks.gpgSign = ['true', 'yes', 'on', '1'].includes(value.toLowerCase());
+    else if (key === 'core.sshcommand') risks.sshCommand = value !== '';
+    else if (key === 'core.askpass') risks.askPass = value !== '';
+    else if (key.startsWith('credential.')) risks.credentialHelper = risks.credentialHelper || value !== '';
+    else if (key.startsWith('remote.')) risks.receivePack = risks.receivePack || value !== '';
+    else if (/^filter\..+\.(clean|smudge|process)$/.test(key) && value !== '') filters.push(key.replace(/^filter\./, '').replace(/\.(clean|smudge|process)$/, ''));
+  }
+  try {
+    filters.unshift(...attributeFilters(await readFile(path.resolve(dir, '.gitattributes'), 'utf8')));
+  } catch {
+    // Sin .gitattributes.
+  }
+  risks.filters = [...new Set(filters)].filter((name) => HOOK_NAME_RE.test(name)).sort().slice(0, MAX_LISTED_FILTERS);
+  return risks;
+}
+
 /** Lista de cambios (contrato §4.3) o { ok: false, status: 409, error } si no es un repo. */
 export async function getChanges(dir, { runner } = {}) {
   const options = { runner };
@@ -147,6 +192,7 @@ export async function getChanges(dir, { runner } = {}) {
     truncated: all.length > MAX_CHANGED_FILES,
     hasHead: head,
     ...(await listActiveHooks(dir, options)),
+    repoConfig: await listRepoConfigRisks(dir, options),
   };
 }
 

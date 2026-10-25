@@ -29,6 +29,8 @@ import {
   RUNNER_COMMANDS,
   GIT_EXEC_SUBCOMMANDS,
   PKG_EXEC_SUBCOMMANDS,
+  POWERSHELL_EXEC_COMMANDS,
+  TOOL_EXEC_SUBCOMMANDS,
 } from '../lib/claude-cli.js';
 import { PANEL_DIR } from './helpers.js';
 import { createBinaryResolver, BIN_ERRORS } from '../lib/trusted-bin.js';
@@ -478,4 +480,50 @@ test('[F14-R20] buildAllowedTools con 200 comandos válidos aleatorios: ninguna 
     assert.ok(!rule.includes(':*'), rule);
     assert.ok(!match[2].startsWith('-'), rule);
   }
+});
+
+// ---------- Corrección revisión F14 (MA1, N4): comandos amplios que se colaban y estructuras acotadas ----------
+
+test('[F14-R34] isBroadCommand: extensiones .cmd/.bat/.ps1/.com/.exe sin mayúsculas, git con remotos y grep, PowerShell y python con versión', () => {
+  const broad = [
+    'npx.cmd', 'npx.cmd -y paquete', 'NPX.CMD', 'npm.cmd exec x', 'pnpm.cmd dlx x', 'node.cmd', 'NODE.EXE', 'Node.Exe -e', 'bash.bat', 'pwsh.ps1', 'python.com',
+    'git fetch', 'git pull', 'git push', 'git clone', 'git ls-remote', 'git grep', 'git remote', 'git send-email', 'git.exe fetch', 'GIT FETCH',
+    'git submodule', 'git archive', 'git daemon', 'git upload-pack', 'git receive-pack', 'git difftool', 'git mergetool', 'git filter-branch', 'git bisect', 'git rebase',
+    'Invoke-Expression', 'invoke-expression x', 'iex', 'IEX x', 'Invoke-Command', 'icm', 'Start-Process', 'start', 'saps', 'Invoke-Item', 'ii', 'Add-Type',
+    'Invoke-WebRequest', 'iwr', 'Invoke-RestMethod', 'irm', 'Start-Job', 'New-Object',
+    'python3.12', 'python3.12 -c', 'python3.9 -c x', 'pythonw', 'py -3', 'py', 'pypy3.10',
+    'yarn node', 'deno eval', 'deno run', 'uv run', 'pipx run', 'corepack', 'corepack pnpm', 'tsx', 'tsx -e', 'ts-node',
+  ];
+  for (const cmd of broad) assert.equal(isBroadCommand(cmd), true, cmd);
+  for (const cmd of ['git status', 'git log', 'git diff', 'git rev-list', 'npm test', 'npm.cmd test', 'python3.12 -m pytest', 'cargo test', 'tsx scripts/build.ts', 'pytest']) {
+    assert.equal(isBroadCommand(cmd), false, cmd);
+  }
+  for (const c of ['invoke-expression', 'iex', 'start-process', 'invoke-webrequest', 'irm', 'add-type', '&']) assert.ok(POWERSHELL_EXEC_COMMANDS.includes(c), c);
+  assert.deepEqual(TOOL_EXEC_SUBCOMMANDS.yarn, ['node']);
+});
+
+test('[F14-R34] los casos del informe de revisión no se proponen tras una denegación', () => {
+  for (const cmd of ['git fetch --upload-pack=x .', 'git grep -O x y', 'npx.cmd -y paquete', 'Invoke-Expression "x"', 'git ls-remote --upload-pack=x .', 'python3.12 -c x', 'iex x', 'git push origin main']) {
+    assert.equal(suggestAllowedCommand(cmd), null, cmd);
+    assert.deepEqual(suggestAllowedCommands(cmd), [], cmd);
+  }
+  assert.equal(suggestAllowedCommand('npm.cmd test'), 'npm.cmd test', 'no amplio');
+});
+
+test('[F14-R38] createStreamMapper: tras el tope de 50 no crecen las estructuras internas y toolInputs/approvals están acotados', () => {
+  const mapper = createStreamMapper({ cwd: CWD });
+  for (let i = 0; i < 60; i++) mapper.push(line({ type: 'system', subtype: 'permission_denied', tool_name: 'Bash', tool_use_id: `d-${i}`, tool_input: { command: 'x' } }));
+  const atCap = mapper.stats();
+  assert.equal(atCap.denials, 50);
+  assert.equal(atCap.seenDenials, 50, 'las descartadas no se recuerdan');
+  for (let i = 0; i < 3000; i++) {
+    mapper.push(line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: `t-${i}`, name: 'Bash', input: { command: 'ls' } }] } }));
+    mapper.push(line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: `t-${i}`, is_error: true, content: 'requires approval: ls' }] } }));
+  }
+  const after = mapper.stats();
+  assert.equal(after.toolInputs, 0, 'tras el tope no se guardan inputs');
+  assert.equal(after.approvals, 0);
+  const fresh = createStreamMapper({ cwd: CWD });
+  for (let i = 0; i < 3000; i++) fresh.push(line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: `t-${i}`, name: 'Bash', input: { command: 'ls' } }] } }));
+  assert.ok(fresh.stats().toolInputs <= 500, `toolInputs ${fresh.stats().toolInputs}`);
 });

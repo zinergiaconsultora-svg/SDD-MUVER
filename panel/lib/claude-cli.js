@@ -47,6 +47,16 @@ export const WRAPPER_COMMANDS = Object.freeze([
   'env', 'sudo', 'doas', 'su', 'runas', 'xargs', 'find', 'nohup', 'time', 'timeout', 'nice', 'ionice', 'stdbuf',
   'setsid', 'chroot', 'flock', 'watch', 'parallel', 'exec', 'eval', 'command', 'builtin', 'start', 'cmd', 'script',
   'busybox', 'wsl', 'strace', 'ltrace', 'gdb',
+  'corepack', // corrección revisión F14 (MA1): `corepack pnpm dlx …`
+]);
+/**
+ * Corrección revisión F14 (MA1): cmdlets y alias de PowerShell que ejecutan código o lanzan procesos (el panel genera
+ * también reglas `PowerShell(...)`), incluidos los de descarga (`iwr`/`irm`, que se encadenan con `iex`). SIEMPRE amplios.
+ */
+export const POWERSHELL_EXEC_COMMANDS = Object.freeze([
+  'invoke-expression', 'iex', 'invoke-command', 'icm', 'start-process', 'saps', 'start', 'invoke-item', 'ii', 'add-type', '&', '.',
+  'invoke-webrequest', 'iwr', 'invoke-restmethod', 'irm', 'start-job', 'sajb', 'start-threadjob', 'new-object',
+  'invoke-wmimethod', 'invoke-cimmethod',
 ]);
 /** Amplios a secas o seguidos de una opción (- o /). */
 export const RUNNER_COMMANDS = Object.freeze([
@@ -54,29 +64,56 @@ export const RUNNER_COMMANDS = Object.freeze([
   'pypy3', 'uv', 'uvx', 'pipx', 'ruby', 'irb', 'perl', 'php', 'lua', 'luajit', 'java', 'jshell', 'rscript',
   'osascript', 'awk', 'gawk', 'mawk', 'nawk', 'sed', 'tclsh', 'wish', 'bash', 'sh', 'dash', 'zsh', 'ksh', 'fish',
   'csh', 'tcsh', 'pwsh', 'powershell', 'git', 'npm', 'pnpm', 'yarn', 'make',
+  'tsx', 'ts-node', // corrección revisión F14 (MA1): `tsx -e`, `ts-node -e`
 ]);
-/** git <sub> que ejecuta programas o cambia la configuración. */
+/**
+ * git <sub> que ejecuta programas o cambia la configuración. Corrección revisión F14 (MA1): también los que hablan con
+ * remotos, porque aceptan `--upload-pack=<programa>`/`--receive-pack=<programa>` o leen `remote.*.uploadpack`
+ * (`fetch`, `pull`, `push`, `clone`, `ls-remote`, `remote` —`remote update` hace fetch—), `grep` (`-O`/
+ * `--open-files-in-pager=<programa>`) y `send-email` (`--sendmail-cmd`). `archive` ya cubría `--remote --exec`,
+ * `bisect` cubre `bisect run` y `rebase` cubre `--exec`.
+ */
 export const GIT_EXEC_SUBCOMMANDS = Object.freeze([
   'config', 'submodule', 'bisect', 'rebase', 'filter-branch', 'difftool', 'mergetool', 'daemon', 'instaweb',
   'web--browse', 'credential', 'upload-pack', 'receive-pack', 'archive',
+  'fetch', 'pull', 'push', 'clone', 'ls-remote', 'remote', 'grep', 'send-email',
 ]);
 /** npm/pnpm/yarn/bun <sub> que ejecuta paquetes arbitrarios. */
 export const PKG_EXEC_SUBCOMMANDS = Object.freeze(['exec', 'x', 'dlx', 'explore', 'create', 'init']);
+/**
+ * Corrección revisión F14 (MA1): lanzadores con un subcomando que ejecuta código arbitrario (o descargado).
+ */
+export const TOOL_EXEC_SUBCOMMANDS = Object.freeze({
+  yarn: Object.freeze(['node']),
+  deno: Object.freeze(['eval', 'repl', 'run', 'x']),
+  uv: Object.freeze(['run', 'tool']),
+  pipx: Object.freeze(['run']),
+  dotnet: Object.freeze(['run', 'exec', 'fsi']),
+});
 const PYTHON_FAMILY = new Set(['python', 'python2', 'python3', 'py', 'pythonw', 'pypy', 'pypy3']);
+// python3.12, python3.9, pypy3.10, pythonw3.11…: se tratan como su familia (corrección revisión F14, MA1).
+const VERSIONED_PYTHON_RE = /^(python|pypy)\d*(\.\d+)*w?$/;
 const PKG_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 
-/** Nombre base del primer token: último segmento tras /, en minúsculas y sin .exe. */
+/**
+ * Nombre base del primer token: último segmento tras / o \, en minúsculas y sin .exe/.com/.cmd/.bat/.ps1
+ * (corrección revisión F14, MA1: `npx.cmd`, `NODE.EXE`). Los python con versión se reducen a su familia.
+ */
 function commandBase(token) {
-  return String(token).split('/').pop().toLowerCase().replace(/\.exe$/, '');
+  const base = String(token).split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|com|cmd|bat|ps1)$/, '');
+  if (VERSIONED_PYTHON_RE.test(base) && !PYTHON_FAMILY.has(base)) return base.startsWith('pypy') ? 'pypy' : 'python';
+  return base;
 }
 
 /** true si el comando autorizado permitiría a Claude ejecutar cualquier programa (design.md §3.5). */
 export function isBroadCommand(cmd) {
   const tokens = normalizeCommand(cmd).split(' ').filter(Boolean);
   if (!tokens.length) return false;
-  const [t0, t1, t2] = tokens;
+  const [t0, rawT1, t2] = tokens;
+  const t1 = rawT1 === undefined ? undefined : rawT1.toLowerCase();
   const base = commandBase(t0);
-  if (WRAPPER_COMMANDS.includes(base)) return true;
+  if (WRAPPER_COMMANDS.includes(base) || POWERSHELL_EXEC_COMMANDS.includes(base)) return true;
+  if (Object.prototype.hasOwnProperty.call(TOOL_EXEC_SUBCOMMANDS, base) && TOOL_EXEC_SUBCOMMANDS[base].includes(t1)) return true;
   if (RUNNER_COMMANDS.includes(base) && (t1 === undefined || t1.startsWith('-') || t1.startsWith('/'))) {
     const pythonModule = PYTHON_FAMILY.has(base) && t1 === '-m' && t2 !== undefined && !t2.startsWith('-');
     if (!pythonModule) return true;
@@ -98,6 +135,14 @@ export const TOOL_ERROR_MAX_CHARS = 300;
 export const DENIAL_DETAIL_MAX_CHARS = 200;
 /** Feature 14 (M5): como mucho 50 denegaciones por run (memoria, RunMeta e index.json). */
 export const MAX_PERMISSION_DENIALS = 50;
+/** Corrección revisión F14 (N4): como mucho 500 inputs de herramientas y textos de aprobación recordados por run. */
+export const MAX_TRACKED_TOOL_USES = 500;
+
+/** Map.set acotado: si se supera `max`, descarta la entrada más antigua. */
+function boundedSet(map, key, value, max) {
+  map.set(key, value);
+  if (map.size > max) map.delete(map.keys().next().value);
+}
 
 /** Recorta espacios y colapsa los interiores a uno. */
 export function normalizeCommand(value) {
@@ -305,14 +350,13 @@ export function createStreamMapper({ cwd } = {}) {
   }
 
   function denialEvent(toolName, input, toolUseId) {
-    if (toolUseId !== undefined && toolUseId !== null) {
-      if (seenDenials.has(toolUseId)) return null;
-      seenDenials.add(toolUseId);
-    }
+    if (toolUseId !== undefined && toolUseId !== null && seenDenials.has(toolUseId)) return null;
     if (denials.length >= MAX_PERMISSION_DENIALS) {
+      // Corrección revisión F14 (N4): tras el tope no se recuerda nada más (memoria acotada).
       capped = true;
       return null;
     }
+    if (toolUseId !== undefined && toolUseId !== null) seenDenials.add(toolUseId);
     const tool = typeof toolName === 'string' && toolName ? toolName : 'desconocida';
     const data = input && typeof input === 'object' ? input : {};
     const hasId = toolUseId !== undefined && toolUseId !== null;
@@ -336,7 +380,7 @@ export function createStreamMapper({ cwd } = {}) {
       if (block.type === 'text' && typeof block.text === 'string' && block.text.trim() !== '') {
         events.push({ type: 'text', text: clipText(block.text) });
       } else if (block.type === 'tool_use') {
-        if (block.id) toolInputs.set(block.id, block.input && typeof block.input === 'object' ? block.input : {});
+        if (block.id && !capped) boundedSet(toolInputs, block.id, block.input && typeof block.input === 'object' ? block.input : {}, MAX_TRACKED_TOOL_USES);
         events.push({ type: 'tool', name: String(block.name ?? ''), summary: summarizeToolInput(block.name, block.input, cwd) });
       }
     }
@@ -348,8 +392,8 @@ export function createStreamMapper({ cwd } = {}) {
     const errors = blocks.filter((b) => b && b.type === 'tool_result' && b.is_error === true);
     for (const b of errors) {
       const approval = approvalCommandFrom(toolResultText(b.content));
-      if (approval && b.tool_use_id) {
-        approvals.set(b.tool_use_id, approval);
+      if (approval && b.tool_use_id && !capped) {
+        boundedSet(approvals, b.tool_use_id, approval, MAX_TRACKED_TOOL_USES);
         enrichDenial(b.tool_use_id, approval);
       }
     }
@@ -399,5 +443,11 @@ export function createStreamMapper({ cwd } = {}) {
     return [];
   }
 
-  return { push, denials: () => denials.slice(), denialsCapped: () => capped };
+  return {
+    push,
+    denials: () => denials.slice(),
+    denialsCapped: () => capped,
+    /** Tamaños de las estructuras internas (tests de la corrección N4). */
+    stats: () => ({ denials: denials.length, seenDenials: seenDenials.size, toolInputs: toolInputs.size, approvals: approvals.size }),
+  };
 }

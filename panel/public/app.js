@@ -47,6 +47,7 @@ import {
   withReauth,
   renderBroadWarning,
   renderHooksWarning,
+  renderRepoConfigWarning,
   STATE_LABELS,
   ACTIVE_STATES,
   MAX_LOG_EVENTS,
@@ -820,7 +821,8 @@ async function commitPushAction() {
   }
   const message = suggestCommitMessage(currentWork);
   // Feature 14 (R25): aviso de hooks activos (se ejecutan con el commit y el push).
-  const extraHtml = `${renderHooksWarning(changes)}<div class="field"><label for="commit-message">Mensaje del commit (puedes editarlo)</label><textarea id="commit-message" name="message" maxlength="2000" rows="3">${escapeHtml(message)}</textarea></div>`;
+  // Corrección revisión F14 (M3): y de la configuración del repo que se ejecuta (gpg, ssh, filtros, receivepack…).
+  const extraHtml = `${renderHooksWarning(changes)}${renderRepoConfigWarning(changes.repoConfig)}<div class="field"><label for="commit-message">Mensaje del commit (puedes editarlo)</label><textarea id="commit-message" name="message" maxlength="2000" rows="3">${escapeHtml(message)}</textarea></div>`;
   const { confirmed, values } = await confirmAction(describeAction('commit-push', runContext({ message, branch })), { extraHtml });
   if (!confirmed) return;
   try {

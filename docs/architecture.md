@@ -199,27 +199,44 @@
    (`./test.sh`, `projectScript`) ejecuta código del proyecto, igual que `bash init.sh`.
 2. **Comandos amplios** (`isBroadCommand` en `lib/claude-cli.js`): intérpretes, shells y envolventes a secas o con
    una opción (`node`, `node -e`, `bash -c`, `env`, `xargs`, `find`…), `git` con subcomandos de ejecución
-   (`git -c`, `git config`…) y `npm`/`pnpm`/`yarn`/`bun` con `exec`, `dlx`, `run` sin script… equivalen a una terminal
+   (`git -c`, `git config`, y desde la corrección de la revisión `git fetch`/`pull`/`push`/`clone`/`ls-remote`/`grep`…),
+   cmdlets de PowerShell (`Invoke-Expression`/`iex`, `Start-Process`…), variantes `.cmd`/`.bat`/`.ps1` (`npx.cmd`),
+   python con versión (`python3.12`) y `npm`/`pnpm`/`yarn`/`bun` con `exec`, `dlx`, `run` sin script… equivalen a una terminal
    libre. Nunca se proponen tras una denegación; si el humano los añade a mano, la API exige `acknowledgeBroad: true`
    (la interfaz muestra un aviso y el botón "Autorizar de todos modos"), queda `acknowledgedBroad` en `audit.log` y
    "Ajustes de ejecución" avisa mientras estén guardados.
 3. **Configuración del repositorio**: toda llamada git del panel lleva `-c core.fsmonitor=false` (lecturas por el
    runner central y pasos de "Commit y push"); el diff usa `--literal-pathspecs` (un fichero llamado `*` es solo ese
-   fichero) y `--no-ext-diff --no-textconv` (no ejecuta drivers de diff del repo).
+   fichero) y `--no-ext-diff --no-textconv` (no ejecuta drivers de diff del repo). Corrección revisión F14 (MA2):
+   el prefijo incluye también `-c log.showSignature=false` (si no, el sondeo del listado ejecutaría el `gpg.program`
+   del repo al verificar firmas); `gpg.program` no se anula para no romper la firma de commits del humano. Antes de
+   cada `status`/`diff` el runner lee los filtros de la configuración local (`git config --local --includes
+   --get-regexp ^filter\.`) y los anula con `-c filter.<n>.clean=` (y `smudge`, `process`, `required=false`); los
+   filtros globales (git-lfs) se respetan. Se descartó `--attr-source=<árbol vacío>`: `.git/info/attributes` sigue
+   aplicándose y además ignoraría los atributos `text`/`eol`.
 4. **Hooks**: se ejecutan en "Commit y push" (sin `--no-verify` ni `core.hooksPath` vacío), porque suelen ser del
    humano (lint, tests) y desactivarlos cambiaría el resultado respecto a la terminal; `GET /changes` devuelve
-   `hooks` y `hooksPathCustom` y el diálogo de confirmación avisa con sus nombres.
+   `hooks` y `hooksPathCustom` y el diálogo de confirmación avisa con sus nombres. **"Commit y push" puede ejecutar
+   programas del repo** (corrección revisión F14, M3): filtros `clean`/`smudge` en `git add`, hooks, `gpg.program`
+   con `commit.gpgsign`, `core.askPass`/`credential.helper` y `remote.*.receivepack` en el push. `GET /changes`
+   devuelve `repoConfig` y el diálogo avisa de los que estén configurados localmente.
 5. **Push**: el paso de push lleva `GIT_SSH_COMMAND=ssh -o BatchMode=yes` (una clave con frase o un host desconocido
    fallan al momento) salvo que el entorno del panel ya defina `GIT_SSH_COMMAND` o `GIT_SSH`. Consecuencia: un
    `core.sshCommand` de la configuración de git se ignora en el push del panel; para usar otro ssh, definir
-   `GIT_SSH_COMMAND` en el entorno del panel.
+   `GIT_SSH_COMMAND` en el entorno del panel. Si el humano define `GIT_SSH` (y no `GIT_SSH_COMMAND`), el panel no
+   añade `GIT_SSH_COMMAND` y un `core.sshCommand` del repo prevalece sobre `GIT_SSH`.
 6. **Riesgos conocidos**: (N5) el CLI de Claude aplica también `~/.claude/settings.json` y los
    `.claude/settings*.json` del proyecto, que pueden ampliar los permisos de `--allowedTools`; (N6) desde la red local
    basta la sesión y el panel escucha en `0.0.0.0`: una cookie robada en la LAN da ejecución sin reconfirmar; los
    filtros `clean`/`smudge` de `.gitattributes` + `.git/config` pueden ejecutarse en `git status`/`git add`, y los
    `credential.helper` y hooks en el push (requieren que alguien escriba en `.git/`, que Claude Code protege);
    `cloudflared` se arranca por nombre desde `scripts/` (fuera de la feature 14); los nietos que lance Claude por
-   nombre siguen sus propias reglas de búsqueda. Además, el run tiene un límite de salida de 5 MB que cuenta todos los
+   nombre siguen sus propias reglas de búsqueda; (N3) con la carpeta personal (proyecto contenedor) en el catálogo,
+   Claude puede escribir en `~/.local/bin` y el panel usaría ese ejecutable tras reiniciarse si esa carpeta va antes en
+   el `PATH` (mismo riesgo que `~/.bashrc` o la carpeta Inicio); la lista de comandos amplios es una lista negra
+   inevitablemente incompleta (`npm install <url>` ejecuta scripts de ciclo de vida y `npm run x` código editable del
+   proyecto); (N5) las reglas por defecto `git diff *`/`git log *` admiten `--output=<fichero>` (escriben ficheros) y
+   las reglas por prefijo no permiten excluir opciones: queda para una revisión de las reglas por defecto. Además, el run tiene un límite de salida de 5 MB que cuenta todos los
    eventos (salvo `state`/`end`) y guarda como mucho 50 denegaciones de permiso.
 
 ## Restricciones y decisiones de arquitectura

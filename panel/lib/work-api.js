@@ -387,6 +387,7 @@ export function createWorkApi({
       truncated: changes.truncated,
       hooks: changes.hooks || [],
       hooksPathCustom: changes.hooksPathCustom === true,
+      repoConfig: changes.repoConfig, // corrección revisión F14 (M3)
     });
   }
 

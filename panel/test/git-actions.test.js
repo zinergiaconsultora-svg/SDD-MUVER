@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { GIT_ACTION_ARGS, GIT_STEP_ENV, parsePorcelainZ, planCommitPush, getFileDiff, listActiveHooks } from '../lib/git-actions.js';
+import { GIT_ACTION_ARGS, GIT_STEP_ENV, parsePorcelainZ, planCommitPush, getFileDiff, listActiveHooks, listRepoConfigRisks } from '../lib/git-actions.js';
 import { PANEL_DIR } from './helpers.js';
 
 test('[F4-R55] parsePorcelainZ: modificado, nuevo, renombrado (salta el origen) y nombres con espacios', () => {
@@ -42,11 +42,12 @@ test('[F4-R60] planCommitPush: el mensaje "--amend; rm -rf /" llega intacto como
   const calls = [];
   const plan = await planCommitPush('/repo', '--amend; rm -rf /', { runner: fakeRunner({ calls }), env: {} });
   assert.equal(plan.ok, true);
-  // Feature 14 (ajuste declarado, design.md §8.3): los pasos empiezan por -c core.fsmonitor=false.
+  // Feature 14 (ajuste declarado, design.md §8.3): los pasos empiezan por el prefijo de seguridad (corrección revisión
+  // F14: -c core.fsmonitor=false -c log.showSignature=false).
   assert.deepEqual(plan.steps.map((s) => [s.file, ...s.args]), [
-    ['git', '-c', 'core.fsmonitor=false', '--no-optional-locks', 'add', '-A'],
-    ['git', '-c', 'core.fsmonitor=false', '--no-optional-locks', 'commit', '-m', '--amend; rm -rf /'],
-    ['git', '-c', 'core.fsmonitor=false', '--no-optional-locks', 'push'],
+    ['git', '-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', '--no-optional-locks', 'add', '-A'],
+    ['git', '-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', '--no-optional-locks', 'commit', '-m', '--amend; rm -rf /'],
+    ['git', '-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', '--no-optional-locks', 'push'],
   ]);
   for (const step of plan.steps.slice(0, 2)) assert.deepEqual(step.env, { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' });
   // Feature 14 (ajuste declarado): el push lleva además GIT_SSH_COMMAND con BatchMode.
@@ -61,7 +62,7 @@ test('[F4-R60] planCommitPush: el mensaje "--amend; rm -rf /" llega intacto como
 
 test('[F4-R58] planCommitPush sin upstream → push -u origin <rama>', async () => {
   const plan = await planCommitPush('/repo', 'Mensaje', { runner: fakeRunner({ upstream: false, branch: 'feature/x' }) });
-  assert.deepEqual(plan.steps[2].args, ['-c', 'core.fsmonitor=false', '--no-optional-locks', 'push', '-u', 'origin', 'feature/x']); // ajuste declarado F14
+  assert.deepEqual(plan.steps[2].args, ['-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', '--no-optional-locks', 'push', '-u', 'origin', 'feature/x']); // ajuste declarado F14 (y corrección revisión F14)
   assert.equal(plan.display, 'git add -A → git commit -m "Mensaje" → git push -u origin feature/x');
 });
 
@@ -132,7 +133,7 @@ test('[F14-R23] getFileDiff de un fichero llamado "*" usa la lista literal (la r
 
 test('[F14-R21][F14-R26] planCommitPush: los tres pasos con prefijo, display sin cambios y GIT_SSH_COMMAND solo en el push', async () => {
   const plan = await planCommitPush('/repo', 'Mensaje', { runner: fakeRunner(), env: {} });
-  for (const step of plan.steps) assert.deepEqual(step.args.slice(0, 2), ['-c', 'core.fsmonitor=false']);
+  for (const step of plan.steps) assert.deepEqual(step.args.slice(0, 4), ['-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false']);
   assert.equal(plan.display, 'git add -A → git commit -m "Mensaje" → git push', 'display sin el prefijo');
   assert.deepEqual(plan.steps.map((s) => s.display), ['git add -A', 'git commit -m "Mensaje"', 'git push']);
   assert.deepEqual(plan.steps[0].env, { ...GIT_STEP_ENV });
@@ -188,4 +189,29 @@ test('[F14-R25] estático: git-actions.js no desactiva los hooks (sin --no-verif
   const source = await fs.readFile(path.join(PANEL_DIR, 'lib', 'git-actions.js'), 'utf8');
   assert.ok(!source.includes('--no-verify'), 'sin --no-verify');
   assert.ok(!source.includes('core.hooksPath='), 'sin -c core.hooksPath=');
+});
+
+// ---------- Corrección revisión F14 (M3): configuración del repo que se ejecuta en "Commit y push" ----------
+
+test('[F14-R36] listRepoConfigRisks: commit.gpgsign, core.sshCommand, core.askPass, credential.helper, receivepack y filtros (config local y .gitattributes)', async () => {
+  assert.equal(GIT_ACTION_ARGS.repoConfigRisks[0], '--no-optional-locks');
+  assert.ok(GIT_ACTION_ARGS.repoConfigRisks.includes('--local'));
+  const config = [
+    'commit.gpgsign true', 'core.sshcommand ssh -i x', 'core.askpass /tmp/a.sh', 'credential.helper store',
+    'remote.origin.receivepack /tmp/r.sh', 'filter.marca.clean /tmp/m.sh', 'filter.marca.required true',
+  ].join('\n');
+  const runner = async (file, args) => {
+    if (JSON.stringify(args) === JSON.stringify(GIT_ACTION_ARGS.repoConfigRisks)) return { stdout: config + '\n' };
+    throw new Error('inesperado');
+  };
+  const readFile = async (f) => {
+    if (f === path.resolve('/repo', '.gitattributes')) return '*.bin filter=lfs diff=lfs\n# filter=comentario\n*.x filter=marca\n';
+    throw Object.assign(new Error('no'), { code: 'ENOENT' });
+  };
+  const risks = await listRepoConfigRisks('/repo', { runner, readFile });
+  assert.deepEqual(risks, { gpgSign: true, sshCommand: true, askPass: true, credentialHelper: true, receivePack: true, filters: ['lfs', 'marca'] });
+  const none = await listRepoConfigRisks('/repo', { runner: async () => { throw Object.assign(new Error('sin valores'), { code: 1 }); }, readFile });
+  assert.deepEqual(none, { gpgSign: false, sshCommand: false, askPass: false, credentialHelper: false, receivePack: false, filters: ['lfs', 'marca'] });
+  const off = await listRepoConfigRisks('/repo', { runner: async () => ({ stdout: 'commit.gpgsign false\n' }), readFile: async () => '' });
+  assert.equal(off.gpgSign, false);
 });

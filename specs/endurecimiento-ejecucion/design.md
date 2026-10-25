@@ -531,3 +531,73 @@ Apartados (cada uno con 2–5 líneas):
 - **Rendimiento**: con ~100 proyectos el sondeo hace `resolve('git')` por llamada; con caché es una comparación de
   claves por candidato y proyecto (O(candidatos × proyectos)), sin acceso a disco.
 - **Windows y `realpath`**: `fs.realpathSync.native` resuelve uniones y enlaces; si falla se usa la ruta tal cual.
+
+## 13. Corrección revisión F14 (`progress/review_endurecimiento-ejecucion.md`)
+
+### 13.1 Comandos amplios (MA1, R34)
+
+- `commandBase`: último segmento tras `/` o `\`, en minúsculas y sin `.exe`/`.com`/`.cmd`/`.bat`/`.ps1`
+  (`npx.cmd`, `NODE.EXE`); `python3.12`, `python3.9`, `pypy3.10`… se reducen a su familia (`/^(python|pypy)\d*(\.\d+)*w?$/`).
+  El primer subcomando se compara en minúsculas.
+- `GIT_EXEC_SUBCOMMANDS` añade `fetch`, `pull`, `push`, `clone`, `ls-remote` y `remote` (aceptan
+  `--upload-pack`/`--receive-pack=<programa>` o leen `remote.*.uploadpack`; `remote update` hace fetch), `grep`
+  (`-O`/`--open-files-in-pager=<programa>`) y `send-email` (`--sendmail-cmd`). Ya estaban `submodule`, `archive`
+  (`--remote --exec`), `daemon`, `upload-pack`, `receive-pack`, `difftool`, `mergetool`, `filter-branch`, `bisect`
+  (`bisect run`) y `rebase` (`--exec`). Se lista el subcomando entero (no la opción) porque la regla `Bash(git fetch *)`
+  admite cualquier opción.
+- `POWERSHELL_EXEC_COMMANDS` (siempre amplios): `invoke-expression`/`iex`, `invoke-command`/`icm`,
+  `start-process`/`saps`/`start`, `invoke-item`/`ii`, `add-type`, `&`, `.`, `invoke-webrequest`/`iwr`,
+  `invoke-restmethod`/`irm` (descarga que se encadena con `iex`), `start-job`/`sajb`, `start-threadjob`, `new-object`
+  (`-ComObject WScript.Shell`), `invoke-wmimethod`, `invoke-cimmethod`.
+- `WRAPPER_COMMANDS` añade `corepack`; `RUNNER_COMMANDS` añade `tsx` y `ts-node`; `TOOL_EXEC_SUBCOMMANDS`:
+  `yarn node`, `deno eval|repl|run|x`, `uv run|tool`, `pipx run`, `dotnet run|exec|fsi`.
+- Límite asumido (se documenta): es una lista negra y no puede ser completa. Comandos como `npm install <url>` (scripts
+  de ciclo de vida) o cualquiera que ejecute código editable del proyecto (`npm run x`, `make test`) también dan
+  ejecución de facto; el aviso cubre solo los que la dan directamente.
+
+### 13.2 Lecturas git sin programas del repo (MA2, R35)
+
+- `GIT_SAFE_PREFIX = ['-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false']` en todas las llamadas (runner y
+  pasos de "Commit y push"). No se añade `-c gpg.program=`: anularía el `gpg.program` global del humano y rompería su
+  firma de commits; con `log.showSignature=false` las lecturas ya no llaman a gpg.
+- Filtros en lecturas: antes de cada `status`/`diff` del runner central se lee
+  `git config --local --includes --get-regexp ^filter\.` y por cada nombre se añaden
+  `-c filter.<n>.clean= -c filter.<n>.smudge= -c filter.<n>.process= -c filter.<n>.required=false` (código 1 = sin
+  filtros). Solo los locales: los globales del humano (p. ej. git-lfs) se respetan.
+- **Descartado `--attr-source=<árbol vacío>`** (lo soporta el git de los tests, 2.43, y el del humano, 2.52): probado
+  que `.git/info/attributes` sigue aplicándose (quien puede escribir `.git/config` puede escribir ahí), y además ignora
+  los atributos `text`/`eol` del `.gitattributes`, con lo que en Windows `status` podría marcar ficheros como cambiados.
+- `git add`/`commit`/`push` (pasos de `runs.js`) no anulan filtros: ahí son legítimos y se avisa (§13.3).
+
+### 13.3 Configuración del repo en "Commit y push" (M3, R36)
+
+- `GIT_ACTION_ARGS.repoConfigRisks`: `config --local --includes --get-regexp` de `commit.gpgsign`, `core.sshcommand`,
+  `core.askpass`, `credential.*helper`, `remote.*.(receivepack|uploadpack)` y `filter.*.(clean|smudge|process)`.
+- `listRepoConfigRisks(dir, { runner, readFile })` → `{ gpgSign, sshCommand, askPass, credentialHelper, receivePack, filters }`
+  (`filters`: nombres de la config local y de `filter=` en `.gitattributes`, válidos, ordenados, máx. 20). `getChanges`
+  y `GET /changes` lo devuelven como `repoConfig`.
+- `renderRepoConfigWarning(repoConfig)` (texto exacto en el test `[F14-R36]` de `work-render.test.js`):
+  `Atención: la configuración de este repositorio ejecutará programas al hacer commit y push: <puntos separados por "; ">. Revísala si no la has configurado tú.`
+  `commitPushAction` lo añade tras el aviso de hooks.
+
+### 13.4 Textos de ayuda (M4, R37)
+
+- Bajo "Comandos que Claude puede ejecutar": `Comandos que Claude podrá ejecutar por su cuenta (uno por línea). No es el comando de tests.`
+- Bajo "Comando de tests": `Lo que ejecuta el botón Ejecutar tests, p. ej. npm test`
+- `<p id="exec-…-help" class="muted field-help">` enlazado con `aria-describedby`; sin CSS nuevo.
+
+### 13.5 Memoria del traductor (N4, R38)
+
+- Tras el tope de 50 denegaciones no se guardan más ids (`seenDenials`), inputs ni textos de aprobación; `toolInputs` y
+  `approvals` se limitan a `MAX_TRACKED_TOOL_USES = 500` entradas (se descarta la más antigua). `mapper.stats()` expone
+  los tamaños para los tests.
+
+### 13.6 Documentación (N3, N5, R39)
+
+- N3: con la carpeta personal en el catálogo, Claude puede escribir en `~/.local/bin` y el panel usaría ese ejecutable
+  tras reiniciarse si esa carpeta va antes en el `PATH` (mismo riesgo que `~/.bashrc` o la carpeta Inicio).
+- N5: las reglas por defecto `git diff *`/`git log *` admiten `--output=<fichero>` (escritura de ficheros). Las reglas
+  de `--allowedTools` son por prefijo y no permiten excluir opciones; se documenta como riesgo conocido y queda para una
+  revisión futura de las reglas por defecto (quitarlas rompería el flujo SDD normal de Claude).
+- `GIT_SSH`: si el humano define `GIT_SSH` (no `GIT_SSH_COMMAND`), el panel no añade `GIT_SSH_COMMAND` y un
+  `core.sshCommand` del repo tiene prioridad sobre `GIT_SSH`.

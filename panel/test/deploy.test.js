@@ -248,7 +248,7 @@ test('[F14-R32] docs/verification.md: sección Feature 14 con una fila por requi
     if (entry.endsWith('.js')) testsText.push(await read(path.join(PANEL_DIR, 'test', entry)));
   }
   const allTests = testsText.join('\n');
-  for (let n = 1; n <= 33; n++) {
+  for (let n = 1; n <= 39; n++) { // R34–R39: corrección revisión F14
     const row = new RegExp(`^\\| R${n} \\|(.*)$`, 'm').exec(section);
     assert.ok(row, `fila F14 de R${n}`);
     if (row[1].includes('MANUAL')) continue;
@@ -257,4 +257,17 @@ test('[F14-R32] docs/verification.md: sección Feature 14 con una fila por requi
     assert.ok(allTests.includes(`[F14-R${n}]`), `[F14-R${n}] aparece en panel/test/`);
   }
   assert.match(section, /^\| R12 \|.*MANUAL/m, 'R12 es manual');
+});
+
+test('[F14-R39] docs/architecture.md documenta la corrección de la revisión (lecturas, commit y push, GIT_SSH, contenedor, lista negra y --output)', async () => {
+  const architecture = await read(path.join(REPO_DIR, 'docs', 'architecture.md'));
+  const start = architecture.indexOf('## Seguridad de la ejecución');
+  const section = architecture.slice(start, architecture.indexOf('\n## ', start + 1));
+  for (const needle of [
+    'log.showSignature=false', 'filter.<n>.clean=', '--attr-source', '.git/info/attributes',
+    'gpg.program', 'commit.gpgsign', 'core.askPass', 'remote.*.receivepack', 'repoConfig',
+    'core.sshCommand` del repo prevalece sobre `GIT_SSH`', '~/.local/bin', 'lista negra', '--output=<fichero>', 'Invoke-Expression', 'git fetch',
+  ]) {
+    assert.ok(section.includes(needle), `la sección debe mencionar ${needle}`);
+  }
 });

@@ -21,8 +21,47 @@ export const GIT_COMMANDS = Object.freeze([
 
 const [CMD_IS_REPO, CMD_BRANCH, CMD_LAST_COMMIT, CMD_RECENT_COMMITS, CMD_STATUS] = GIT_COMMANDS;
 
-/** Opciones globales que se anteponen a TODA llamada git del panel (design.md §5.2, D7): sin core.fsmonitor del repo. */
-export const GIT_SAFE_PREFIX = Object.freeze(['-c', 'core.fsmonitor=false']);
+/**
+ * Opciones globales que se anteponen a TODA llamada git del panel (design.md §5.2, D7): sin core.fsmonitor del repo y,
+ * desde la corrección de la revisión (MA2), sin verificar firmas en `git log` (log.showSignature ejecutaría
+ * gpg.program del repo en cada sondeo). gpg.program NO se anula: rompería la firma de commits del humano.
+ */
+export const GIT_SAFE_PREFIX = Object.freeze(['-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false']);
+
+/**
+ * Corrección revisión F14 (MA2): consulta de los filtros definidos en la configuración LOCAL del repo (con sus
+ * include). Se hace antes de cada status/diff del panel para anularlos con -c (los filtros globales del humano, como
+ * git-lfs, se respetan). No se aplica a `git add`/commit, donde los filtros son legítimos (y se avisa en el diálogo).
+ */
+export const GIT_LOCAL_FILTERS_ARGS = Object.freeze(['--no-optional-locks', 'config', '--local', '--includes', '--get-regexp', '^filter\\.']);
+const MAX_NEUTRALIZED_FILTERS = 100;
+const FILTER_KEY_RE = /^filter\.(.+)\.(clean|smudge|process|required)$/i;
+
+/** Nombres de filtro de la salida de `git config --get-regexp ^filter\.` (clave y valor separados por espacio). */
+export function parseFilterNames(stdout) {
+  const names = [];
+  for (const line of String(stdout ?? '').split(/\r?\n/)) {
+    const key = line.split(/\s/)[0];
+    const match = FILTER_KEY_RE.exec(key || '');
+    if (match && !names.includes(match[1])) names.push(match[1]);
+    if (names.length >= MAX_NEUTRALIZED_FILTERS) break;
+  }
+  return names;
+}
+
+/** Opciones -c que anulan cada filtro (sin clean/smudge/process y no obligatorio). */
+export function neutralizeFilterArgs(names) {
+  const out = [];
+  for (const name of names) {
+    out.push('-c', `filter.${name}.clean=`, '-c', `filter.${name}.smudge=`, '-c', `filter.${name}.process=`, '-c', `filter.${name}.required=false`);
+  }
+  return out;
+}
+
+/** true si la llamada lee contenido del árbol de trabajo (status o diff) y podría aplicar filtros. */
+function readsWorktree(args) {
+  return args.includes('status') || args.includes('diff');
+}
 
 function untrustedError(file) {
   return Object.assign(new Error(BIN_ERRORS.untrusted(lastSegment(String(file)))), { code: 'EUNTRUSTED' });
@@ -42,12 +81,17 @@ export function createGitRunner({ resolver = defaultResolver, execFileImpl = exe
     const options = { ...opts, shell: false };
     if (env) options.env = env;
     else delete options.env;
-    return new Promise((resolve, reject) => {
-      execFileImpl(resolved.file, [...GIT_SAFE_PREFIX, ...resolved.prefixArgs, ...args], options, (err, stdout, stderr) => {
+    const run = (gitArgs) => new Promise((resolve, reject) => {
+      execFileImpl(resolved.file, [...GIT_SAFE_PREFIX, ...resolved.prefixArgs, ...gitArgs], options, (err, stdout, stderr) => {
         if (err) reject(Object.assign(err, { stdout, stderr }));
         else resolve({ stdout, stderr });
       });
     });
+    if (!readsWorktree(args)) return run(args);
+    // Sin coincidencias, `git config --get-regexp` sale con código 1: se sigue sin anular nada.
+    return run([...GIT_LOCAL_FILTERS_ARGS])
+      .then(({ stdout }) => parseFilterNames(stdout), () => [])
+      .then((names) => run([...neutralizeFilterArgs(names), ...args]));
   };
 }
 

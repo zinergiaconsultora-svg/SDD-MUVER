@@ -147,3 +147,26 @@
 
 - **R33.** Cuando se ejecuta `./init.sh` al terminar, el sistema debe pasar todos los tests de las fases 1–4 y de esta feature, con solo los ajustes de tests anteriores declarados en `design.md` §8.3, y `node sdd-lint.js` debe terminar con 0 errores.
   - *Cómo se prueba:* ejecución de `./init.sh` (tarea final de `tasks.md`) con todo en verde; el reviewer compara los tests cambiados con la lista de §8.3.
+
+## G. Corrección revisión F14 (hallazgos MA1, MA2, M3, M4 y N3–N5 de `progress/review_endurecimiento-ejecucion.md`)
+
+> Añadidos por el leader tras la revisión (veredicto APROBADO con mejoras de prioridad alta), como corrección dentro de
+> la propia feature. Contratos y listas en `design.md` §13.
+
+- **R34.** Cuando el sistema clasifica un comando autorizado, `isBroadCommand` también debe devolver `true` si el nombre base (sin `.exe`/`.com`/`.cmd`/`.bat`/`.ps1` y sin distinguir mayúsculas) es un envolvente, un cmdlet o alias de PowerShell de ejecución, un python con versión o un lanzador con subcomando de ejecución, y para `git` con un subcomando de remotos o `grep`, según `design.md` §13.1.
+  - *Cómo se prueba:* tests unitarios de `isBroadCommand` y de las sugerencias con los casos del informe (`git fetch`, `npx.cmd`, `Invoke-Expression`, `git grep`, `python3.12 -c`…) y test de integración de `POST /permissions` y `PATCH` sin `acknowledgeBroad` → `400 needsAcknowledge`.
+
+- **R35.** Cuando el panel ejecuta cualquier llamada git, el sistema debe anteponer también `-c log.showSignature=false` y, antes de cada `status` o `diff` del runner central, debe anular con `-c filter.<n>.clean=` (y `smudge`, `process`, `required=false`) cada filtro definido en la configuración local del repo.
+  - *Cómo se prueba:* test unitario de `createGitRunner` (consulta `git config --local --includes --get-regexp ^filter\.` y argumentos de anulación) y test de integración con un commit firmado, `log.showSignature`, `gpg.program` y `filter.marca.clean` apuntando a scripts de marca: el sondeo, los cambios y el diff no los ejecutan.
+
+- **R36.** Cuando `GET /api/projects/:id/changes` responde, el sistema debe incluir `repoConfig` (`gpgSign`, `sshCommand`, `askPass`, `credentialHelper`, `receivePack`, `filters`) y la interfaz debe añadir al diálogo de "Commit y push" el aviso de `renderRepoConfigWarning` si alguno está activo.
+  - *Cómo se prueba:* test unitario de `listRepoConfigRisks` y de `renderRepoConfigWarning` (texto exacto, escapado, vacío) y test de integración de `GET /changes` con `commit.gpgsign`, `core.sshCommand`, `remote.origin.receivepack` y un `.gitattributes` con `filter=`.
+
+- **R37.** Cuando la interfaz pinta "Ajustes de ejecución", el sistema debe mostrar bajo cada campo su texto de ayuda exacto de `design.md` §13.4.
+  - *Cómo se prueba:* test unitario de `renderExecSettingsForm` (textos, posición y `aria-describedby`).
+
+- **R38.** Si un run alcanza el tope de 50 denegaciones, entonces `createStreamMapper` no debe guardar más identificadores, inputs ni textos de aprobación, y debe limitar a 500 las entradas de `toolInputs` y `approvals` en todo momento.
+  - *Cómo se prueba:* test unitario con `mapper.stats()` tras 60 denegaciones y 3000 herramientas.
+
+- **R39.** Cuando se cierra la corrección, el sistema debe tener en `docs/architecture.md` (sección "Seguridad de la ejecución") lo que se anula en las lecturas y por qué no `--attr-source`, lo que puede ejecutar "Commit y push", la prioridad de `core.sshCommand` sobre `GIT_SSH`, el riesgo del proyecto contenedor (N3), la lista de comandos amplios como lista negra incompleta y `--output` en `git diff`/`git log` (N5).
+  - *Cómo se prueba:* test estático en `panel/test/deploy.test.js` que busca una cadena clave de cada punto.

@@ -67,3 +67,12 @@
 
 - [x] T30. [MANUAL — Windows] El humano sigue design.md §8.4 (`whoami.exe` copiado como `git.exe` y `claude.exe` en un proyecto de prueba, avisos de comando amplio y de hooks) y el leader anota fecha, versiones y resultado en la fila de R12 de `docs/verification.md` (R12, R19, R25).
 - [x] T31. Verificar con `./init.sh` (todo en verde, solo los ajustes de tests anteriores de design.md §8.3) y `node sdd-lint.js` con 0 errores (R33).
+
+## Fase 10 — Corrección de la revisión (MA1, MA2, M3, M4, N3–N5)
+
+- [x] T32. Tests y código de los comandos amplios que se colaban: extensiones, git de remotos y `grep`, PowerShell, python con versión y lanzadores (design.md §13.1) (R34).
+- [x] T33. Tests y código del prefijo `-c log.showSignature=false` y de la anulación de filtros locales en `status`/`diff` del runner (design.md §13.2) (R35).
+- [x] T34. Tests y código de `listRepoConfigRisks`, `repoConfig` en `GET /changes` y `renderRepoConfigWarning` en "Commit y push" (design.md §13.3) (R36).
+- [x] T35. Tests y textos de ayuda de "Ajustes de ejecución" (design.md §13.4) (R37).
+- [x] T36. Tests y código de las estructuras acotadas de `createStreamMapper` (design.md §13.5) (R38).
+- [x] T37. Documentación en `docs/architecture.md` y `docs/verification.md` con su test estático y `./init.sh` en verde (R39, R32, R33).

@@ -108,11 +108,13 @@ export function renderExecSettingsForm(work) {
   return `<form id="exec-settings-form" class="exec-settings" novalidate>
       <div class="field">
         <label for="exec-allowed">Comandos que Claude puede ejecutar (uno por línea; además de git status, git diff y git log)</label>
-        <textarea id="exec-allowed" name="allowedCommands" rows="4" autocomplete="off" placeholder="npm test">${escapeHtml(commands)}</textarea>
+        <textarea id="exec-allowed" name="allowedCommands" rows="4" autocomplete="off" placeholder="npm test" aria-describedby="exec-allowed-help">${escapeHtml(commands)}</textarea>
+        <p id="exec-allowed-help" class="muted field-help">Comandos que Claude podrá ejecutar por su cuenta (uno por línea). No es el comando de tests.</p>
       </div>
       <div class="field">
         <label for="exec-test">Comando de tests (vacío = bash init.sh si existe)</label>
-        <input id="exec-test" name="testCommand" type="text" autocomplete="off" placeholder="npm test" value="${escapeHtml(work.testCommand || '')}">
+        <input id="exec-test" name="testCommand" type="text" autocomplete="off" placeholder="npm test" aria-describedby="exec-test-help" value="${escapeHtml(work.testCommand || '')}">
+        <p id="exec-test-help" class="muted field-help">Lo que ejecuta el botón Ejecutar tests, p. ej. npm test</p>
       </div>
       <div id="exec-settings-error" class="form-error-slot"></div>
       <div class="form-actions">
@@ -216,6 +218,23 @@ export function renderHooksWarning({ hooks, hooksPathCustom } = {}) {
   const names = hooks.map((h) => escapeHtml(h)).join(', ');
   const custom = hooksPathCustom ? ' La carpeta de hooks está configurada con core.hooksPath.' : '';
   return `<p class="warning" role="status">Atención: este repositorio tiene hooks de git activos (${names}) que se ejecutarán al hacer commit y push y pueden ejecutar cualquier programa. Revísalos si no los has creado tú.${custom}</p>`;
+}
+
+/**
+ * Corrección revisión F14 (M3): aviso del diálogo de "Commit y push" si la configuración del repo ejecutará programas
+ * (además de los hooks). '' si no hay nada.
+ */
+export function renderRepoConfigWarning(risks) {
+  const r = risks && typeof risks === 'object' ? risks : {};
+  const items = [];
+  if (r.gpgSign) items.push('firma de commits (commit.gpgsign ejecuta gpg.program)');
+  if (r.sshCommand) items.push('core.sshCommand propio del repositorio');
+  if (r.askPass) items.push('core.askPass');
+  if (r.credentialHelper) items.push('credential.helper del repositorio');
+  if (r.receivePack) items.push('remote.*.receivepack/uploadpack');
+  if (Array.isArray(r.filters) && r.filters.length) items.push(`filtros de .gitattributes (${r.filters.map((f) => escapeHtml(f)).join(', ')})`);
+  if (!items.length) return '';
+  return `<p class="warning" role="status">Atención: la configuración de este repositorio ejecutará programas al hacer commit y push: ${items.join('; ')}. Revísala si no la has configurado tú.</p>`;
 }
 
 /** Cuerpo del diálogo de confirmación (el texto ya viene escapado por describeAction). */

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { GIT_COMMANDS, GIT_SAFE_PREFIX, getGitInfo, createGitRunner } from '../lib/git-info.js';
+import { GIT_COMMANDS, GIT_SAFE_PREFIX, GIT_LOCAL_FILTERS_ARGS, getGitInfo, createGitRunner } from '../lib/git-info.js';
 import { createBinaryResolver, BIN_ERRORS } from '../lib/trusted-bin.js';
 import { makeProjectDir, makeTempDir, hasGit, removeDir } from './helpers.js';
 
@@ -134,22 +134,25 @@ function spyExecFile(calls, result = { stdout: 'true\n', stderr: '' }) {
 }
 
 test('[F14-R7][F14-R21] createGitRunner: ruta absoluta del resolvedor, prefijo -c core.fsmonitor=false, cwd y sin shell', async () => {
-  assert.deepEqual(GIT_SAFE_PREFIX, ['-c', 'core.fsmonitor=false']);
+  assert.deepEqual(GIT_SAFE_PREFIX, ['-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false']); // corrección revisión F14 (MA2)
   assert.ok(Object.isFrozen(GIT_SAFE_PREFIX));
   const calls = [];
   const runner = createGitRunner({ resolver: testResolver(), execFileImpl: spyExecFile(calls), platform: 'linux' });
   const out = await runner('git', ['--no-optional-locks', 'status', '--porcelain'], { cwd: '/srv/p', timeout: 5000 });
   assert.equal(out.stdout, 'true\n');
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].file, '/usr/bin/git', 'nunca el git de la carpeta del proyecto');
-  assert.deepEqual(calls[0].args, ['-c', 'core.fsmonitor=false', '--no-optional-locks', 'status', '--porcelain']);
-  assert.equal(calls[0].opts.cwd, '/srv/p');
-  assert.equal(calls[0].opts.timeout, 5000);
-  assert.equal(calls[0].opts.shell, false);
-  assert.ok(!('env' in calls[0].opts) || calls[0].opts.env === undefined, 'en Linux no se añade entorno');
+  // Corrección revisión F14 (MA2): antes de un status/diff se leen los filtros de la configuración local del repo.
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].args, [...GIT_SAFE_PREFIX, ...GIT_LOCAL_FILTERS_ARGS]);
+  const call = calls[1];
+  assert.equal(call.file, '/usr/bin/git', 'nunca el git de la carpeta del proyecto');
+  assert.deepEqual(call.args, [...GIT_SAFE_PREFIX, '--no-optional-locks', 'status', '--porcelain']);
+  assert.equal(call.opts.cwd, '/srv/p');
+  assert.equal(call.opts.timeout, 5000);
+  assert.equal(call.opts.shell, false);
+  assert.ok(!('env' in call.opts) || call.opts.env === undefined, 'en Linux no se añade entorno');
   const info = await getGitInfo('/srv/p', { runner });
   assert.equal(info.isRepo, true);
-  assert.ok(calls.every((c) => c.args[0] === '-c' && c.args[1] === 'core.fsmonitor=false'), 'todas las consultas de getGitInfo llevan el prefijo');
+  assert.ok(calls.every((c) => JSON.stringify(c.args.slice(0, 4)) === JSON.stringify(GIT_SAFE_PREFIX)), 'todas las consultas de getGitInfo llevan el prefijo');
 });
 
 test('[F14-R7] createGitRunner rechaza cualquier programa que no sea git y los fallos de resolución, sin llamar a execFile', async () => {
@@ -173,10 +176,10 @@ test('[F14-R13] createGitRunner en win32 añade NoDefaultCurrentDirectoryInExePa
   const calls = [];
   const resolver = testResolver({ platform: 'win32', files: ['C:\\Git\\cmd\\git.exe'], PATH: 'C:\\Git\\cmd' });
   const runner = createGitRunner({ resolver, execFileImpl: spyExecFile(calls), platform: 'win32' });
-  await runner('git', ['status'], { cwd: 'C:\\p', env: { A: '1', GIT_TERMINAL_PROMPT: '0' } });
+  await runner('git', ['rev-parse', 'HEAD'], { cwd: 'C:\\p', env: { A: '1', GIT_TERMINAL_PROMPT: '0' } });
   assert.equal(calls[0].file, 'C:\\Git\\cmd\\git.exe');
   assert.deepEqual(calls[0].opts.env, { A: '1', GIT_TERMINAL_PROMPT: '0', NoDefaultCurrentDirectoryInExePath: '1' });
-  await runner('git', ['status'], { cwd: 'C:\\p' });
+  await runner('git', ['rev-parse', 'HEAD'], { cwd: 'C:\\p' });
   assert.equal(calls[1].opts.env.NoDefaultCurrentDirectoryInExePath, '1');
   assert.equal(calls[1].opts.env.PATH, process.env.PATH, 'sin env explícito se parte de process.env');
   const linuxCalls = [];
@@ -192,4 +195,34 @@ test('[F14-R7] createGitRunner: un fallo de execFile llega como rechazo con stdo
   const runner = createGitRunner({ resolver: testResolver(), execFileImpl: failing, platform: 'linux' });
   await assert.rejects(runner('git', ['status'], { cwd: '/srv/p' }), (err) => err.code === 128 && err.stderr === 'fatal: not a git repository');
   assert.deepEqual(await getGitInfo('/srv/p', { runner }), ABSENT);
+});
+
+// ---------- Corrección revisión F14 (MA2): log.showSignature y filtros de la configuración local en las lecturas ----------
+
+test('[F14-R35] el runner anula los filtros clean/smudge/process de la configuración local antes de status y diff (no en log ni rev-parse)', async () => {
+  assert.deepEqual(GIT_LOCAL_FILTERS_ARGS, ['--no-optional-locks', 'config', '--local', '--includes', '--get-regexp', '^filter\\.']);
+  const calls = [];
+  const execFileImpl = (file, args, opts, callback) => {
+    calls.push(args);
+    const isConfig = args.includes('--get-regexp');
+    const out = isConfig ? 'filter.x.clean /tmp/marca.sh\nfilter.x.required true\nfilter.a.b.smudge cat\n' : '';
+    setImmediate(() => callback(null, out, ''));
+    return {};
+  };
+  const runner = createGitRunner({ resolver: testResolver(), execFileImpl, platform: 'linux' });
+  await runner('git', ['--no-optional-locks', 'diff', '--no-ext-diff', 'HEAD', '--stat'], { cwd: '/srv/p' });
+  const neutral = ['-c', 'filter.x.clean=', '-c', 'filter.x.smudge=', '-c', 'filter.x.process=', '-c', 'filter.x.required=false',
+    '-c', 'filter.a.b.clean=', '-c', 'filter.a.b.smudge=', '-c', 'filter.a.b.process=', '-c', 'filter.a.b.required=false'];
+  assert.deepEqual(calls[1], [...GIT_SAFE_PREFIX, ...neutral, '--no-optional-locks', 'diff', '--no-ext-diff', 'HEAD', '--stat']);
+  calls.length = 0;
+  await runner('git', ['log', '-1'], { cwd: '/srv/p' });
+  assert.deepEqual(calls, [[...GIT_SAFE_PREFIX, 'log', '-1']], 'log no necesita la consulta');
+  const failing = createGitRunner({ resolver: testResolver(), platform: 'linux', execFileImpl: (file, args, opts, callback) => {
+    calls.push(args);
+    setImmediate(() => (args.includes('--get-regexp') ? callback(Object.assign(new Error('sin coincidencias'), { code: 1 }), '', '') : callback(null, 'ok', '')));
+    return {};
+  } });
+  calls.length = 0;
+  assert.equal((await failing('git', ['status'], { cwd: '/srv/p' })).stdout, 'ok', 'sin filtros (código 1) el status sigue');
+  assert.deepEqual(calls[1], [...GIT_SAFE_PREFIX, 'status']);
 });

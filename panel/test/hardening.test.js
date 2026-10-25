@@ -280,3 +280,66 @@ test('[F14-R29] approve-spec con un run activo → 409 con runId y feature_list.
   assert.equal(ok.status, 200, ok.text);
   assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).features[1].status, 'in_progress');
 });
+
+// ---------- Corrección revisión F14 (MA2, M3) ----------
+
+test('[F14-R35] log.showSignature + gpg.program y un filtro clean del repo no se ejecutan en el sondeo, los cambios ni el diff', { skip: skipHardening }, async () => {
+  const dir = await makeProjectDir({ git: { commits: [] } });
+  cleanup.push(dir);
+  const marks = await tempDir('muver-marks-');
+  const gpgMark = path.join(marks, 'marca-gpg');
+  const cleanMark = path.join(marks, 'marca-clean');
+  const gpg = await markScript(marks, 'gpg.sh', gpgMark);
+  const clean = path.join(marks, 'clean.sh');
+  await fs.writeFile(clean, `#!/bin/sh\necho x >> "${cleanMark}"\ncat\n`, { mode: 0o755 });
+  await fs.writeFile(path.join(dir, 'a.txt'), 'uno\n');
+  await fs.writeFile(path.join(dir, '.gitattributes'), '*.txt filter=marca\n');
+  await git(dir, ['add', '-A']);
+  await git(dir, ['commit', '-q', '-m', 'Inicial']);
+  // Commit con una cabecera gpgsig (firma falsa): con log.showSignature, `git log` llamaría a gpg.program.
+  const raw = (await git(dir, ['cat-file', 'commit', 'HEAD'])).stdout;
+  const signed = raw.replace(/^(committer .*)$/m, '$1\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n iQEzBAABCAAdFiEE\n -----END PGP SIGNATURE-----');
+  const child = execFile('git', ['hash-object', '-t', 'commit', '-w', '--stdin'], { cwd: dir });
+  const hashPromise = new Promise((resolve, reject) => {
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('close', (code) => (code === 0 ? resolve(out.trim()) : reject(new Error(`hash-object ${code}`))));
+  });
+  child.stdin.end(signed);
+  await git(dir, ['update-ref', 'refs/heads/main', await hashPromise]);
+  await fs.writeFile(path.join(dir, 'a.txt'), 'dos\n'); // mismo tamaño: git tiene que pasar el contenido por el filtro
+  await fs.utimes(path.join(dir, 'a.txt'), new Date('2020-01-01'), new Date('2020-01-01'));
+  await git(dir, ['config', 'log.showSignature', 'true']);
+  await git(dir, ['config', 'gpg.program', gpg]);
+  await git(dir, ['config', 'filter.marca.clean', clean]);
+  await git(dir, ['config', 'filter.marca.required', 'true']);
+  const ctx = await setup([{ id: 'proy', name: 'Proy', path: dir }]);
+  const list = await ctx.authed('/api/projects');
+  assert.equal(list.json.find((p) => p.id === 'proy').git.dirtyCount, 1);
+  assert.equal((await ctx.authed('/api/projects/proy')).status, 200);
+  const changes = await ctx.authed('/api/projects/proy/changes');
+  assert.deepEqual(changes.json.files.map((f) => f.path), ['a.txt']);
+  const diff = await ctx.authed('/api/projects/proy/changes/diff?file=a.txt');
+  assert.ok(diff.json.diff.includes('+dos'));
+  assert.equal(existsSync(gpgMark), false, 'gpg.program no se ejecutó');
+  assert.equal(existsSync(cleanMark), false, 'el filtro clean no se ejecutó');
+  // Comprobación del fixture: un git diff y un git log normales sí ejecutan el filtro y gpg.program.
+  await execFileAsync('git', ['diff', '--stat', 'HEAD'], { cwd: dir }).catch(() => {});
+  assert.equal(existsSync(cleanMark), true, 'el fixture del filtro es efectivo');
+  await execFileAsync('git', ['log', '-1', '--format=%s'], { cwd: dir }).catch(() => {});
+  assert.equal(existsSync(gpgMark), true, 'el fixture de gpg.program es efectivo');
+});
+
+test('[F14-R36] GET /changes informa de la configuración del repo que se ejecutará en "Commit y push"', { skip: skipHardening }, async () => {
+  const dir = await makeProjectDir({ git: { commits: ['Inicial'] } });
+  cleanup.push(dir);
+  const ctx = await setup([{ id: 'proy', name: 'Proy', path: dir }]);
+  const plain = await ctx.authed('/api/projects/proy/changes');
+  assert.deepEqual(plain.json.repoConfig, { gpgSign: false, sshCommand: false, askPass: false, credentialHelper: false, receivePack: false, filters: [] });
+  await git(dir, ['config', 'commit.gpgsign', 'true']);
+  await git(dir, ['config', 'core.sshCommand', 'ssh -i clave']);
+  await git(dir, ['config', 'remote.origin.receivepack', '/tmp/x.sh']);
+  await fs.writeFile(path.join(dir, '.gitattributes'), '*.dat filter=raro\n');
+  const risky = await ctx.authed('/api/projects/proy/changes');
+  assert.deepEqual(risky.json.repoConfig, { gpgSign: true, sshCommand: true, askPass: false, credentialHelper: false, receivePack: true, filters: ['raro'] });
+});

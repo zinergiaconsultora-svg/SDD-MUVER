@@ -336,6 +336,13 @@ automático. Si un requisito no se puede probar, está mal escrito.
 > - `registry.test.js` `[F4-R62]` y `work-api.test.js` `[F4-R64]`: texto ampliado de `invalidCommand` (design.md §4.1).
 > - `work-api.test.js` `[F4-R6]`: la respuesta de `GET /work` incluye `broadCommands: []` (R18).
 
+> **Corrección revisión F14** (`progress/review_endurecimiento-ejecucion.md`, MA1, MA2, M3, M4, N3–N5; requisitos
+> R34–R39, design.md §13). Cambios en tests de esta misma feature: el prefijo de seguridad pasa a
+> `-c core.fsmonitor=false -c log.showSignature=false` (aserciones de `GIT_SAFE_PREFIX` en `git-info.test.js` y de los
+> pasos en `git-actions.test.js`, incluidos los ajustes `[F4-R60]`/`[F4-R58]`); en `git-info.test.js` `[F14-R7][F14-R21]`
+> espera la consulta de filtros antes del `status` y `[F14-R13]` usa `rev-parse` (sin esa consulta) para comprobar el
+> entorno. No cambia ningún test de las fases 1–4 más allá de esas líneas ya ajustadas.
+
 | Requisito | Test(s) que lo verifican |
 |-----------|--------------------------|
 | R1 | `panel/test/trusted-bin.test.js` → "[F14-R1] linux: primera carpeta del PATH…", "[F14-R1] linux: node → execPath siempre…", "[F14-R1] win32: .com antes que .exe…", "[F14-R1] win32: rutas conocidas de §3.2…", "[F14-R1] win32: claude en PATH…", "[F14-R1][F14-R4] resolveTrustedBinary e isTrustedPath…"; `panel/test/exec-utils.test.js` → "[F14-R1][F14-R4] resolveExecutable delega en el resolvedor…" |
@@ -371,6 +378,12 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R31 | `panel/test/deploy.test.js` → "[F14-R31] docs/architecture.md tiene la sección "Seguridad de la ejecución"…" |
 | R32 | `panel/test/deploy.test.js` → "[F14-R32] docs/verification.md: sección Feature 14…" |
 | R33 | `./init.sh` completo en verde (fases 1–4 y feature 14) y `node sdd-lint.js` con 0 errores (T31) |
+| R34 | `panel/test/claude-cli.test.js` → "[F14-R34] isBroadCommand: extensiones .cmd/.bat/.ps1/.com/.exe…", "[F14-R34] los casos del informe de revisión no se proponen tras una denegación"; `panel/test/work-api.test.js` → "[F14-R34] POST /permissions y PATCH exigen acknowledgeBroad para git fetch, npx.cmd, Invoke-Expression y git grep" |
+| R35 | `panel/test/git-info.test.js` → "[F14-R35] el runner anula los filtros clean/smudge/process de la configuración local…"; `panel/test/hardening.test.js` → "[F14-R35] log.showSignature + gpg.program y un filtro clean del repo no se ejecutan…" |
+| R36 | `panel/test/git-actions.test.js` → "[F14-R36] listRepoConfigRisks…"; `panel/test/work-render.test.js` → "[F14-R36] renderRepoConfigWarning…"; `panel/test/hardening.test.js` → "[F14-R36] GET /changes informa de la configuración del repo…"; cableado del diálogo: comprobación manual |
+| R37 | `panel/test/work-render.test.js` → "[F14-R37] "Ajustes de ejecución": texto de ayuda bajo cada campo…" |
+| R38 | `panel/test/claude-cli.test.js` → "[F14-R38] createStreamMapper: tras el tope de 50 no crecen las estructuras internas…" |
+| R39 | `panel/test/deploy.test.js` → "[F14-R39] docs/architecture.md documenta la corrección de la revisión…" |
 | T30 | **MANUAL — superado** (R12, R19, R25). 2026-10-25, Windows, Node 24.14.0, Git 2.52.0.windows.1, Claude Code 2.1.307, proyecto C:\prueba-m1 con `whoami.exe` copiado como `git.exe` y `claude.exe`: listado y detalle con rama y commit reales; «Ver cambios» correcto; «Ejecutar tests» (`git --version`) → `git version 2.52.0.windows.1`; aviso de comando amplio al autorizar `git --version`; diálogo de «Commit y push» con aviso de hooks (pre-commit) y commit + push a un remoto --bare correctos con el hook ejecutado; chat «Di hola» respondido por Claude real. En ningún paso se ejecutó `whoami`. **Superado.** Observación de UX: el humano escribió el comando de tests en el campo de comandos autorizados; los dos campos se confunden. |
 
 ## Qué NO se considera verificado

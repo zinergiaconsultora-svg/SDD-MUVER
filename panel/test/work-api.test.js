@@ -622,3 +622,17 @@ test('[F14-R18] GET /work incluye broadCommands en el orden de allowedCommands (
   assert.deepEqual((await ctx.authed('/api/projects/proy/work')).json.broadCommands, ['node', 'env']);
   assert.deepEqual((await ctx.authed('/api/projects/otro/work')).json.broadCommands, []);
 });
+
+test('[F14-R34] POST /permissions y PATCH exigen acknowledgeBroad para git fetch, npx.cmd, Invoke-Expression y git grep', async () => {
+  const ctx = await setup();
+  for (const command of ['git fetch', 'npx.cmd', 'Invoke-Expression', 'git grep']) {
+    const r = await ctx.post('/api/projects/proy/permissions', { command });
+    assert.equal(r.status, 400, command);
+    assert.equal(r.json.needsAcknowledge, true, command);
+    assert.deepEqual(r.json.broadCommands, [command]);
+  }
+  const patch = await ctx.authed('/api/projects/proy', { method: 'PATCH', body: JSON.stringify({ allowedCommands: ['npm test', 'git fetch', 'npx.cmd', 'Invoke-Expression', 'git grep'] }) });
+  assert.equal(patch.status, 400);
+  assert.deepEqual(patch.json.broadCommands, ['git fetch', 'npx.cmd', 'Invoke-Expression', 'git grep']);
+  assert.deepEqual((await readJsonFile(ctx.registryFile)).projects[0].allowedCommands ?? [], []);
+});
