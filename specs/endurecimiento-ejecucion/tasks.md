@@ -65,5 +65,5 @@
 
 ## Fase 9 — Comprobación manual y verificación final
 
-- [ ] T30. [MANUAL — Windows] El humano sigue design.md §8.4 (`whoami.exe` copiado como `git.exe` y `claude.exe` en un proyecto de prueba, avisos de comando amplio y de hooks) y el leader anota fecha, versiones y resultado en la fila de R12 de `docs/verification.md` (R12, R19, R25).
+- [x] T30. [MANUAL — Windows] El humano sigue design.md §8.4 (`whoami.exe` copiado como `git.exe` y `claude.exe` en un proyecto de prueba, avisos de comando amplio y de hooks) y el leader anota fecha, versiones y resultado en la fila de R12 de `docs/verification.md` (R12, R19, R25).
 - [x] T31. Verificar con `./init.sh` (todo en verde, solo los ajustes de tests anteriores de design.md §8.3) y `node sdd-lint.js` con 0 errores (R33).

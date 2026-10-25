@@ -349,7 +349,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R9 | `panel/test/sdd-actions.test.js` → "[F14-R9] resolveTestCommand: nombre → resolvedor…", "[F14-R9] resolveTestCommand: relativa con separador → … projectScript…", "[F14-R9] resolveTestCommand: git solo en la carpeta del proyecto → 409 onlyInProject…" |
 | R10 | `panel/test/exec-utils.test.js` → "[F14-R10] taskkillPath y killProcessTree en win32…" |
 | R11 | `panel/test/hardening.test.js` → "[F14-R11] preparación: ejecutables falsos y PATH de prueba aislado", "[F14-R11][F14-R4] con git, claude, node, npm y bash falsos en el proyecto y PATH = proyecto:.:bin, el panel no ejecuta ninguno" |
-| R12 | **MANUAL — Windows — pendiente del humano** (T30, design.md §8.4): `whoami.exe` copiado como `git.exe` y `claude.exe` en un proyecto de prueba; anotar fecha, `node -v`, `git --version`, `claude --version` y resultado |
+| R12 | **MANUAL — superado** (T30): 2026-10-25, Windows, Node 24.14.0, Git 2.52.0.windows.1, Claude Code 2.1.307, proyecto C:\prueba-m1 con `whoami.exe` copiado como `git.exe` y `claude.exe`: listado y detalle con rama y commit reales; «Ver cambios» correcto; «Ejecutar tests» (`git --version`) → `git version 2.52.0.windows.1`; aviso de comando amplio al autorizar `git --version`; diálogo de «Commit y push» con aviso de hooks (pre-commit) y commit + push a un remoto --bare correctos con el hook ejecutado; chat «Di hola» respondido por Claude real. En ningún paso se ejecutó `whoami`. **Superado.** |
 | R13 | `panel/test/runs-api.test.js` → "[F14-R13] en win32 los hijos reciben NoDefaultCurrentDirectoryInExePath=1…"; `panel/test/git-info.test.js` → "[F14-R13] createGitRunner en win32 añade NoDefaultCurrentDirectoryInExePath=1…" |
 | R14 | `panel/test/claude-cli.test.js` → "[F14-R14] isBroadCommand con la tabla de design.md §3.5" |
 | R15 | `panel/test/claude-cli.test.js` → "[F14-R15] suggestAllowedCommand(s) nunca proponen un comando amplio…" |
@@ -371,7 +371,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R31 | `panel/test/deploy.test.js` → "[F14-R31] docs/architecture.md tiene la sección "Seguridad de la ejecución"…" |
 | R32 | `panel/test/deploy.test.js` → "[F14-R32] docs/verification.md: sección Feature 14…" |
 | R33 | `./init.sh` completo en verde (fases 1–4 y feature 14) y `node sdd-lint.js` con 0 errores (T31) |
-| T30 | **MANUAL — Windows — pendiente del humano, no bloqueante** (R12, R19, R25; design.md §8.4). El humano decidió el 2026-10-25 cerrar la feature 14 con esta prueba pendiente; se hará junto con la de la feature 15 (cancelar un run en Windows). Resultado: _(anotar fecha, versiones y resultado)_ |
+| T30 | **MANUAL — superado** (R12, R19, R25). 2026-10-25, Windows, Node 24.14.0, Git 2.52.0.windows.1, Claude Code 2.1.307, proyecto C:\prueba-m1 con `whoami.exe` copiado como `git.exe` y `claude.exe`: listado y detalle con rama y commit reales; «Ver cambios» correcto; «Ejecutar tests» (`git --version`) → `git version 2.52.0.windows.1`; aviso de comando amplio al autorizar `git --version`; diálogo de «Commit y push» con aviso de hooks (pre-commit) y commit + push a un remoto --bare correctos con el hook ejecutado; chat «Di hola» respondido por Claude real. En ningún paso se ejecutó `whoami`. **Superado.** Observación de UX: el humano escribió el comando de tests en el campo de comandos autorizados; los dos campos se confunden. |
 
 ## Mapa de trazabilidad — Feature 15: `comandos-amplios-git-npm` (prefijo `[F15-R<n>]`)
 

@@ -6,13 +6,13 @@
 
 - **Feature en curso:** #15 `comandos-amplios-git-npm` — comandos amplios de git y npm, `taskkill` con guardia final y ruta real del `cwd` (mejoras del reviewer de la feature 14)
 - **Estado:** `in_progress` — implementación terminada (488 tests en verde, `init.sh` OK); **esperando revisión humana de los tests (puerta 2)**
-- **Tarea actual:** puerta 2; T1–T15 y T17 hechas; T16 (manual en Windows: cancelar un run y añadir `git push`) pendiente del humano junto con la T30 de la feature 14.
+- **Tarea actual:** puerta 2; T1–T15 y T17 hechas; T16 (manual en Windows: cancelar un run y añadir `git push`) pendiente del humano. La T30 de la feature 14 ya está superada.
 - **Siguiente paso:** implementer → humano revisa tests (puerta 2) → reviewer → done. Después: 16, 17, 18 (riesgos de la 15) y la 13.
-- **Bloqueos / esperando:** — (pendiente del humano, no bloqueante: T30 de la feature 14 en Windows, junto con la de la 15)
+- **Bloqueos / esperando:** aprobación humana de los tests de la feature 15 (puerta 2); propuesta al humano de una feature nueva para MA2 de `progress/review_endurecimiento-ejecucion_2.md`.
 
 ## Decisiones tomadas con el humano
 
-- Feature 14 cerrada como `done` con T30 (prueba manual en Windows) pendiente y no bloqueante, por decisión del humano (2026-10-25).
+- Feature 14 cerrada como `done` (2026-10-25); su T30 en Windows quedó superada (registrada desde otra sesión en `claude/puesto-de-mando-docs-2m5u1m` e incorporada a esta rama).
 - `panel-muver` se unifica dentro de este repo, en la carpeta `panel/`.
 - Roadmap de 5 fases (ver `feature_list.json`): 1 base (hecha), 2 acceso web seguro,
   3 descubrimiento automático de proyectos de Claude Code, 4 trabajar desde el panel

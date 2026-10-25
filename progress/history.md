@@ -119,8 +119,10 @@
   `server.js`, tests y docs.
 - **Requisitos cubiertos:** R1–R33 (`specs/endurecimiento-ejecucion/requirements.md`); R12 manual.
 - **Tests añadidos:** 59 (470 en total); suite en verde en Linux.
-- **Notas / decisiones:** Puerta 2 aprobada por el humano. El humano decidió cerrar con T30 (prueba
-  manual en Windows con `whoami.exe` como `git.exe`/`claude.exe`) pendiente y no bloqueante; se hará
-  junto con la de la feature 15. Reviewer: APROBADO con mejoras M1 (lista de comandos amplios de
-  git/npm incompleta), M2 (`taskkill` sin guardia final) y M3 (ruta real del `cwd`), que pasan a la
-  feature 15. Informe: `progress/review_endurecimiento-ejecucion.md`.
+- **Notas / decisiones:** Puerta 2 aprobada por el humano. T30 (prueba manual en Windows con
+  `whoami.exe` como `git.exe`/`claude.exe` en `C:\prueba-m1`) **superada** el 2026-10-25 (Node 24.14.0, Git
+  2.52.0.windows.1, Claude Code 2.1.307; `whoami` no se ejecutó en ningún paso), registrada desde otra sesión e
+  incorporada aquí. Dos revisiones, ambas APROBADO: `progress/review_endurecimiento-ejecucion.md` (M1–M3, que
+  pasan a la feature 15) y `progress/review_endurecimiento-ejecucion_2.md` (MA1, cubierta por la 15; **MA2 alta:
+  el sondeo sin clic ejecuta `gpg.program` con `log.showSignature` y filtros `clean` de `.git/config`**; M3 vectores
+  de configuración en Commit y push; M4 UX: los campos de comando de tests y comandos autorizados se confunden).
