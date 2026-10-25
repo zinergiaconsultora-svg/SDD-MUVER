@@ -5,10 +5,10 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #14 `endurecimiento-ejecucion` — seguridad de la ejecución (hallazgos del reviewer de la fase 4)
-- **Estado:** `in_progress` — implementación terminada (470 tests en verde, `init.sh` OK); **esperando revisión humana (puerta 2) y prueba manual T30 en Windows**
-- **Tarea actual:** T30 (prueba manual en Windows: git.exe/claude.exe falsos en un proyecto); T1–T29 y T31 hechas
-- **Siguiente paso:** Humano aprueba la spec → implementer → tests → reviewer → done; después la feature 13 (vista compacta, ya en `spec_ready`).
-- **Bloqueos / esperando:** —
+- **Estado:** `in_progress` — **puerta 2 aprobada por el humano** (2026-10-25): 470 tests en verde, `init.sh` OK; reviewer revisando
+- **Tarea actual:** revisión final de la feature 14 por el reviewer. T30 (prueba manual en Windows: `whoami.exe` como `git.exe`/`claude.exe`) pendiente del humano.
+- **Siguiente paso:** reviewer → humano hace T30 → done; después la feature 13 (vista compacta, ya en `spec_ready`).
+- **Bloqueos / esperando:** T30 manual en Windows (necesaria para cerrar la feature como `done`)
 
 ## Decisiones tomadas con el humano
 
