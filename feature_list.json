@@ -40,7 +40,7 @@
       "id": 13,
       "slug": "vista-compacta-y-resumen",
       "description": "Vista compacta y comprensible del listado (feedback del humano con 86 proyectos reales): fila compacta por proyecto con nombre, resumen de una frase de qué va el proyecto, semáforo, última actividad relativa y nº de tareas en curso, con el detalle completo al pulsar; resumen obtenido de README/package.json/CLAUDE.md o generado por Claude en solo lectura bajo demanda, guardado y editable en Ajustes; worktrees agrupados bajo su repositorio principal (git common dir) como tareas en curso; buscador, filtros (activos esta semana, fijados, con atención) y proyectos sin actividad en 30 días plegados en Antiguos; opción de vista tarjetas/lista recordada por dispositivo. Ajustes del humano (2026-10-25): selector de modelo (Haiku/Sonnet/Opus) al enviar a Claude, recordado por proyecto, y resúmenes con el modelo más barato; texto completo sin recortes con «…» (filas que crecen); los fallos de generación de resúmenes no aparecen en «Te necesitan»; construir sobre el código de las features 4 y 14.",
-      "status": "pending",
+      "status": "spec_ready",
       "sdd": true
     },
     {

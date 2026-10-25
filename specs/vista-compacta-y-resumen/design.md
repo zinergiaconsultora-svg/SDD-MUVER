@@ -1,61 +1,81 @@
 # Diseño — Feature 13: Puesto de Mando MUVER (vista compacta y resumen de cada proyecto)
 
 > CÓMO se construye lo descrito en `requirements.md`. El implementer debe poder trabajar leyendo solo esta carpeta
-> más `docs/conventions.md`. Se construye ENCIMA de las fases 1–4 (`panel/`) **tal como están en disco**, incluida la
-> corrección T36 de la fase 4 (el prompt de Claude va por **stdin** y `--allowedTools` es la **última** opción porque
-> es variádica). Nada de lo que funciona se rompe; los ajustes de tests existentes están declarados en §7.4.
+> más `docs/conventions.md`. Se construye ENCIMA del código **tal como está en disco** tras:
+> - la **fase 4** con sus correcciones de la prueba real (T36): el prompt de Claude va por **stdin**; `--allowedTools`
+>   es la **última** opción (es variádica); cada comando autorizado genera reglas `Bash(cmd *)` **y** `PowerShell(cmd *)`;
+>   el registro vivo es `<datos>/projects.json` (`PANEL_DATA_DIR`), no `panel/projects.json`; un run de Claude con
+>   `result` correcto es `succeeded` aunque tenga `permissionDenials`;
+> - la **feature 14** (`specs/endurecimiento-ejecucion/`, `docs/architecture.md` §Seguridad de la ejecución): todo
+>   proceso se resuelve con el resolvedor de confianza (`lib/trusted-bin.js`) y se lanza con `guardedSpawn`
+>   (`lib/runs.js`); todo `git` va por el runner central `createGitRunner` (`lib/git-info.js`), que antepone
+>   `GIT_SAFE_PREFIX` (`-c core.fsmonitor=false -c log.showSignature=false`) y anula los filtros locales en status/diff.
+>
+> Nada de lo que funciona se rompe; los ajustes de tests existentes están declarados en §7.4. **Regla "nada recortado"**
+> (DISENO.md del humano): ningún texto de esta feature se oculta con «…», `text-overflow` ni `line-clamp`.
 
 ## 1. Decisiones técnicas (resumen)
 
 | # | Decisión | Por qué |
 |---|----------|---------|
-| D1 | **Vista Lista compacta por defecto** (una fila ≤ 72 px en escritorio, ≤ 96 px a 360 px) y vista Tarjetas conservada pero compactada; la elección se recuerda por dispositivo en `localStorage` (`muver.listPrefs`, con `try/catch`). | Petición literal del humano ("no tengan un widget tan grande"). Es una preferencia de pantalla, no un dato del proyecto: no va al servidor. |
+| D1 | **Vista Lista compacta por defecto** (una fila con resumen de una línea ≤ 72 px en escritorio; las demás crecen lo necesario) y vista Tarjetas conservada pero compactada (sin pie de botones, sin altura máxima); la elección se recuerda por dispositivo en `localStorage` (`muver.listPrefs`, con `try/catch`). | Petición literal del humano ("no tengan un widget tan grande"). Es una preferencia de pantalla, no un dato del proyecto: no va al servidor. |
 | D2 | **Toda la fila es un botón** que abre el detalle; fijar, ocultar, abrir app y eliminar pasan a un **menú "⋯"** (botón de 44 px). | Una sola acción principal por fila; menos ruido visual y área táctil cómoda en el móvil. Los botones del menú reutilizan el HTML de las fases 1–3, así sus tests siguen valiendo. |
-| D3 | **Resumen automático sin coste**: `package.json` → README → `CLAUDE.md`, lectura de los primeros 16 KB, caché en memoria de 5 min por carpeta (`lib/project-summary.js`). | El humano no sabe de qué va cada proyecto; la mayoría tiene README o `package.json`. Leer 3 ficheros pequeños por proyecto cada 5 min es despreciable. |
+| D3 | **Resumen automático sin coste**: `package.json` → README → `CLAUDE.md`, lectura de los primeros 16 KB, caché en memoria de 5 min por carpeta (`lib/project-summary.js`). Se toma la **primera frase** (o 160 caracteres cortados en límite de palabra, **sin «…»**). | El humano no sabe de qué va cada proyecto; la mayoría tiene README o `package.json`. Leer 3 ficheros pequeños por proyecto cada 5 min es despreciable. |
 | D4 | **Resumen guardado en `projects.json`** (`summary`, `summarySource` = `manual`/`claude`, `summaryAt`), editable en Ajustes con `PATCH`. | `projects.json` ya es la capa de ajustes (fase 3); el estado vive en disco. |
-| D5 | **Generar con Claude bajo demanda**, nunca automático, con el gestor de runs de la fase 4 en **modo solo lectura** (`--permission-mode default`, `--allowedTools Read,Glob,Grep`, `--disallowedTools` de edición/Bash/web, `--max-turns 10`) y un **prompt fijo** por stdin. Pasa por `gateExec` (interruptor `PANEL_ALLOW_EXEC`, confirmación por el túnel, auditoría) y por los límites de runs. | Cada generación cuesta uso del plan del humano: solo cuando él lo pide y tras confirmar. Solo lectura: no puede tocar el proyecto. Reutilizar el gestor da historial, salida en vivo, cancelación y límites gratis. |
+| D5 | **Generar con Claude bajo demanda**, nunca automático, con el gestor de runs de la fase 4 en **modo solo lectura** (`--model haiku`, `--permission-mode default`, `--tools Read,Glob,Grep`, `--disallowedTools` de edición/shell/web/MCP, `--max-turns 10`, `--allowedTools Read,Glob,Grep` al final) y un **prompt fijo** por stdin. El ejecutable de Claude sale del resolvedor de confianza y el proceso se lanza con `guardedSpawn`, exactamente como los runs de trabajo (mismo `launchClaude`). Pasa por `gateExec` (interruptor `PANEL_ALLOW_EXEC`, confirmación por el túnel, auditoría) y por los límites de runs. | Cada generación cuesta uso del plan del humano: solo cuando él lo pide y tras confirmar. Solo lectura: no puede tocar el proyecto. Reutilizar el gestor da historial, salida en vivo, cancelación y límites gratis. |
 | D6 | **Lote en el servidor** (`POST /api/summaries/generate`): cola en memoria, de uno en uno, una sola confirmación y una sola puerta. | Si el bucle viviera en el navegador, cerrar la pestaña o caducar la confirmación (15 min por el túnel) lo cortaría a medias. |
-| D7 | **Worktrees por git, no por nombre**: `git --no-optional-locks rev-parse --git-dir --git-common-dir` (entrada nueva de `GIT_COMMANDS`), clasificación en caché 10 min por carpeta (`lib/repo-layout.js`). | `--git-common-dir` señala al repositorio principal sin adivinar; funciona con git ≥ 2.5 y con worktrees fuera de la carpeta del principal. |
+| D7 | **Worktrees por git, no por nombre**: `git --no-optional-locks rev-parse --git-dir --git-common-dir` (entrada nueva de `GIT_COMMANDS`) por el **runner central de la feature 14** (git de confianza + `GIT_SAFE_PREFIX`), clasificación en caché 10 min por carpeta (`lib/repo-layout.js`). | `--git-common-dir` señala al repositorio principal sin adivinar; funciona con git ≥ 2.5 y con worktrees fuera de la carpeta del principal. |
 | D8 | **Respuesta plana + agrupación en el cliente**: `GET /api/projects` sigue devolviendo una lista plana (compatible con "Te necesitan" y la fase 4) y cada elemento trae `parentId`/`groupKey`/`worktreeCount`; `public/list.js` arma las filas. | Los consumidores existentes no cambian; los filtros y la búsqueda son locales (sin peticiones extra). |
 | D9 | **Worktrees agrupados en modo ligero**: sin `git` (salvo la clasificación en caché); arnés y progreso del disco; rama de la última sesión de Claude. `?worktrees=full` los calcula completos (solo con "Mostrar tareas sueltas"). | Con ~70 worktrees, ahorra ~280 procesos `git` por refresco en Windows. |
 | D10 | **Repintado por firma**: cada fila se renderiza a texto HTML (función pura) y ese texto es su firma; `planRowUpdate` compara con la anterior y solo se sustituyen las filas cuya firma cambió. | Más simple que comparar el JSON del modelo de fila **y** el de la tarjeta, y exacto: si el HTML es igual, el DOM no necesita cambiar. El coste de generar 100 cadenas por minuto es despreciable. |
 | D11 | **Funciones puras nuevas en `public/list.js`** (agrupar, modelo de fila, filtros, antiguos, firmas, preferencias, textos de confirmación, estado del lote) y cableado mínimo en `public/app.js`. | Mismo patrón de las fases 1–4: lógica testeable en Node sin DOM. |
-| D12 | **Rutas nuevas en `lib/summary-api.js`** (`createSummaryApi(deps).route(...)`), que `lib/app.js` solo conecta después de `workApi.route`. | `work-api.js` ya tiene 674 líneas y es de la fase 4 (fuera de alcance tocarlo). |
+| D12 | **Rutas nuevas en `lib/summary-api.js`** (`createSummaryApi(deps).route(...)`), que `lib/app.js` solo conecta después de `workApi.route`. `work-api.js` solo cambia en lo mínimo: modelo en los runs, `model`/`models` en `GET …/work`, exclusión de `action: "summary"` en "Te necesitan" y el método `startReadOnlyClaude` que reutiliza su resolución de Claude. | `work-api.js` es grande y de la fase 4; la resolución de Claude (resolvedor de confianza con el `cwd` del run) vive allí y no se duplica. |
+| D13 | **Selector de modelo** (decisión del humano): `default` / `haiku` / `sonnet` / `opus`, lista cerrada `CLI_MODELS` en `claude-cli.js`; `--model <alias>` solo si el valor está en la lista (nunca texto libre al argv); recordado por proyecto en `model` del registro al lanzar; `RunMeta.model`. Los resúmenes, siempre `haiku`. | Verificado en la doc oficial (`code.claude.com/docs/en/cli-reference`, 2026-10-25): `--model` acepta los alias `sonnet`, `opus`, `haiku`. "Por defecto" = no pasar la flag (Claude Code usa su ajuste `model`). Haiku es el más barato para una frase. |
+| D14 | **Nada recortado** (decisión del humano): el resumen se ve entero y la fila crece; se mantiene compacta porque el resumen es una sola frase (automático: primera frase o ≤ 160 en palabra entera; generado: ≤ 140). | Regla de diseño del humano: nunca esconder texto con «…». |
+| D15 | **Los resúmenes no van a "Te necesitan"**: `/api/attention` filtra `action === 'summary'`; el fallo se ve en el historial del proyecto y en el estado del lote. | Decisión del humano: un lote fallido no debe llenar la cola de lo que de verdad necesita su atención. |
 
 ## 2. Estructura de ficheros
 
 ```
 panel/
 ├── lib/
-│   ├── project-summary.js       (crear) BOILERPLATE_PATTERNS, SUMMARY_MAX_CHARS, MAX_READ_BYTES, readHead, extractFirstParagraph,
-│   │                                    readPackageDescription, findReadme, readAutoSummary, resolveSummary, createSummaryReader
+│   ├── project-summary.js       (crear) BOILERPLATE_PATTERNS, AUTO_SUMMARY_MAX_CHARS, MAX_READ_BYTES, readHead, firstSentence, clipAtWord,
+│   │                                    extractFirstParagraph, readPackageDescription, findReadme, readAutoSummary, resolveSummary,
+│   │                                    createSummaryReader
 │   ├── repo-layout.js           (crear) classifyRepoLayout, createRepoLayoutCache, isLikelyWorktree, groupKeyFor, groupNameFor
 │   ├── summary-api.js           (crear) SUMMARY_PROMPT, SUMMARY_ERRORS, normalizeGeneratedSummary, createSummaryApi (generar, lote, estado, cancelar)
 │   ├── git-info.js              (tocar) GIT_COMMANDS + ['--no-optional-locks', 'rev-parse', '--git-dir', '--git-common-dir'] (export CMD_REPO_LAYOUT)
-│   ├── claude-cli.js            (tocar) CLI_FLAGS + permissionDefault/disallowedTools/maxTurns; READ_ONLY_TOOLS, READ_ONLY_DENIED_TOOLS,
-│   │                                    SUMMARY_MAX_TURNS, buildReadOnlyClaudeArgs
-│   ├── runs.js                  (tocar) startClaude({ …, profile }) ('work' | 'readonly'); waitFor(runId)
+│   ├── claude-cli.js            (tocar) CLI_FLAGS + model/permissionDefault/maxTurns/tools/disallowedTools; CLI_MODELS, MODEL_LABELS,
+│   │                                    isValidModel, READ_ONLY_TOOLS, READ_ONLY_DENIED_TOOLS, SUMMARY_MODEL, SUMMARY_MAX_TURNS,
+│   │                                    buildReadOnlyClaudeArgs; buildClaudeArgs({ session, allowedCommands, model })
+│   ├── runs.js                  (tocar) startClaude({ …, profile, model }) ('work' | 'readonly'); RunMeta.model; waitFor(runId)
+│   ├── work-api.js              (tocar, mínimo) `model` en runs y botones SDD (validación, recordar), `model`/`models` en GET …/work,
+│   │                                    exclusión de action "summary" en /api/attention, startReadOnlyClaude (§5.10)
 │   ├── project-catalog.js       (tocar) annotateLayouts, buildLightSummary, resumen en toSummary, opciones layoutCache/summaryReader/fullWorktrees,
 │   │                                    worktrees[] y parentName en el detalle
-│   ├── registry.js              (tocar) PATCHABLE_FIELDS + 'summary'; SUMMARY_ERRORS de PATCH; normalizeSettings de los campos de resumen;
-│   │                                    applySummaryChange, storedSummaryOf
-│   └── app.js                   (tocar) crea layoutCache y summaryReader; los pasa a buildCatalog/detalle/PATCH/listCatalog; ?worktrees=full;
-│                                        PATCH con summary; conecta summaryApi.route después de workApi.route
+│   ├── registry.js              (tocar) PATCHABLE_FIELDS + 'summary' + 'model'; errores; normalizeSettings de resumen y modelo;
+│   │                                    applySummaryChange, applyModelChange, storedSummaryOf, modelOf
+│   └── app.js                   (tocar) crea layoutCache (con su gitRunner) y summaryReader; los pasa a buildCatalog/detalle/PATCH/listCatalog;
+│                                        ?worktrees=full; PATCH con summary/model; conecta summaryApi.route después de workApi.route
 ├── public/
 │   ├── list.js                  (crear) funciones puras de la lista (§6.2)
 │   ├── render.js                (tocar) renderProjectCard compacta con menú "⋯"; exporta renderPinButton/renderHideButton/renderOpenApp;
 │   │                                    detalle con "De qué va", "Tareas en curso" y enlace al principal; ajustes con resumen;
 │   │                                    buildSettingsPayload con summary; buildProjectsUrl(showHidden, { fullWorktrees })
+│   ├── work.js                  (tocar) selector de modelo, buildRunPayload/buildSddPayload con model, modelLabel, renderRunHeader,
+│   │                                    modelo en renderRunList y en describeAction (§6.7)
 │   ├── app.js                   (tocar) barra de la lista, filtros, búsqueda, vista, preferencias, repintado por filas, menú "⋯",
-│   │                                    grupo virtual, generar resumen (individual y lote) y estado del lote
+│   │                                    grupo virtual, generar resumen (individual y lote), estado del lote, modelo en Trabajar
 │   ├── index.html               (tocar) barra de la lista (§6.1) y #batch-status
-│   └── styles.css               (tocar) fila compacta, chips, menú, barra, tarjeta compacta, antiguos (§6.6)
+│   └── styles.css               (tocar) fila compacta sin recortes, chips, menú, barra, tarjeta compacta, antiguos, modelo (§6.6)
 └── test/
     ├── project-summary.test.js  (crear)  R1–R7
-    ├── repo-layout.test.js      (crear)  R26, R27, R30
-    ├── summary-api.test.js      (crear)  R8–R25, R28, R29, R31, R32 (integración con startApp)
-    ├── list.test.js             (crear)  R33–R43, R47–R49 (puras)
-    ├── claude-cli.test.js       (ampliar) R11
+    ├── repo-layout.test.js      (crear)  R26, R27, R29, R30
+    ├── summary-api.test.js      (crear)  R8–R25, R28, R29, R31, R32, R61 (integración con startApp)
+    ├── list.test.js             (crear)  R33, R34, R36, R38–R43, R47–R49 (puras)
+    ├── claude-cli.test.js       (ampliar) R11, R55
+    ├── work-api.test.js         (ampliar) R56, R57, R58
+    ├── work-render.test.js      (ampliar) R59, R60
     ├── render.test.js           (ampliar) R35, R37, R44–R46
     ├── styles.test.js           (ampliar) R50, R51
     ├── deploy.test.js           (ampliar) R52
@@ -67,7 +87,7 @@ docs/verification.md             (tocar) tabla F13 y fila manual
 
 ## 3. Modelo de datos
 
-### 3.1 `panel/projects.json` — campos nuevos opcionales por entrada
+### 3.1 Registro `<datos>/projects.json` — campos nuevos opcionales por entrada
 
 ```json
 {
@@ -76,14 +96,17 @@ docs/verification.md             (tocar) tabla F13 y fila manual
   "path": "C:\\Users\\Usuario\\CRM RAPIDO",
   "summary": "CRM para gestionar clientes y propuestas de la consultora",
   "summarySource": "manual",
-  "summaryAt": "2026-10-25T10:00:00.000Z"
+  "summaryAt": "2026-10-25T10:00:00.000Z",
+  "model": "sonnet"
 }
 ```
 
 - `summary`: texto de 1 a 200 caracteres (puntos de código), espacios colapsados. Si falta, está vacío o no es texto, la entrada no tiene resumen guardado.
 - `summarySource`: `"manual"` o `"claude"`. Cualquier otro valor (o ausente con `summary` presente, p. ej. editado a mano) se trata como `"manual"`.
 - `summaryAt`: ISO 8601 o ausente.
-- `normalizeSettings` conserva los tres campos si `summary` es válido (normalizando `summarySource`) y los elimina si no; las entradas sin ellos no ganan campos nuevos (no se reescribe `projects.json` con valores vacíos).
+- `model`: uno de `CLI_MODELS` (`haiku`, `sonnet`, `opus`); ausente = `default`. `normalizeSettings` lo quita si no es
+  de la lista (no se reescribe el fichero por ello).
+- `normalizeSettings` conserva los tres campos de resumen si `summary` es válido (normalizando `summarySource`) y los elimina si no; las entradas sin ellos no ganan campos nuevos (no se reescribe `projects.json` con valores vacíos).
 
 ### 3.2 Clasificación de carpeta (`RepoLayout`, interno)
 
@@ -114,6 +137,7 @@ motivo (no es repo, git ausente, límite de tiempo, salida inesperada).
 ```
 
 - `summarySource`: `manual` | `claude` | `package` | `readme` | `claude-md` | `null`. `summaryAt` solo con `manual`/`claude`.
+- `summary` llega **entero**: ya es una frase acotada en origen (§5.1, §5.5) y la interfaz no lo recorta.
 - `isWorktree`: clasificación `worktree`. `parentId`/`parentName`: id y nombre del principal si está en el catálogo
   (aunque esté oculto). `groupKey`/`groupName`: solo si es worktree y su principal NO está en el catálogo.
 - `worktreeCount`: en un principal, número de elementos con su `parentId` y `hidden: false`; 0 en el resto.
@@ -150,10 +174,13 @@ motivo (no es repo, git ausente, límite de tiempo, salida inesperada).
   (si git falla, `branch` de la sesión y `dirtyCount: null`). Del 31 en adelante, `branch` de la sesión y `dirtyCount: null`.
 - En el detalle de un worktree con principal en el catálogo: `parentId` y `parentName` (§3.3).
 
-### 3.5 Run de generación (`RunMeta` de la fase 4)
+### 3.5 `RunMeta` — campo nuevo `model` y run de generación
 
-Idéntico al de la fase 4 con `kind: "claude"`, `action: "summary"`, `label: "Generar resumen"`, `session: { mode: "new",
-id: null }` y `promptPreview` = primeros 120 caracteres de `SUMMARY_PROMPT`. Aparece en el historial del proyecto.
+- Todo `RunMeta` creado desde esta feature lleva `model`: alias de `CLI_MODELS` o `null` (= por defecto). Los runs
+  anteriores no tienen el campo y la interfaz no muestra modelo para ellos. Los runs `command` llevan `model: null`.
+- Run de generación: `kind: "claude"`, `action: "summary"`, `label: "Generar resumen"`, `model: "haiku"`,
+  `session: { mode: "new", id: null }`, `promptPreview` = primeros 120 caracteres de `SUMMARY_PROMPT`. Aparece en el
+  historial del proyecto, no en "Te necesitan".
 
 ### 3.6 Estado del lote (`POST /api/summaries/generate` → `202`, `GET /api/summaries/batch` → `200`)
 
@@ -181,13 +208,33 @@ id: null }` y `promptPreview` = primeros 120 caracteres de `SUMMARY_PROMPT`. Apa
 
 ## 4. API HTTP
 
+### 3.7 Modelo en `GET /api/projects/:id/work` (añadidos)
+
+```json
+{
+  "model": "default",
+  "models": [
+    { "value": "default", "label": "Por defecto" },
+    { "value": "haiku", "label": "Haiku" },
+    { "value": "sonnet", "label": "Sonnet" },
+    { "value": "opus", "label": "Opus" }
+  ]
+}
+```
+
+`MODEL_LABELS = { default: 'Por defecto', haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' }` (en `claude-cli.js`; la
+interfaz usa los `models` de la respuesta y `modelLabel` de `work.js` con el mismo texto).
+
 ### 4.1 Rutas nuevas y cambiadas (todas detrás de la sesión)
 
 | Método y ruta | Puerta de ejecución | Respuesta |
 |---------------|---------------------|-----------|
 | `GET /api/projects[?includeHidden=1][&worktrees=full]` | no | `200` lista §3.3 (cambia: campos nuevos y modo ligero) |
 | `GET /api/projects/:id` | no | `200` detalle §3.4 (cambia: campos nuevos y `worktrees`) |
-| `PATCH /api/projects/:id` con `summary` | no (salvo que traiga campos de ejecución, como en la fase 4) | `200` elemento §3.3 |
+| `PATCH /api/projects/:id` con `summary` y/o `model` | no (salvo que traiga campos de ejecución, como en la fase 4) | `200` elemento §3.3 |
+| `POST /api/projects/:id/runs`, `…/sdd/implement`, `…/sdd/approve-tests` con `model` opcional | sí (como en la fase 4; `detail.model` en la auditoría) | `202` `RunMeta` con `model` |
+| `GET /api/projects/:id/work` | no | `200` + `model`, `models` (§3.7) |
+| `GET /api/attention` | no | `200`; `runs` sin los de `action: "summary"` |
 | `POST /api/projects/:id/summary/generate` (cuerpo ignorado) | sí, `action: "summary.generate"` | `202` `RunMeta` §3.5 |
 | `POST /api/summaries/generate` `{ ids: string[] }` | sí, `action: "summary.batch"`, `detail: { count }` | `202` §3.6 |
 | `GET /api/summaries/batch` | no | `200` §3.6 o `{ "batch": null }` |
@@ -213,6 +260,7 @@ Sin cambios hasta la sesión; después: `workApi.route` → **`summaryApi.route`
 | `runEnded(state)` | `La ejecución terminó en estado ${state}` | `error` de un elemento `failed` |
 | `noSlot` | `Sin hueco para ejecutar durante 10 minutos` | `error` de un elemento `skipped` |
 | `manualKept` | `Se conserva el resumen escrito a mano` | `error` de un elemento `saved` sin sobrescribir (R16) |
+| `invalidModel` | `Modelo no válido: elige Por defecto, Haiku, Sonnet u Opus` | runs, SDD y `PATCH`, `400`, `field: "model"` |
 
 Proyecto inexistente, sin carpeta, run activo, máximo de runs, ejecución desactivada, confirmación y CLI no disponible:
 **los textos de `WORK_ERRORS` de la fase 4** (se importan de `work-api.js`, no se duplican).
@@ -231,7 +279,7 @@ Proyecto inexistente, sin carpeta, run activo, máximo de runs, ejecución desac
 
 ### 5.1 `lib/project-summary.js` (solo lectura de ficheros del proyecto; nunca escribe)
 
-Constantes: `SUMMARY_MAX_CHARS = 160`, `MAX_READ_BYTES = 16384`, `SUMMARY_CACHE_TTL_MS = 300000`, `MIN_PARAGRAPH_CHARS = 12`,
+Constantes: `AUTO_SUMMARY_MAX_CHARS = 160` (nombre distinto del `SUMMARY_MAX_CHARS` de `claude-cli.js`, que es otra cosa), `MAX_READ_BYTES = 16384`, `SUMMARY_CACHE_TTL_MS = 300000`, `MIN_PARAGRAPH_CHARS = 12`,
 `README_NAMES = ['readme.md', 'readme.markdown', 'readme.txt', 'readme', 'leeme.md']` (comparación en minúsculas contra
 `readdir`), `CLAUDE_MD = 'claude.md'`.
 
@@ -247,10 +295,13 @@ Constantes: `SUMMARY_MAX_CHARS = 160`, `MAX_READ_BYTES = 16384`, `SUMMARY_CACHE_
 
 - `readHead(file)` → texto o `null`: `open` + `read` de como mucho `MAX_READ_BYTES` en un `Buffer`, `toString('utf8')`
   (los bytes inválidos se convierten en U+FFFD), sin BOM; `null` ante cualquier error (inexistente, directorio, permisos).
-- `clip(text, max)`: si tiene más de `max` puntos de código, corta en `max - 1` y, si hay un espacio después de la
-  posición `max / 2`, en el último espacio anterior; añade `…`. Total ≤ `max`.
+- `firstSentence(text)`: texto hasta el primer `.`, `!` o `?` que va seguido de espacio o del final (incluye el signo);
+  un punto seguido de letra o dígito (`v1.2`, `node.js`) no corta. Sin signo de fin → el texto entero.
+- `clipAtWord(text, max)`: si tiene ≤ `max` puntos de código, igual; si no, los primeros `max` cortados en el último
+  espacio (si no hay espacio, los `max` primeros) y sin espacios finales. **Nunca añade «…»** (regla "nada recortado").
+- `toOneSentence(text, max)` = `clipAtWord(firstSentence(text), max)`.
 - `readPackageDescription(dir)`: `JSON.parse` del texto; si falla, regex `/"description"\s*:\s*"((?:[^"\\]|\\.)*)"/` y
-  `JSON.parse('"' + grupo + '"')`; válido si es texto con algo tras `trim`; colapsa espacios; `clip(…, 160)`.
+  `JSON.parse('"' + grupo + '"')`; válido si es texto con algo tras `trim`; colapsa espacios; `toOneSentence(…, 160)`.
 - `extractFirstParagraph(markdown)` → texto o `null`:
   1. Normaliza `\r\n` → `\n`; quita los comentarios HTML `<!-- … -->` (también multilínea).
   2. Si la primera línea es `---`, salta hasta la siguiente `---` (cabecera YAML).
@@ -265,7 +316,7 @@ Constantes: `SUMMARY_MAX_CHARS = 160`, `MAX_READ_BYTES = 16384`, `SUMMARY_CACHE_
   6. Si el resultado tiene ≥ `MIN_PARAGRAPH_CHARS` puntos de código y alguna letra (`/\p{L}/u`), es el párrafo; si no, sigue
      con el bloque siguiente (así un bloque solo de insignias queda vacío y se salta).
   7. Si el párrafo, en minúsculas, empieza por algún `BOILERPLATE_PATTERNS`, devuelve `null` para ese fichero (R5).
-  8. Devuelve `clip(párrafo, 160)`.
+  8. Devuelve `toOneSentence(párrafo, 160)`.
 - `findReadme(dir)`: `readdir` (con `try/catch`) y primer nombre de `README_NAMES` presente (sin distinguir mayúsculas),
   respetando el orden de la lista.
 - `readAutoSummary(dir)` → `{ summary, summarySource } | null`: `package` → `readme` → `claude-md`.
@@ -278,8 +329,11 @@ Constantes: `SUMMARY_MAX_CHARS = 160`, `MAX_READ_BYTES = 16384`, `SUMMARY_CACHE_
 
 ### 5.2 `lib/repo-layout.js`
 
-- `classifyRepoLayout(dir, { runner = defaultRunner, statFn } = {})`: si `dir` no es directorio → `{ kind: 'missing' }`
-  sin git. Si no, `runner('git', [...CMD_REPO_LAYOUT], { cwd: dir, timeout: GIT_TIMEOUT_MS, windowsHide: true })`.
+- `classifyRepoLayout(dir, { runner = defaultRunner, statFn } = {})` (`defaultRunner` = runner central de `git-info.js`;
+  la app pasa su `gitRunner`, creado con su resolvedor): si `dir` no es directorio → `{ kind: 'missing' }`
+  sin git. Si no, `runner('git', [...CMD_REPO_LAYOUT], { cwd: dir, timeout: GIT_TIMEOUT_MS, windowsHide: true })`; el
+  runner resuelve `git` a una ruta de confianza (nunca de la carpeta del proyecto), antepone `GIT_SAFE_PREFIX` y, al no
+  ser status/diff, no consulta filtros locales. Nunca se llama a `execFile` directamente.
   Error → `{ kind: 'none' }`. Salida: dos primeras líneas no vacías (`gitDir`, `commonDir`; menos de dos → `none`).
   Cada una se resuelve contra `dir` (`path.win32.resolve` si `dir` o la línea tienen forma Windows — git en Windows
   imprime `C:/…` —, si no `path.posix.resolve`). Si `pathKey(gitDir) === pathKey(commonDir)` → `{ kind: 'main' }`.
@@ -308,31 +362,42 @@ Constantes: `SUMMARY_MAX_CHARS = 160`, `MAX_READ_BYTES = 16384`, `SUMMARY_CACHE_
 - `buildCatalogDetail(merged, opts)` y `buildCatalogSummary(merged, opts)`: reciben además `sources` (para clasificar el
   catálogo completo con la caché y anotar) y añaden §3.3; el detalle añade `worktrees` (§3.4) con `MAX_DETAIL_WORKTREES = 30`.
 
-### 5.4 `lib/claude-cli.js` (añadidos; `buildClaudeArgs` no cambia)
+### 5.4 `lib/claude-cli.js` (añadidos)
 
 ```js
-CLI_FLAGS.permissionDefault = 'default';
-CLI_FLAGS.disallowedTools = '--disallowedTools';
-CLI_FLAGS.maxTurns = '--max-turns';
-export const READ_ONLY_TOOLS = Object.freeze(['Read', 'Glob', 'Grep']);
-export const READ_ONLY_DENIED_TOOLS = Object.freeze(['Bash', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task']);
+// CLI_FLAGS (se redefine el objeto congelado completo, conservando sus entradas actuales)
+model: '--model', permissionDefault: 'default', maxTurns: '--max-turns', tools: '--tools', disallowedTools: '--disallowedTools',
+export const CLI_MODELS = Object.freeze(['haiku', 'sonnet', 'opus']);           // alias de la doc oficial (2026-10-25)
+export const MODEL_LABELS = Object.freeze({ default: 'Por defecto', haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' });
+export const isValidModel = (v) => v === 'default' || CLI_MODELS.includes(v);   // solo textos exactos
+export const SUMMARY_MODEL = 'haiku';
 export const SUMMARY_MAX_TURNS = 10;
+export const READ_ONLY_TOOLS = Object.freeze(['Read', 'Glob', 'Grep']);
+export const READ_ONLY_DENIED_TOOLS = Object.freeze(['Bash', 'PowerShell', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit',
+  'WebFetch', 'WebSearch', 'Task', 'Agent', 'mcp__*']);
 ```
 
-`buildReadOnlyClaudeArgs()` devuelve exactamente:
+- `buildClaudeArgs({ session, allowedCommands, model })`: igual que ahora y, si `CLI_MODELS.includes(model)`, inserta
+  `'--model', model` **justo antes** de `--allowedTools` (que sigue siendo la última opción). Con `default`, `null`,
+  `undefined` o cualquier otro valor no añade nada (la validación con `400` la hace `work-api.js`; esto es la red de
+  seguridad: un valor no permitido nunca llega al argv).
+- `buildReadOnlyClaudeArgs()` devuelve exactamente:
 
 ```
 ['-p', '--output-format', 'stream-json', '--verbose',
+ '--model', 'haiku',
  '--permission-mode', 'default',
  '--max-turns', '10',
- '--disallowedTools', 'Bash,Edit,MultiEdit,Write,NotebookEdit,WebFetch,WebSearch,Task',
+ '--tools', 'Read,Glob,Grep',
+ '--disallowedTools', 'Bash,PowerShell,Edit,MultiEdit,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent,mcp__*',
  '--allowedTools', 'Read,Glob,Grep']
 ```
 
-- `--allowedTools` va **la última** (es variádica, corrección T36) y el prompt va por stdin (como la fase 4).
-- `--disallowedTools` refuerza el modo solo lectura aunque el `.claude/settings.json` del proyecto permita más cosas
-  (las reglas de denegación ganan a las de permiso). Comprueba `FORBIDDEN_ARGS` igual que `buildClaudeArgs`.
-- `CLI_FLAGS` se amplía sin cambiar sus entradas actuales (sigue congelado: se define el objeto completo de nuevo).
+- `--tools` limita las herramientas integradas disponibles; `--disallowedTools` con nombres sueltos las quita del
+  contexto aunque el `.claude/settings.json` del proyecto las permita (las denegaciones ganan) y `mcp__*` quita las de
+  servidores MCP del proyecto. `--allowedTools` va **la última** (variádica, corrección T36); el prompt va por stdin.
+  `--tools` y `--disallowedTools` también son listas: cada una va seguida de otra opción, así ninguna se come nada.
+- Comprueba `FORBIDDEN_ARGS` igual que `buildClaudeArgs`. No usa `DEFAULT_ALLOWED_TOOLS`, `shellRules` ni `allowedCommands`.
 
 ### 5.5 `lib/summary-api.js`
 
@@ -347,17 +412,19 @@ export const BATCH_MAX = 50;
 - `normalizeGeneratedSummary(text)` → texto o `null`: quita vallas de código (líneas que empiezan por ` ``` `);
   primera línea con contenido; quita viñeta inicial (`-`, `*`, `•`, `\d+.`), `**`/`__`/`` ` ``, prefijo
   `/^resumen\s*:\s*/i`, comillas envolventes (`"…"`, `'…'`, `«…»`, `“…”`); colapsa espacios; vacío → `null`;
-  > 140 puntos de código → primeros 139 + `…`.
-- `createSummaryApi({ projectsFile, loadSources, workApi, claudeCommand, audit, now, retryDelayMs = 5000,
-  retryMaxMs = 600000, sleep })` → `{ route, currentBatch, close }`. Usa `workApi.gateExec`, `workApi.runs`,
-  `workApi.store`.
+  devuelve `toOneSentence(texto, 140)` (de `project-summary.js`: primera frase y, si aún pasa de 140, corte en palabra
+  entera **sin «…»**).
+- `createSummaryApi({ projectsFile, loadSources, workApi, audit, now, retryDelayMs = 5000, retryMaxMs = 600000,
+  sleep })` → `{ route, currentBatch, close }`. Usa `workApi.gateExec`, `workApi.startReadOnlyClaude`, `workApi.runs`
+  y `workApi.store`. No resuelve ejecutables ni lanza procesos por su cuenta.
 - **Generación individual**: `gateExec(req, res, session, { projectId, action: 'summary.generate' })` → proyecto
-  (`findMerged`, `404`) → carpeta (`409 noDir`) → CLI disponible (`409`, igual que la fase 4) →
-  `runs.startClaude({ project: { id, dir }, prompt: SUMMARY_PROMPT, session: { mode: 'new' }, action: 'summary',
-  label: 'Generar resumen', profile: 'readonly', claudeCommand, auditContext: ctx.auditContext })` → si `!ok`,
-  `ctx.respond(status, error)`; si `ok`, `ctx.respond(202, meta, { runId })` y, sin esperar, `afterRun(meta)`.
-- **`afterRun(meta)`**: `final = await runs.waitFor(meta.runId)`; si `final.state` no es `succeeded` ni
-  `needs_permission` → `failed` (`runEnded`); si no, lee `store.readEvents`, toma el último evento `result`; si no es
+  (`findMerged`, `404`) → carpeta (`409 noDir`) → `workApi.startReadOnlyClaude({ merged, dir, prompt: SUMMARY_PROMPT,
+  action: 'summary', label: 'Generar resumen', auditContext: ctx.auditContext })` (§5.10: resolvedor de confianza →
+  `409` con su texto si no hay Claude de confianza; `runs.startClaude` con `profile: 'readonly'`, `model: 'haiku'`)
+  → si `!ok`, `ctx.respond(status, error)`; si `ok`, `ctx.respond(202, meta, { runId })` y, sin esperar, `afterRun(meta)`.
+  El cuerpo se lee y se ignora (ni `prompt` ni `model` del cliente).
+- **`afterRun(meta)`**: `final = await runs.waitFor(meta.runId)`; si `final.state` no es `succeeded` (con la
+  corrección T36, un `result` correcto ya es `succeeded` aunque haya denegaciones) → `failed` (`runEnded`) o `cancelled`; si no, lee `store.readEvents`, toma el último evento `result`; si no es
   `ok` o `normalizeGeneratedSummary(text)` es `null` → `failed` (`invalidResult`); si no, `saveGenerated(id, text,
   final.startedAt)`. Devuelve `{ state: 'saved'|'failed'|'cancelled', error }` (`cancelled` si `final.state === 'cancelled'`).
 - **`saveGenerated(id, text, startedAt)`**: cola de promesas propia (serializa sus escrituras); `loadSources()` fresco,
@@ -369,7 +436,7 @@ export const BATCH_MAX = 50;
   responde `202` y lanza `processBatch` sin esperar. `processBatch`, por elemento en orden:
   1. Si se pidió cancelar → `cancelled`.
   2. `loadSources` + `findMerged`: no existe → `skipped` (`WORK_ERRORS.projectNotFound`); sin carpeta → `skipped` (`noDir`).
-  3. `startClaude` (como la individual). `429` → `await sleep(retryDelayMs)` y reintento mientras el tiempo esperado sea
+  3. `workApi.startReadOnlyClaude` (como la individual). `429` → `await sleep(retryDelayMs)` y reintento mientras el tiempo esperado sea
      < `retryMaxMs` y no se cancele; agotado → `skipped` (`noSlot`). `409` → `skipped` (`runActive`). Otro error → `failed`.
   4. Arrancado → `running`, `runId`, `audit.write({ ...auditContext, projectId, action: 'summary.generate', result:
      'started', runId, detail: { batchId } })`, `await afterRun` → `saved`/`failed`/`cancelled`.
@@ -381,9 +448,12 @@ export const BATCH_MAX = 50;
 
 ### 5.6 `lib/runs.js` (cambios mínimos)
 
-- `startClaude({ …, profile = 'work' })`: `profile === 'readonly'` → `args = buildReadOnlyClaudeArgs()` (ignora
-  `allowedCommands` y `session`, siempre conversación nueva); si no, `buildClaudeArgs` como ahora. El prompt sigue yendo
-  por stdin (`writePrompt`). Nada más cambia en la máquina de estados.
+- `startClaude({ …, profile = 'work', model = null })`: `profile === 'readonly'` → `args = buildReadOnlyClaudeArgs()` y
+  `meta.model = SUMMARY_MODEL` (ignora `allowedCommands`, `session` y `model`; siempre conversación nueva); si no,
+  `args = buildClaudeArgs({ session, allowedCommands, model })` y `meta.model` = `model` si está en `CLI_MODELS`, si no
+  `null`. `baseMeta` gana `model` (`null` en los runs `command`).
+- El lanzamiento no cambia: `launchClaude` → `guardedSpawn(file, …)` (solo rutas de confianza; `EUNTRUSTED` → run
+  `failed` sin proceso, como en la feature 14) con el prompt por stdin (`writePrompt`).
 - `waitFor(runId)` → la promesa `rec.done` (resuelve con el `RunMeta` final) si el run está en memoria; si no, `null`.
 
 ### 5.7 `lib/git-info.js`
@@ -393,7 +463,10 @@ exportada también como `CMD_REPO_LAYOUT`. `getGitInfo` no la usa.
 
 ### 5.8 `lib/registry.js`
 
-- `PATCHABLE_FIELDS` + `'summary'` (no entra en `EXEC_FIELDS`).
+- `PATCHABLE_FIELDS` + `'summary'` + `'model'` (ninguno entra en `EXEC_FIELDS`; ver supuesto S6).
+- `patchValue('model', v)`: `isValidModel(v)` o `invalidModel`.
+- `applyModelChange(entry, value)` (pura): `default` → copia sin `model`; si no, copia con `model: value`.
+- `modelOf(entry)` → alias recordado válido o `'default'`.
 - `patchValue('summary', v)`: no texto → `summaryNotText`; texto con espacios colapsados y recortado; > 200 puntos de
   código → `summaryTooLong`; si no, `ok` (vale `''`).
 - `applySummaryChange(entry, value, nowIso)` (pura): `''` → copia sin `summary`/`summarySource`/`summaryAt`; si no, copia
@@ -403,14 +476,30 @@ exportada también como `CMD_REPO_LAYOUT`. `getGitInfo` no la usa.
 
 ### 5.9 `lib/app.js`
 
-- Crea `layoutCache = createRepoLayoutCache({ runner: runner || defaultRunner, now })` y
+- Crea `layoutCache = createRepoLayoutCache({ runner: gitRunner, now })` (el `gitRunner` central que ya crea `app.js`
+  con su resolvedor de la feature 14) y
   `summaryReader = createSummaryReader({ now })`; los pasa a `buildCatalog`, `buildCatalogDetail`, `buildCatalogSummary`
   y al `listCatalog` que recibe `createWorkApi` (así "Te necesitan" no lanza git de más).
 - `listProjects`: `fullWorktrees = url.searchParams.get('worktrees') === 'full'`.
-- `patchProject`: `next = applySummaryChange({ ...entry, ...resto }, changes.summary, iso)` cuando `changes` trae
-  `summary`; sin `summary`, como ahora.
+- `patchProject`: `next` = `{ ...entry, ...resto }` pasado por `applySummaryChange(…, changes.summary, iso)` si trae
+  `summary` y por `applyModelChange(…, changes.model)` si trae `model`; sin ellos, como ahora.
 - `summaryApi = createSummaryApi({ … })`; en `handleApi`, tras `workApi.route`, `if (await summaryApi.route(…)) return`.
 - `server.close` llama también a `summaryApi.close()`.
+
+### 5.10 `lib/work-api.js` (cambios mínimos)
+
+- `postRun` y `postSddRun`: leen `body.model`; ausente → `modelOf(merged.settingsEntry)`; presente y no
+  `isValidModel` → `ctx.respond(400, { error: invalidModel, field: 'model' })` antes de lanzar nada. `detail.model` en la
+  auditoría. `launchClaudeRun` recibe `model` y lo pasa a `runs.startClaude`. Si el run arranca (`202`) y `body.model`
+  venía y es distinto del recordado, guarda `applyModelChange(settingsEntryFor(merged), model)` con `upsertSettings` +
+  `saveRegistry` (crea la entrada si el proyecto era solo de Claude, como `postPermission`).
+- `projectWork`: añade `model: modelOf(merged.settingsEntry)` y `models` (§3.7).
+- `attention`: el filtro de runs añade `m.action !== 'summary'`.
+- `startReadOnlyClaude({ merged, dir, prompt, action, label, auditContext })` (exportado en el objeto de
+  `createWorkApi`): resuelve Claude igual que `launchClaudeRun` (`claudeCommand ?? resolveClaudeCommand(claudeBin,
+  { platform, env, execPath, resolver, cwd: dir, panelDir })`; error → `{ ok: false, status: 409, error }`) y llama a
+  `runs.startClaude({ project: { id: merged.id, dir }, prompt, session: { mode: 'new' }, action, label,
+  profile: 'readonly', claudeCommand: command, auditContext })`. No pasa por `gateExec` (lo hace quien lo llama).
 
 ## 6. Frontend
 
@@ -481,7 +570,7 @@ Funciones:
     <span class="row-name">CRM RAPIDO</span>
     <span class="row-chips"><span class="chip chip-worktrees">3 tareas en curso</span>…</span>
     <time class="row-time" datetime="…">hace 2 h</time>
-    <span class="row-summary">CRM para gestionar clientes…</span>   <!-- o class="row-summary is-empty" "Sin descripción" -->
+    <span class="row-summary">CRM para gestionar clientes y propuestas de la consultora.</span>   <!-- o class="row-summary is-empty" "Sin descripción" -->
   </button>
   <div class="row-menu">
     <button type="button" class="btn icon row-menu-button" data-action="menu" aria-haspopup="true" aria-expanded="false"
@@ -504,11 +593,11 @@ Funciones:
 ### 6.4 Textos de confirmación (`describeSummaryAction`, todo escapado)
 
 - `summary`: `Se lanzará Claude Code en modo solo lectura en ${nombre} (puede leer ficheros; no puede editarlos ni
-  ejecutar comandos) para escribir una frase sobre de qué va el proyecto. Es una ejecución de Claude y consume uso de
-  tu plan.` + (con resumen previo) ` Sustituirá el resumen actual.`
+  ejecutar comandos) para escribir una frase sobre de qué va el proyecto, con el modelo Haiku (el más barato). Es una ejecución de
+  Claude y consume uso de tu plan.` + (con resumen previo) ` Sustituirá el resumen actual.`
 - `summary-batch`: `Se lanzará Claude Code en modo solo lectura, uno detrás de otro, en ${n} ${n === 1 ? 'proyecto' :
-  'proyectos'} sin descripción para escribir su resumen. Cada proyecto es una ejecución de Claude y consume uso de tu
-  plan.` + (si `total > 50`) ` Hay ${total} sin descripción: solo se procesan los primeros 50.`
+  'proyectos'} sin descripción para escribir su resumen, con el modelo Haiku. Cada proyecto es una ejecución de Claude y
+  consume uso de tu plan.` + (si `total > 50`) ` Hay ${total} sin descripción: solo se procesan los primeros 50.`
 - Con 0 candidatos el botón "Generar resúmenes" queda `disabled` con `title="No hay proyectos visibles sin descripción"`.
 
 ### 6.5 Flujo en `app.js`
@@ -536,39 +625,59 @@ Funciones:
   cuando cambia `counts.saved`; "Cancelar" → `POST /api/summaries/batch/cancel`; "Cerrar" oculta el estado. Al arrancar
   el panel se consulta una vez `GET /api/summaries/batch` y, si hay uno `running`, se retoma la consulta.
 - **Ajustes**: el campo "De qué va" lleva `data-initial`; `buildSettingsPayload` recibe `summaryInitial`.
+- **Trabajar (modelo)**: el selector `#work-model` sale de `renderWorkView` con `work.models` y `work.model`; "Enviar"
+  usa `buildRunPayload` (incluye `model`); "Implementar siguiente tarea" y "Aprobar tests" usan `buildSddPayload({ session,
+  model })`; el diálogo de confirmación recibe `ctx.model`. Tras lanzar, `currentWork.model` = el elegido (el servidor
+  ya lo recordó). La cabecera de la ejecución pinta `renderRunHeader(meta)` en `#run-model` al abrir o recibir un run.
 
-### 6.6 `styles.css`
+### 6.6 `styles.css` (regla "nada recortado": sin `text-overflow`, sin `line-clamp`, sin `max-height` que oculte texto)
 
 - Variables nuevas en `:root` y en `@media (prefers-color-scheme: dark)`: `--chip-bg`, `--chip-fg`, `--chip-approval`,
   `--chip-worktrees`, `--row-hover`.
 - `#projects.view-list` (y `.project-list`): `display: block`; anula la rejilla de 3 columnas en la lista (desde 601 px
   la regla de rejilla sigue aplicando solo a `.cards`).
-- **Regla base (móvil)**: `.project-row { position: relative; max-height: 96px; overflow: hidden; border-bottom: 1px
-  solid var(--border); }`; `.row-main { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; grid-template-areas:
-  "dot name time" "sum sum sum" "chips chips chips"; gap: 2px 8px; width: 100%; min-height: 44px; padding: 8px 52px 8px 12px;
-  text-align: left; }`; `.row-name { font-weight: 600; line-height: 20px; white-space: nowrap; overflow: hidden;
-  text-overflow: ellipsis; }`; `.row-summary { grid-area: sum; line-height: 18px; display: -webkit-box;
-  -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }`; `.row-chips { grid-area: chips;
-  white-space: nowrap; overflow: hidden; line-height: 18px; }`; `.chip { font-size: 12px; padding: 0 6px; border-radius: 9px; }`.
-  Presupuesto de altura: 8 + 20 + 2 + 36 + 2 + 18 + 8 = 94 px ≤ 96 px.
-- **`@media (min-width: 601px)`**: `.project-row { max-height: 72px; }`; `.row-main { grid-template-columns: 12px auto
-  minmax(0, 1fr) auto; grid-template-areas: "dot name chips time" "dot sum sum sum"; padding: 10px 56px 10px 12px; }`;
-  `.row-summary { display: block; white-space: nowrap; text-overflow: ellipsis; }`. Altura: 10 + 20 + 2 + 18 + 10 = 60 px ≤ 72 px.
-- `.row-menu { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }`; `.row-menu-button {
-  min-width: 44px; min-height: 44px; }`; `.row-menu-list { position: absolute; right: 0; z-index: 5; max-width: 260px; }`
-  (la fila deja `overflow: visible` mientras su menú está abierto: clase `.menu-open`).
-- `.card { max-height: 220px; overflow: hidden; }` con `.card-summary` recortado a 2 líneas; `.cards` en rejilla de
-  1 columna en la base y `repeat(auto-fill, minmax(260px, 1fr))` desde 601 px.
+- **Regla base (móvil)**: `.project-row { position: relative; border-bottom: 1px solid var(--border); }` (sin altura
+  máxima); `.row-main { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; grid-template-areas:
+  "dot name time" "sum sum sum" "chips chips chips"; gap: 2px 8px; width: 100%; min-height: 44px; padding: 8px 52px 8px
+  12px; text-align: left; }`; `.row-name { font-weight: 600; line-height: 20px; white-space: normal; overflow-wrap:
+  anywhere; }`; `.row-summary { grid-area: sum; line-height: 18px; white-space: normal; overflow-wrap: anywhere; }`;
+  `.row-chips { grid-area: chips; display: flex; flex-wrap: wrap; gap: 4px; line-height: 18px; }`; `.chip { font-size:
+  12px; padding: 0 6px; border-radius: 9px; }`. El texto largo pasa de línea y la fila crece.
+- **`@media (min-width: 601px)`**: `.row-main { grid-template-columns: 12px auto minmax(0, 1fr) auto; grid-template-areas:
+  "dot name chips time" "dot sum sum sum"; padding: 10px 56px 10px 12px; }`. Presupuesto de una fila con nombre y
+  resumen de una línea: 10 + 20 + 2 + 18 + 10 = **60 px ≤ 72 px**; con el resumen en dos líneas, 78 px (crece, no se corta).
+- `.row-menu { position: absolute; right: 4px; top: 8px; }`; `.row-menu-button { min-width: 44px; min-height: 44px; }`;
+  `.row-menu-list { position: absolute; right: 0; z-index: 5; max-width: 260px; }` (no hay `overflow: hidden` en la fila,
+  así que el menú se ve sin trucos).
+- Tarjetas: `.card` sin `max-height`; se compacta con `font-size` y rellenos menores y sin el pie de botones;
+  `.card-summary` entero; `.cards` en rejilla de 1 columna en la base y `repeat(auto-fill, minmax(260px, 1fr))` desde 601 px.
 - `.list-toolbar` en columna en la base, en fila con `flex-wrap` desde 601 px; `.filter`/`.view` con `min-height: 44px`
   y estilo `[aria-pressed="true"]`; `.old-projects > summary` con `min-height: 44px`.
+- Trabajar: `.run-model` (etiqueta pequeña con el modelo en la cabecera de la ejecución y en el historial) y
+  `#work-model` con `min-height: 44px`.
 - Ningún `width`/`min-width` fijo > 360 px (test existente).
+
+### 6.7 Modelo en la vista Trabajar (`public/work.js`)
+
+- `renderModelSelect(models, selected)` → `<label for="work-model">Modelo</label><select id="work-model" name="model">`
+  con una `<option>` por elemento de `models` (§3.7) y `selected` en el actual; textos escapados. Se pinta dentro de
+  `#prompt-form` (debajo del selector de sesión) y, como los botones SDD están fuera del formulario, su valor se lee de
+  ese mismo `<select>`. Si `work.models` no viene (respuesta antigua), no se pinta.
+- `buildRunPayload(formValues)`: igual que ahora y, si `formValues.model` es texto, añade `model`. Sin `model`, el cuerpo
+  es idéntico al de la fase 4.
+- `buildSddPayload({ session, model })` → `{ session?, model? }` solo con los campos presentes.
+- `modelLabel(model)` → `Haiku` / `Sonnet` / `Opus`; `null` → `Modelo por defecto`; `undefined` (run antiguo) → `''`.
+- `renderRunHeader(meta)` → `<span class="run-model">${modelLabel(meta.model)}</span>` o `''`.
+- `renderRunList`: añade `renderRunHeader(run)` tras la etiqueta del run.
+- `describeAction('chat' | 'implement' | 'approve-tests', ctx)`: añade al final ` Modelo: ${MODEL_LABELS[ctx.model]}.`
+  y, con `default`, ` Modelo: el configurado en Claude Code.`; sin `ctx.model`, el texto de la fase 4 sin cambios.
 
 ## 7. Tests (`node --test`, sin dependencias)
 
 ### 7.1 Fixtures
 
-- `fake-claude.js` (cambios compatibles): `VALUE_FLAGS` + `--max-turns`; `VARIADIC_FLAGS` + `--disallowedTools`; registra
-  también `disallowedTools`. **Escenario por fichero**: si el `cwd` contiene `.fake-claude-scenario`, su primera línea es
+- `fake-claude.js` (cambios compatibles): `VALUE_FLAGS` + `--max-turns`, `--model`; `VARIADIC_FLAGS` + `--tools`,
+  `--disallowedTools`; registra también `model`, `tools` y `disallowedTools`. **Escenario por fichero**: si el `cwd` contiene `.fake-claude-scenario`, su primera línea es
   el escenario (tiene prioridad sobre la marca del prompt) y la segunda, opcional, el texto del `result`. Escenarios
   nuevos: `summary` (init + una lectura `Read` + `result` con el texto de la segunda línea o `Un CRM de prueba para
   gestionar clientes.`), `summary_slow` (igual tras 1 500 ms) y `blank` (`result` de solo espacios). Los escenarios
@@ -584,9 +693,11 @@ Funciones:
 | Fichero | Requisitos |
 |---------|------------|
 | `project-summary.test.js` | R1–R7 |
-| `repo-layout.test.js` | R26, R27, R30 (unitarios) |
-| `claude-cli.test.js` | R11 |
-| `summary-api.test.js` | R8–R10, R12–R25, R28, R29, R31, R32 |
+| `repo-layout.test.js` | R26, R27, R29, R30 (unitarios) |
+| `claude-cli.test.js` | R11, R55 |
+| `summary-api.test.js` | R8–R10, R12–R25, R28, R29, R31, R32, R61 |
+| `work-api.test.js` | R56, R57, R58 |
+| `work-render.test.js` | R59, R60 |
 | `list.test.js` | R33, R34, R36, R38–R43, R47–R49 |
 | `render.test.js` | R35, R37, R44–R46 |
 | `styles.test.js` | R50, R51 |
@@ -606,6 +717,13 @@ Tests con prefijo `[F13-R<n>]`. Los de integración usan `startApp` (CLI falso, 
 - `buildSettingsPayload` sin `summary`/`summaryInitial` devuelve los cuatro campos de siempre (sin cambios).
 - `buildProjectsUrl(showHidden)` con un solo argumento devuelve las mismas URL que ahora.
 - `renderProjectCard`: los tests de la fase 1 y F3 siguen en verde sin cambios (§6.3).
+- `claude-cli.test.js`: los tests de `buildClaudeArgs` sin `model` siguen dando el mismo array. Si alguno compara
+  `CLI_FLAGS` completo con `deepEqual`, se amplía con las entradas nuevas.
+- `work-render.test.js`: `buildRunPayload` sin `model` y `describeAction` sin `ctx.model` devuelven lo mismo; si un test
+  compara el HTML completo de `renderWorkView`/`renderRunList`, se amplía con el selector y la etiqueta de modelo.
+- `work-api.test.js` → "Te necesitan": sin runs de resumen, los resultados no cambian.
+- Tests de la feature 14 que comprueban que todo `spawn` pasa por `guardedSpawn` y todo `git` por el runner central
+  siguen valiendo: esta feature no añade ningún `spawn`/`execFile` nuevo.
 
 ## 8. Documentación
 
@@ -615,23 +733,27 @@ Tests con prefijo `[F13-R<n>]`. Los de integración usan `startApp` (CLI falso, 
   en solo lectura y lote), `public/list.js`; en "Cómo se comunican": `?worktrees=full`, campos nuevos (`worktreeCount`,
   `parentId`, `groupKey`, `likelyWorktree`, `detailLevel`), `POST /api/projects/:id/summary/generate`,
   `POST /api/summaries/generate`, `GET /api/summaries/batch`, `POST /api/summaries/batch/cancel`; en "Restricciones":
-  Claude en solo lectura para los resúmenes (`Read`, `Glob`, `Grep`; nunca edición ni `Bash`).
+  Claude en solo lectura para los resúmenes (`Read`, `Glob`, `Grep`; nunca edición, `Bash` ni `PowerShell`; modelo `haiku`;
+  mismo resolvedor y `guardedSpawn` de la feature 14); selector de modelo (`CLI_MODELS`, `model` en el registro y en
+  `RunMeta`); runs de resumen fuera de "Te necesitan"; regla "nada recortado" en la lista.
 - `docs/verification.md`: párrafo de prefijo `[F13-R<n>]` en "Cómo se ejecutan" y tabla "Feature 13:
   `vista-compacta-y-resumen` (prefijo `[F13-R<n>]`)" con una fila por requisito R1–R54 y la fila manual.
 
 ## 9. Ficheros que NO se tocan
 
-- `panel/lib/auth.js`, `panel/lib/sessions.js`, `panel/lib/rate-limit.js`, `panel/lib/cf-access.js`, `panel/lib/reauth.js`,
-  `panel/lib/audit.js`, `panel/lib/work-api.js`, `panel/lib/command-runner.js`, `panel/lib/exec-utils.js`,
-  `panel/lib/git-actions.js`, `panel/lib/sdd-actions.js`, `panel/lib/run-store.js`, `panel/lib/sse.js`,
-  `panel/lib/project-state.js`, `panel/lib/path-key.js`, `panel/lib/http-utils.js`, `panel/lib/config.js`,
-  `panel/lib/claude-discovery.js` (sigue en solo lectura sobre `~/.claude`), `panel/server.js`,
-  `panel/public/work.js`, `panel/public/api-client.js`, `panel/public/app-config.js`, `panel/deploy/`, `panel/scripts/`,
-  `panel/projects.json`.
+- `panel/lib/trusted-bin.js` (se usa tal cual: resolvedor y `isTrustedPath`), `panel/lib/auth.js`, `panel/lib/sessions.js`,
+  `panel/lib/rate-limit.js`, `panel/lib/cf-access.js`, `panel/lib/reauth.js`, `panel/lib/audit.js`,
+  `panel/lib/command-runner.js`, `panel/lib/exec-utils.js`, `panel/lib/git-actions.js`, `panel/lib/sdd-actions.js`,
+  `panel/lib/run-store.js`, `panel/lib/sse.js`, `panel/lib/project-state.js`, `panel/lib/path-key.js`,
+  `panel/lib/http-utils.js`, `panel/lib/config.js`, `panel/lib/claude-discovery.js` (sigue en solo lectura sobre
+  `~/.claude`), `panel/server.js`, `panel/public/api-client.js`, `panel/public/app-config.js`, `panel/deploy/`,
+  `panel/scripts/`, `panel/projects.json` (ejemplo versionado; el registro vivo está en el directorio de datos).
+- En `panel/lib/work-api.js` y `panel/public/work.js` solo lo de §5.10 y §6.7; en `panel/lib/runs.js` solo lo de §5.6;
+  en `panel/lib/git-info.js` solo la entrada nueva de `GIT_COMMANDS` (el runner central no cambia).
 - `.claude/`, `CLAUDE.md`, `docs/specs.md`, `docs/constitution.md`, `docs/conventions.md`, `sdd-lint.js`, `init.sh`,
-  specs de las fases 1–4. `feature_list.json` y `progress/` los gestiona solo el leader.
+  specs de las fases 1–4 y de la feature 14. `feature_list.json` y `progress/` los gestiona solo el leader.
 - Nada escribe en las carpetas de los proyectos (el resumen automático solo lee; la generación usa Claude sin
-  herramientas de escritura) ni en `~/.claude`.
+  herramientas de escritura) ni en `~/.claude`. Ningún módulo nuevo llama a `spawn`/`execFile`.
 
 ## 10. Alternativas consideradas y descartadas
 
@@ -643,6 +765,8 @@ Tests con prefijo `[F13-R<n>]`. Los de integración usan `startApp` (CLI falso, 
 | Firma JSON del modelo de fila | Equivalente para la lista, pero la tarjeta usa más campos (git, arnés); la firma por HTML cubre las dos vistas con una sola regla. |
 | Paginación o lista virtual | Con ~100 filas compactas no hace falta; añadiría complejidad sin beneficio visible. |
 | Bucle del lote en el navegador | Se corta al cerrar la pestaña o al caducar la confirmación por el túnel; el servidor ya tiene el gestor de runs. |
+| Elipsis «…» o `line-clamp` para que todas las filas midan lo mismo | Regla "nada recortado" del humano: el texto oculto es justo lo que no entiende. Se acota en origen (una frase) y la fila crece si hace falta. |
+| Campo de texto libre para el modelo (nombre completo `claude-…`) | Abriría el argv a texto del cliente; los alias cubren lo que pidió el humano y siguen al modelo vigente de cada familia. |
 | `acceptEdits` con lista vacía para generar | Seguiría permitiendo editar ficheros; el modo `default` + `Read,Glob,Grep` + `--disallowedTools` es solo lectura de verdad. |
 | Guardar las preferencias de la vista en el servidor | Es una preferencia por dispositivo (móvil en lista, PC en tarjetas); el humano lo pidió así. |
 | Resumen con IA local o heurística de código | Sin dependencias ni modelos locales en el panel; el README/`package.json` ya suele decir de qué va. |
@@ -657,10 +781,14 @@ Tests con prefijo `[F13-R<n>]`. Los de integración usan `startApp` (CLI falso, 
 - **Proyecto que es subcarpeta de un repo** (p. ej. `panel/` dentro de otro): `--git-dir` y `--git-common-dir` coinciden
   → `main`; no se agrupa con nada (correcto: no es un worktree).
 - **Worktrees borrados:** carpeta inexistente → `missing` → solo `likelyWorktree` (supuesto S3 de `requirements.md`).
-- **Altura de fila:** depende de la fuente del sistema; el presupuesto de §6.6 usa `line-height` fijos en píxeles y
-  `max-height` con `overflow: hidden` como tope duro. El implementer lo comprueba con un navegador sin cabeza a 360×780
+- **Altura de fila:** depende de la fuente del sistema; el presupuesto de §6.6 usa `line-height` fijos en píxeles; no
+  hay tope duro (regla "nada recortado"): una fila con resumen de una línea mide ≤ 72 px y las demás crecen. El implementer lo comprueba con un navegador sin cabeza a 360×780
   y 1280×800 (como en la fase 4, fuera del repo) y el humano en su PC (R54).
-- **CLI real:** `--permission-mode default`, `--disallowedTools` y `--max-turns` se confirman con `claude --help` en la
-  tarea manual; están en `CLI_FLAGS`.
-- **`needs_permission` en la cola:** un run de resumen que intente una herramienta denegada termina `needs_permission` y
-  aparece en "Te necesitan" (supuesto S2); su resumen se guarda igualmente si el resultado es válido.
+- **CLI real:** `--model` (alias `haiku`/`sonnet`/`opus`), `--permission-mode default`, `--max-turns`, `--tools` y
+  `--disallowedTools` están en la doc oficial consultada el 2026-10-25; se confirman con `claude --help` en la tarea
+  manual. Si la versión del humano no tuviera `--tools`, se quita de `buildReadOnlyClaudeArgs` (lo cubre `--disallowedTools`).
+- **Alias y modelo vigente:** `opus`/`sonnet`/`haiku` apuntan al último modelo de cada familia que conozca la versión del
+  CLI del humano; si su cuenta no tiene acceso a uno, el run termina `failed` con el error del CLI visible en la salida.
+- **Denegaciones en resúmenes:** con `--tools` las herramientas de escritura ni existen; si aun así hubiera denegaciones,
+  un `result` correcto es `succeeded` (corrección T36) y el resumen se guarda; nunca aparece en "Te necesitan" (§5.10).
+- **Ruta del registro:** los tests usan el `projectsFile` temporal de `startApp`; en producción es `<datos>/projects.json`.
