@@ -200,8 +200,10 @@ export function createRunManager({
     if (rec.cancelRequested) return 'cancelled';
     if (rec.timedOut) return 'timeout';
     if (rec.launchError) return 'failed';
-    if (rec.meta.kind === 'claude' && rec.denials().length > 0) return 'needs_permission';
+    // Corrección T36: con el CLI real una denegación no detiene el trabajo. Si el result es éxito el run es
+    // succeeded (las denegaciones quedan en permissionDenials como aviso); needs_permission solo sin éxito.
     if (rec.exitCode === 0 && (rec.meta.kind !== 'claude' || (rec.result && rec.result.ok))) return 'succeeded';
+    if (rec.meta.kind === 'claude' && rec.denials().length > 0) return 'needs_permission';
     return 'failed';
   }
 

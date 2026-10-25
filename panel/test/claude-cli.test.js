@@ -17,6 +17,8 @@ import {
   summarizeToolInput,
   suggestAllowedCommand,
   isValidAllowedCommand,
+  suggestAllowedCommands,
+  TEXT_MAX_CHARS,
 } from '../lib/claude-cli.js';
 import { PANEL_DIR } from './helpers.js';
 
@@ -167,9 +169,23 @@ test('[F4-R13] escenario ok → session, text, tool, tool, text y result en orde
   ]);
 });
 
-test('[F4-R14] result con is_error, texto de 3000 caracteres y campos ausentes', () => {
+test('[F4-R14] result con is_error, texto de 3000 caracteres (ya no se corta) y campos ausentes', () => {
   const { events } = mapAll([line({ type: 'result', is_error: true, result: 'x'.repeat(3000) })]);
-  assert.deepEqual(events, [{ type: 'result', ok: false, text: 'x'.repeat(2000), costUsd: null, durationMs: null, numTurns: null, sessionId: null }]);
+  assert.deepEqual(events, [{ type: 'result', ok: false, text: 'x'.repeat(3000), costUsd: null, durationMs: null, numTurns: null, sessionId: null }]);
+});
+
+test('[F4-R14][F4-R13] corrección T36: texto del asistente y del result hasta 20000 caracteres; si se recorta, "… (texto recortado)"', () => {
+  assert.equal(TEXT_MAX_CHARS, 20000);
+  const summary = '## Resumen\n' + 'a'.repeat(2400) + '\n**Git**\n- Estado limpio';
+  const long = 'z'.repeat(25000);
+  const { events } = mapAll([
+    line({ type: 'assistant', message: { content: [{ type: 'text', text: summary }] } }),
+    line({ type: 'assistant', message: { content: [{ type: 'text', text: long }] } }),
+    line({ type: 'result', is_error: false, result: long }),
+  ]);
+  assert.equal(events[0].text, summary, 'un resumen de ~2500 caracteres llega entero');
+  assert.equal(events[1].text, 'z'.repeat(20000) + '… (texto recortado)');
+  assert.equal(events[2].text, 'z'.repeat(20000) + '… (texto recortado)');
 });
 
 test('[F4-R14][F4-R24] dos denegaciones en result, una ya emitida como system/permission_denied → un solo evento nuevo', () => {
@@ -182,14 +198,14 @@ test('[F4-R14][F4-R24] dos denegaciones en result, una ya emitida como system/pe
     ] }),
   ]);
   assert.deepEqual(events.filter((e) => e.type === 'permission_denied'), [
-    { type: 'permission_denied', tool: 'Bash', detail: 'npm run lint -- --fix', suggestion: 'npm run lint' },
-    { type: 'permission_denied', tool: 'WebFetch', detail: 'https://example.com', suggestion: null },
+    { type: 'permission_denied', tool: 'Bash', detail: 'npm run lint -- --fix', suggestion: 'npm run lint', suggestions: ['npm run lint'] },
+    { type: 'permission_denied', tool: 'WebFetch', detail: 'https://example.com', suggestion: null, suggestions: [] },
   ]);
   assert.equal(events.filter((e) => e.type === 'result').length, 1);
   assert.equal(events.findIndex((e) => e.type === 'result'), 1, 'result antes de la denegación nueva');
   assert.deepEqual(mapper.denials(), [
-    { tool: 'Bash', detail: 'npm run lint -- --fix', suggestion: 'npm run lint' },
-    { tool: 'WebFetch', detail: 'https://example.com', suggestion: null },
+    { tool: 'Bash', detail: 'npm run lint -- --fix', suggestion: 'npm run lint', suggestions: ['npm run lint'] },
+    { tool: 'WebFetch', detail: 'https://example.com', suggestion: null, suggestions: [] },
   ]);
 });
 
@@ -198,7 +214,7 @@ test('[F4-R14] denegación con toolName/input alternativos, detalle por defecto 
     line({ type: 'system', subtype: 'permission_denied', toolName: 'Read', input: { file_path: '/etc/passwd' } }),
     line({ type: 'system', subtype: 'permission_denied', tool_use_id: 'z', tool_input: { a: 'b'.repeat(300) } }),
   ]);
-  assert.deepEqual(events[0], { type: 'permission_denied', tool: 'Read', detail: '/etc/passwd', suggestion: null });
+  assert.deepEqual(events[0], { type: 'permission_denied', tool: 'Read', detail: '/etc/passwd', suggestion: null, suggestions: [] });
   assert.equal(events[1].tool, 'desconocida');
   assert.equal(events[1].detail.length, 200);
 });
@@ -271,4 +287,37 @@ test('[F4-R65] la denegación de una herramienta distinta de Bash no propone com
 test('[F4-R10][F4-R62] isValidAllowedCommand', () => {
   for (const ok of ['npm test', 'npm run build', 'node scripts/x.js', 'git status', 'make', 'a=b', '@scope/x', '  npm   test ']) assert.equal(isValidAllowedCommand(ok), true, ok);
   for (const bad of ['', '   ', 'npm test && rm', 'a(b)', 'x;y', 'a'.repeat(201), 5, null, 'echo "x"']) assert.equal(isValidAllowedCommand(bad), false, String(bad));
+});
+
+// ---------- Corrección T36: detalle de la denegación con el CLI real (F4-R24, F4-R65) ----------
+
+test('[F4-R24][F4-R65] denegación real con tool_input vacío: el detalle sale del texto "requires approval: …" y se proponen los comandos base', () => {
+  const compound = 'git log --oneline | head; git rev-list --left-right --count main...HEAD';
+  const { events, mapper } = mapAll([
+    line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: compound } }] } }),
+    line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', is_error: true, content: 'This Bash command contains multiple operations. The following part requires approval: head; git rev-list --left-right --count main...HEAD' }] } }),
+    line({ type: 'result', is_error: false, result: 'ok', permission_denials: [{ tool_name: 'Bash', tool_use_id: 'tu1', tool_input: {} }] }),
+  ]);
+  const denial = events.find((e) => e.type === 'permission_denied');
+  assert.deepEqual(denial, { type: 'permission_denied', tool: 'Bash', detail: 'head; git rev-list --left-right --count main...HEAD', suggestion: 'head', suggestions: ['head', 'git rev-list'] });
+  assert.ok(!JSON.stringify(mapper.denials()).includes('{}'));
+});
+
+test('[F4-R24] denegación con tool_input.command: se usa ese comando; sin comando ni texto: detalle vacío, nunca "{}"', () => {
+  const { events } = mapAll([
+    line({ type: 'result', is_error: false, result: 'ok', permission_denials: [
+      { tool_name: 'Bash', tool_use_id: 'a', tool_input: { command: 'pytest -x' } },
+      { tool_name: 'Bash', tool_use_id: 'b', tool_input: {} },
+    ] }),
+  ]);
+  const denials = events.filter((e) => e.type === 'permission_denied');
+  assert.deepEqual(denials[0], { type: 'permission_denied', tool: 'Bash', detail: 'pytest -x', suggestion: 'pytest', suggestions: ['pytest'] });
+  assert.deepEqual(denials[1], { type: 'permission_denied', tool: 'Bash', detail: '', suggestion: null, suggestions: [] });
+});
+
+test('[F4-R65] suggestAllowedCommands: comando base de cada parte, validado con ALLOWED_COMMAND_RE', () => {
+  assert.deepEqual(suggestAllowedCommands('head; git rev-list --left-right --count main...HEAD'), ['head', 'git rev-list']);
+  assert.deepEqual(suggestAllowedCommands('npm run lint -- --fix && npm test | tee x'), ['npm run lint', 'npm test', 'tee x']);
+  assert.deepEqual(suggestAllowedCommands('echo $(x); a(b)'), []);
+  assert.deepEqual(suggestAllowedCommands(undefined), []);
 });

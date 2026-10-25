@@ -342,3 +342,42 @@ test('[F4-R89] suggestCommitMessage con y sin feature in_progress', () => {
   assert.equal(suggestCommitMessage({ inProgress: null }), 'Cambios desde el Puesto de Mando');
   assert.equal(suggestCommitMessage(null), 'Cambios desde el Puesto de Mando');
 });
+
+// ---------- Corrección T36 (prueba manual con Claude Code 2.1.307) ----------
+
+test('[F4-R83] corrección T36: el resultado no repite el texto si es idéntico al último del asistente', () => {
+  const summary = 'Resumen final <b>largo</b>';
+  const result = { type: 'result', ok: true, text: summary, costUsd: 0.01, durationMs: 2000, numTurns: 2 };
+  const same = renderRunEvent(result, { lastText: summary });
+  assert.ok(same.includes('Resultado: correcto'));
+  assert.ok(!same.includes('Resumen final'), 'solo la línea de resumen');
+  const differs = renderRunEvent(result, { lastText: 'otro texto' });
+  assert.ok(differs.includes('Resumen final &lt;b&gt;largo&lt;/b&gt;'), 'si difiere, se muestra');
+  const log = renderRunLog([{ seq: 1, type: 'text', text: summary }, { seq: 2, type: 'result', ...result }]);
+  assert.equal(log.split('Resumen final').length - 1, 1, 'el texto final aparece una sola vez en el registro');
+});
+
+test('[F4-R84] corrección T36: un run terminado con denegaciones avisa "N comandos denegados" con un botón por comando propuesto', () => {
+  const run = { state: 'succeeded', claudeSessionId: 's', permissionDenials: [
+    { tool: 'Bash', detail: 'head; git rev-list --left-right --count main...HEAD', suggestion: 'head', suggestions: ['head', 'git rev-list'] },
+    { tool: 'Bash', detail: '', suggestion: null, suggestions: [] },
+  ] };
+  const html = renderPermissionPrompt(run);
+  assert.ok(html.includes('2 comandos denegados durante la ejecución'));
+  assert.ok(html.includes('Comando denegado: Bash: head; git rev-list'));
+  assert.ok(html.includes('data-command="head"') && html.includes('data-command="git rev-list"'));
+  assert.equal(html.split('data-action="allow-command"').length - 1, 2);
+  assert.ok(!html.includes('{}') && !html.includes('Bash: <'), 'nunca "{}" ni detalle vacío con dos puntos');
+  assert.ok(html.includes('Permitir «head» en este proyecto y reintentar'));
+  assert.ok(renderPermissionPrompt({ state: 'succeeded', permissionDenials: [{ tool: 'Bash', detail: 'x', suggestions: [] }] }).includes('1 comando denegado durante la ejecución'));
+  assert.equal(renderPermissionPrompt({ state: 'succeeded', permissionDenials: [] }), '');
+  assert.equal(renderRunEvent({ type: 'permission_denied', tool: 'Bash', detail: '' }), '<div class="ev ev-error">Permiso denegado: Bash</div>');
+});
+
+test('[F4-R87] corrección T36: en "Te necesitan" un run terminado con denegaciones es un aviso informativo', () => {
+  const html = renderAttention({ projects: [], runs: [{ runId: 'r9-00000009', projectId: 'app', projectName: 'App', label: 'Chat', state: 'succeeded', informative: true, endedAt: new Date(NOW).toISOString(), permissionDenials: [{ tool: 'Bash' }, { tool: 'Bash' }] }] }, NOW);
+  assert.ok(html.includes('attention-info'));
+  assert.ok(html.includes('Terminada'));
+  assert.ok(html.includes('2 comandos denegados'));
+  assert.ok(html.includes('data-action="dismiss-run"'));
+});

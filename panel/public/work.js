@@ -197,8 +197,11 @@ export function renderConfirmDialogBody(text) {
 
 // ---------- Eventos y salida en vivo (R83) ----------
 
-/** HTML de un evento del run según su tipo; todo el texto escapado. */
-export function renderRunEvent(event) {
+/**
+ * HTML de un evento del run según su tipo; todo el texto escapado. `lastText` = último texto del asistente: el
+ * result no lo repite si es idéntico (corrección T36: el CLI real repite el texto final en el result).
+ */
+export function renderRunEvent(event, { lastText = null } = {}) {
   if (!event || typeof event !== 'object') return '';
   const e = event;
   switch (e.type) {
@@ -215,7 +218,7 @@ export function renderRunEvent(event) {
     case 'tool_error':
       return `<div class="ev ev-error">Error de herramienta: ${escapeHtml(e.preview)}</div>`;
     case 'permission_denied':
-      return `<div class="ev ev-error">Permiso denegado: ${escapeHtml(e.tool)}: ${escapeHtml(e.detail)}</div>`;
+      return `<div class="ev ev-error">Permiso denegado: ${escapeHtml(e.tool)}${e.detail ? `: ${escapeHtml(e.detail)}` : ''}</div>`;
     case 'step':
       return `<div class="ev ev-step">Paso ${Number(e.index) || 0}/${Number(e.total) || 0}: <code>${escapeHtml(e.command)}</code></div>`;
     case 'output':
@@ -227,7 +230,8 @@ export function renderRunEvent(event) {
       if (Number.isFinite(e.costUsd)) parts.push(`coste ${formatCost(e.costUsd)}`);
       if (Number.isFinite(e.durationMs)) parts.push(formatDuration(e.durationMs));
       if (Number.isFinite(e.numTurns)) parts.push(`${e.numTurns} ${e.numTurns === 1 ? 'turno' : 'turnos'}`);
-      return `<div class="ev ev-result${e.ok ? '' : ' is-error'}"><strong>${escapeHtml(parts.join(' · '))}</strong>${e.text ? `<div class="ev-result-text">${escapeHtml(e.text)}</div>` : ''}</div>`;
+      const showText = e.text && e.text !== lastText;
+      return `<div class="ev ev-result${e.ok ? '' : ' is-error'}"><strong>${escapeHtml(parts.join(' · '))}</strong>${showText ? `<div class="ev-result-text">${escapeHtml(e.text)}</div>` : ''}</div>`;
     }
     case 'error':
       return `<div class="ev ev-error">${escapeHtml(e.message)}</div>`;
@@ -246,7 +250,14 @@ export function renderRunLog(events) {
   if (!list.length) return '';
   const shown = list.slice(-MAX_LOG_EVENTS);
   const notice = list.length > MAX_LOG_EVENTS ? `<div class="ev ev-notice">Se muestran los últimos ${MAX_LOG_EVENTS} eventos.</div>` : '';
-  return notice + shown.map(renderRunEvent).join('');
+  let lastText = null;
+  for (const e of list.slice(0, list.length - shown.length)) if (e && e.type === 'text') lastText = e.text;
+  const html = shown.map((e) => {
+    const out = renderRunEvent(e, { lastText });
+    if (e && e.type === 'text') lastText = e.text;
+    return out;
+  });
+  return notice + html.join('');
 }
 
 // ---------- Historial (R88) ----------
@@ -270,17 +281,33 @@ export function renderRunList(runs, now = Date.now()) {
 
 // ---------- Permisos (R84) ----------
 
-/** Aviso de permisos de un run en needs_permission, con "Permitir en este proyecto y reintentar" si hay sugerencia. */
+function allowButtons(denial) {
+  const suggestions = Array.isArray(denial.suggestions) ? denial.suggestions : (denial.suggestion ? [denial.suggestion] : []);
+  return suggestions
+    .map((c) => {
+      // Texto de R84; con varios comandos propuestos se nombra cada uno para distinguir los botones.
+      const label = suggestions.length > 1 ? `Permitir «${escapeHtml(c)}» en este proyecto y reintentar` : 'Permitir en este proyecto y reintentar';
+      return ` <button type="button" class="btn primary" data-action="allow-command" data-command="${escapeHtml(c)}">${label}</button>`;
+    })
+    .join('');
+}
+
+function denialText(prefix, d) {
+  return `${prefix}${escapeHtml(d.tool)}${d.detail ? `: ${escapeHtml(d.detail)}` : ''}`;
+}
+
+/**
+ * Aviso de permisos (R84). needs_permission: "Claude necesita permiso para: …". Corrección T36: un run terminado
+ * (succeeded) con denegaciones muestra "N comandos denegados durante la ejecución". En ambos, un botón
+ * "Permitir … y reintentar" por cada comando propuesto.
+ */
 export function renderPermissionPrompt(run) {
   const denials = run && Array.isArray(run.permissionDenials) ? run.permissionDenials : [];
-  if (!run || run.state !== 'needs_permission' || !denials.length) return '';
-  const items = denials.map((d) => {
-    const button = d.suggestion
-      ? ` <button type="button" class="btn primary" data-action="allow-command" data-command="${escapeHtml(d.suggestion)}">Permitir en este proyecto y reintentar</button>`
-      : '';
-    return `<li><p>Claude necesita permiso para: ${escapeHtml(d.tool)}: ${escapeHtml(d.detail)}</p>${button}</li>`;
-  });
-  return `<div class="permission-prompt" role="alert"><ul>${items.join('')}</ul></div>`;
+  if (!run || !denials.length || !['needs_permission', 'succeeded'].includes(run.state)) return '';
+  const blocked = run.state === 'needs_permission';
+  const items = denials.map((d) => `<li><p>${denialText(blocked ? 'Claude necesita permiso para: ' : 'Comando denegado: ', d)}</p>${allowButtons(d)}</li>`);
+  const header = blocked ? '' : `<p><strong>${denials.length} ${denials.length === 1 ? 'comando denegado' : 'comandos denegados'} durante la ejecución</strong></p>`;
+  return `<div class="permission-prompt${blocked ? '' : ' is-info'}" role="${blocked ? 'alert' : 'status'}">${header}<ul>${items.join('')}</ul></div>`;
 }
 
 /** Cuerpo del reintento: mismo prompt reanudando la sesión de Claude del run (o la última si no hay id). */
@@ -341,14 +368,18 @@ export function renderAttention(attention, now = Date.now()) {
         <button type="button" class="btn primary" data-action="open-work" data-id="${escapeHtml(p.id)}">Trabajar</button>
       </li>`;
   });
-  const runItems = runs.map((r) => `<li class="attention-item">
-        <strong>${escapeHtml(r.projectName)}</strong> · ${escapeHtml(r.label)} ${stateBadge(r.state)}
+  const runItems = runs.map((r) => {
+    const count = Array.isArray(r.permissionDenials) ? r.permissionDenials.length : 0;
+    const info = r.informative ? ` <span class="muted">${count} ${count === 1 ? 'comando denegado' : 'comandos denegados'}</span>` : '';
+    return `<li class="attention-item${r.informative ? ' attention-info' : ''}">
+        <strong>${escapeHtml(r.projectName)}</strong> · ${escapeHtml(r.label)} ${stateBadge(r.state)}${info}
         <time datetime="${escapeHtml(r.endedAt)}">${escapeHtml(relativeTime(r.endedAt, now))}</time>
         <div class="attention-actions">
           <button type="button" class="btn" data-action="open-run" data-run-id="${escapeHtml(r.runId)}" data-id="${escapeHtml(r.projectId)}">Ver ejecución</button>
           <button type="button" class="btn" data-action="dismiss-run" data-run-id="${escapeHtml(r.runId)}">Descartar</button>
         </div>
-      </li>`);
+      </li>`;
+  });
   return `<h2>Te necesitan</h2><ul class="attention-list">${[...projectItems, ...runItems].join('')}</ul>`;
 }
 

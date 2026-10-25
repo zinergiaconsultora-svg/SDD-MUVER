@@ -116,6 +116,39 @@ switch (scenario) {
     process.exitCode = 0;
     break;
   }
+  case 'denied_real': {
+    // Como Claude Code 2.1.307 real: la denegación NO detiene el trabajo; el detalle llega en el texto del error de
+    // herramienta ("requires approval: …") y permission_denials[].tool_input puede venir vacío; result = success.
+    init();
+    toolUse('tu1', 'Bash', { command: 'git log --oneline | head; git rev-list --left-right --count main...HEAD' });
+    toolResult('tu1', 'This Bash command contains multiple operations. The following part requires approval: head; git rev-list --left-right --count main...HEAD', true);
+    assistantText('No pude ejecutar ese comando; lo he resuelto leyendo los ficheros.');
+    result({
+      result: 'No pude ejecutar ese comando; lo he resuelto leyendo los ficheros.',
+      permission_denials: [{ tool_name: 'Bash', tool_use_id: 'tu1', tool_input: {} }],
+    });
+    process.exitCode = 0;
+    break;
+  }
+  case 'denied_fail': {
+    // Denegación y result que NO es éxito → needs_permission.
+    init();
+    const input = { command: 'npm run lint -- --fix' };
+    toolUse('tu1', 'Bash', input);
+    toolResult('tu1', 'Claude requested permissions to use Bash, but you have not granted it yet.', true);
+    result({ subtype: 'error_during_execution', is_error: true, result: 'No pude terminar sin permiso.', permission_denials: [{ tool_name: 'Bash', tool_use_id: 'tu1', tool_input: input }] });
+    process.exitCode = 1;
+    break;
+  }
+  case 'long': {
+    // Resumen final largo (~2500 caracteres) que el result repite tal cual, como el CLI real.
+    init();
+    const summary = `## Resumen\n${'Línea de resumen con detalle. '.repeat(80)}\n**Git**\n- Estado limpio y rama main al día.`;
+    assistantText(summary);
+    result({ result: summary });
+    process.exitCode = 0;
+    break;
+  }
   case 'error':
     init();
     result({ subtype: 'error_during_execution', is_error: true, result: 'Algo falló' });

@@ -489,6 +489,10 @@ export function createWorkApi({
 
   // ---------- Cola de atención (§4.3) ----------
 
+  function hasDenials(meta) {
+    return meta.state === 'succeeded' && Array.isArray(meta.permissionDenials) && meta.permissionDenials.length > 0;
+  }
+
   async function attention(res) {
     const catalog = await listCatalog();
     const projects = catalog
@@ -502,7 +506,7 @@ export function createWorkApi({
     for (const p of catalog) names.set(p.id, p.name);
     const since = now() - ATTENTION_WINDOW_MS;
     const items = (await store.listAll())
-      .filter((m) => ATTENTION_STATES.has(m.state) && !m.dismissed && Date.parse(m.endedAt) >= since)
+      .filter((m) => (ATTENTION_STATES.has(m.state) || hasDenials(m)) && !m.dismissed && Date.parse(m.endedAt) >= since)
       .sort((a, b) => Date.parse(b.endedAt) - Date.parse(a.endedAt))
       .slice(0, ATTENTION_MAX_RUNS)
       .map((m) => ({
@@ -511,6 +515,8 @@ export function createWorkApi({
         projectName: names.get(m.projectId) ?? m.projectId,
         label: m.label,
         state: m.state,
+        // Corrección T36: un run terminado con éxito pero con comandos denegados es solo un aviso informativo.
+        informative: !ATTENTION_STATES.has(m.state),
         endedAt: m.endedAt,
         permissionDenials: Array.isArray(m.permissionDenials) ? m.permissionDenials : [],
       }));

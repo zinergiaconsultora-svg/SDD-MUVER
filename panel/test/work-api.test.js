@@ -494,8 +494,10 @@ test('[F4-R78][F4-R79] GET /api/attention y POST /dismiss', { skip: process.plat
     { id: 'oculto', name: 'Oculto', path: hidden, hidden: true },
     { id: 'trabajo', name: 'Trabajo', path: work },
   ] });
-  const denied = await ctx.post('/api/projects/trabajo/runs', { prompt: '[[denied]]' });
+  const denied = await ctx.post('/api/projects/trabajo/runs', { prompt: '[[denied_fail]]' });
   await wait(ctx, denied.json.runId);
+  const info = await ctx.post('/api/projects/trabajo/runs', { prompt: '[[denied_real]]' });
+  await wait(ctx, info.json.runId);
   const ok = await ctx.post('/api/projects/trabajo/runs', { prompt: 'bien' });
   await wait(ctx, ok.json.runId);
 
@@ -504,15 +506,19 @@ test('[F4-R78][F4-R79] GET /api/attention y POST /dismiss', { skip: process.plat
   assert.deepEqual(r.json.projects.map((p) => p.id).sort(), ['bloqueado', 'spec']);
   assert.deepEqual(r.json.projects.find((p) => p.id === 'spec'), { id: 'spec', name: 'Spec', reason: 'spec_ready', features: [{ id: 4, slug: 'puesto-de-mando-trabajar' }], blockReason: null });
   assert.deepEqual(r.json.projects.find((p) => p.id === 'bloqueado'), { id: 'bloqueado', name: 'Bloqueado', reason: 'bloqueo', features: [], blockReason: 'Esperando credenciales del banco' });
-  assert.deepEqual(r.json.runs.map((x) => x.runId), [denied.json.runId]);
-  const item = r.json.runs[0];
-  assert.deepEqual(Object.keys(item).sort(), ['endedAt', 'label', 'permissionDenials', 'projectId', 'projectName', 'runId', 'state']);
+  // Corrección T36: un succeeded con denegaciones aparece como aviso informativo; el needs_permission como fallo.
+  assert.deepEqual(r.json.runs.map((x) => x.runId), [info.json.runId, denied.json.runId]);
+  const item = r.json.runs.find((x) => x.runId === denied.json.runId);
+  assert.deepEqual(Object.keys(item).sort(), ['endedAt', 'informative', 'label', 'permissionDenials', 'projectId', 'projectName', 'runId', 'state']);
   assert.equal(item.projectName, 'Trabajo');
   assert.equal(item.state, 'needs_permission');
-  assert.equal(item.permissionDenials.length, 2);
+  assert.equal(item.informative, false);
+  assert.equal(item.permissionDenials.length, 1);
+  const infoItem = r.json.runs.find((x) => x.runId === info.json.runId);
+  assert.equal(infoItem.state, 'succeeded');
+  assert.equal(infoItem.informative, true);
 
-  const dismiss = await ctx.post(`/api/runs/${denied.json.runId}/dismiss`);
-  assert.equal(dismiss.status, 204);
+  for (const id of [denied.json.runId, info.json.runId]) assert.equal((await ctx.post(`/api/runs/${id}/dismiss`)).status, 204);
   assert.deepEqual((await ctx.authed('/api/attention')).json.runs, []);
   assert.equal((await ctx.authed(`/api/runs/${denied.json.runId}`)).json.run.dismissed, true);
   assert.equal((await ctx.post('/api/runs/abcdef12-0123abcd/dismiss')).status, 404);

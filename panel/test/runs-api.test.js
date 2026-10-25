@@ -298,17 +298,41 @@ test('[F4-R22] sesión new/continue/resume: válida e inválida', async () => {
 
 // ---------- R24, R25 ----------
 
-test('[F4-R24] escenario denied → needs_permission con permissionDenials exacto', async () => {
+test('[F4-R24] corrección T36: denegación con result de éxito → succeeded con permissionDenials; sin éxito → needs_permission', async () => {
   const ctx = await setup();
   const r = await ctx.post('/api/projects/proy/runs', { prompt: '[[denied]] lint' });
   const done = await wait(ctx, r.json.runId);
-  assert.equal(done.run.state, 'needs_permission');
+  assert.equal(done.run.state, 'succeeded', 'la denegación no detuvo el trabajo: el result fue éxito');
   assert.equal(done.run.exitCode, 0);
   assert.deepEqual(done.run.permissionDenials, [
-    { tool: 'Bash', detail: 'npm run lint -- --fix', suggestion: 'npm run lint' },
-    { tool: 'WebFetch', detail: 'https://example.com', suggestion: null },
+    { tool: 'Bash', detail: 'npm run lint -- --fix', suggestion: 'npm run lint', suggestions: ['npm run lint'] },
+    { tool: 'WebFetch', detail: 'https://example.com', suggestion: null, suggestions: [] },
   ]);
   assert.equal(done.events.filter((e) => e.type === 'permission_denied').length, 2);
+
+  const fail = await ctx.post('/api/projects/proy/runs', { prompt: '[[denied_fail]] lint' });
+  const failed = await wait(ctx, fail.json.runId);
+  assert.equal(failed.run.state, 'needs_permission');
+  assert.deepEqual(failed.run.permissionDenials, [{ tool: 'Bash', detail: 'npm run lint -- --fix', suggestion: 'npm run lint', suggestions: ['npm run lint'] }]);
+});
+
+test('[F4-R24][F4-R65] corrección T36: salida real (tool_input vacío) → succeeded y detalle desde "requires approval: …", nunca "{}"', async () => {
+  const ctx = await setup();
+  const r = await ctx.post('/api/projects/proy/runs', { prompt: '[[denied_real]] estado del repo' });
+  const done = await wait(ctx, r.json.runId);
+  assert.equal(done.run.state, 'succeeded');
+  assert.deepEqual(done.run.permissionDenials, [{ tool: 'Bash', detail: 'head; git rev-list --left-right --count main...HEAD', suggestion: 'head', suggestions: ['head', 'git rev-list'] }]);
+  assert.ok(!JSON.stringify(done.events).includes('"detail":"{}"'));
+});
+
+test('[F4-R13][F4-R14] corrección T36: un resumen final de ~2500 caracteres llega entero en el texto y en el result', async () => {
+  const ctx = await setup();
+  const r = await ctx.post('/api/projects/proy/runs', { prompt: '[[long]]' });
+  const done = await wait(ctx, r.json.runId);
+  const text = done.events.find((e) => e.type === 'text').text;
+  assert.ok(text.length > 2400, `longitud ${text.length}`);
+  assert.ok(text.endsWith('**Git**\n- Estado limpio y rama main al día.'));
+  assert.equal(done.events.find((e) => e.type === 'result').text, text);
 });
 
 test('[F4-R25] escenarios error y crash → failed; ejecutable inexistente → failed con evento error', async () => {
@@ -396,7 +420,7 @@ test('[F4-R35][F4-R36] historial con dos terminados y uno activo; GET /api/runs/
   const ctx = await setup();
   const one = await ctx.post('/api/projects/proy/runs', { prompt: 'uno' });
   await wait(ctx, one.json.runId);
-  const two = await ctx.post('/api/projects/proy/runs', { prompt: '[[denied]] dos' });
+  const two = await ctx.post('/api/projects/proy/runs', { prompt: '[[denied_fail]] dos' });
   await wait(ctx, two.json.runId);
   const three = await ctx.post('/api/projects/proy/runs', { prompt: '[[hang]] tres' });
   await wait(ctx, three.json.runId, { states: ['running'] });

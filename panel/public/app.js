@@ -604,7 +604,11 @@ function appendRunEvent(event) {
   const log = workEl('#run-log');
   if (!log) return;
   if (currentRun.events.length > MAX_LOG_EVENTS) log.innerHTML = renderRunLog(currentRun.events);
-  else log.insertAdjacentHTML('beforeend', renderRunEvent(event));
+  else {
+    // El result no repite el último texto del asistente (corrección T36).
+    const previous = currentRun.events.slice(0, -1).filter((e) => e.type === 'text').at(-1);
+    log.insertAdjacentHTML('beforeend', renderRunEvent(event, { lastText: previous ? previous.text : null }));
+  }
   log.scrollTop = log.scrollHeight;
   if (event.type === 'state') setRunState(event.state);
 }

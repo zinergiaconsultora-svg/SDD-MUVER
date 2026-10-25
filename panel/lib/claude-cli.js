@@ -27,7 +27,11 @@ export const MAX_PROMPT_CHARS = 20000;
 /** Regla de los comandos autorizados por proyecto (design.md §3.1). */
 export const ALLOWED_COMMAND_RE = /^[A-Za-z0-9._:/=@+-][A-Za-z0-9 ._:/=@+-]{0,199}$/;
 export const SUMMARY_MAX_CHARS = 120;
-export const TEXT_MAX_CHARS = 2000;
+// Corrección T36: el texto del asistente y del result llega hasta 20000 caracteres por evento (antes 2000 cortaba
+// resúmenes normales); el tope total sigue siendo el límite de salida del run (5 MB).
+export const TEXT_MAX_CHARS = 20000;
+export const OUTPUT_LINE_MAX_CHARS = 2000;
+export const TRUNCATED_SUFFIX = '… (texto recortado)';
 export const TOOL_ERROR_MAX_CHARS = 300;
 export const DENIAL_DETAIL_MAX_CHARS = 200;
 
@@ -157,6 +161,12 @@ export function summarizeToolInput(name, input, cwd) {
   return typeof summary === 'string' ? clipWithEllipsis(summary, SUMMARY_MAX_CHARS) : '';
 }
 
+/** Texto del asistente/result recortado a TEXT_MAX_CHARS con aviso visible si se recorta. */
+function clipText(text) {
+  const value = String(text ?? '');
+  return value.length > TEXT_MAX_CHARS ? value.slice(0, TEXT_MAX_CHARS) + TRUNCATED_SUFFIX : value;
+}
+
 /** Comando que se propone autorizar tras una denegación de Bash (o null). */
 export function suggestAllowedCommand(command) {
   if (typeof command !== 'string') return null;
@@ -173,10 +183,33 @@ export function suggestAllowedCommand(command) {
   return isValidAllowedCommand(suggestion) ? suggestion : null;
 }
 
-function denialDetail(input) {
+/**
+ * Comandos base que se proponen autorizar para un comando compuesto (corrección T36): se separa por ;, &&, || y |
+ * y se aplica suggestAllowedCommand a cada parte (validado con ALLOWED_COMMAND_RE), sin duplicados.
+ */
+export function suggestAllowedCommands(command) {
+  if (typeof command !== 'string') return [];
+  const out = [];
+  for (const part of command.split(/;|&&|\|\||\|/)) {
+    const suggestion = suggestAllowedCommand(part);
+    if (suggestion && !out.includes(suggestion)) out.push(suggestion);
+  }
+  return out;
+}
+
+/** Parte del comando que pide aprobación según el texto de error del CLI real ("… requires approval: <cmd>"). */
+export function approvalCommandFrom(text) {
+  const match = /requires approval:\s*(.+)/i.exec(String(text ?? ''));
+  return match ? match[1].split(/\r?\n/)[0].trim() : null;
+}
+
+function denialDetail(input, approval) {
   const data = input && typeof input === 'object' ? input : {};
   const value = data.command ?? data.file_path ?? data.url ?? data.pattern;
-  return clipPlain(typeof value === 'string' ? value : JSON.stringify(data), DENIAL_DETAIL_MAX_CHARS);
+  if (typeof value === 'string' && value) return clipPlain(value, DENIAL_DETAIL_MAX_CHARS);
+  if (approval) return clipPlain(approval, DENIAL_DETAIL_MAX_CHARS);
+  // Nunca "{}": un input vacío deja el detalle vacío.
+  return Object.keys(data).length ? clipPlain(JSON.stringify(data), DENIAL_DETAIL_MAX_CHARS) : '';
 }
 
 function toolResultText(content) {
@@ -192,6 +225,7 @@ function toolResultText(content) {
 export function createStreamMapper({ cwd } = {}) {
   const seenDenials = new Set();
   const denials = [];
+  const approvals = new Map(); // tool_use_id → parte del comando que pide aprobación (texto del error real)
 
   function denialEvent(toolName, input, toolUseId) {
     if (toolUseId !== undefined && toolUseId !== null) {
@@ -200,7 +234,16 @@ export function createStreamMapper({ cwd } = {}) {
     }
     const tool = typeof toolName === 'string' && toolName ? toolName : 'desconocida';
     const data = input && typeof input === 'object' ? input : {};
-    const denial = { tool, detail: denialDetail(data), suggestion: tool === 'Bash' ? suggestAllowedCommand(data.command) : null };
+    const approval = toolUseId !== undefined && toolUseId !== null ? approvals.get(toolUseId) || null : null;
+    let suggestions = [];
+    if (tool === 'Bash') {
+      if (approval) suggestions = suggestAllowedCommands(approval);
+      else if (typeof data.command === 'string') {
+        const single = suggestAllowedCommand(data.command);
+        suggestions = single ? [single] : [];
+      }
+    }
+    const denial = { tool, detail: denialDetail(data, approval), suggestion: suggestions[0] ?? null, suggestions };
     denials.push(denial);
     return { type: 'permission_denied', ...denial };
   }
@@ -211,7 +254,7 @@ export function createStreamMapper({ cwd } = {}) {
     for (const block of blocks) {
       if (!block || typeof block !== 'object') continue;
       if (block.type === 'text' && typeof block.text === 'string' && block.text.trim() !== '') {
-        events.push({ type: 'text', text: clipPlain(block.text, TEXT_MAX_CHARS) });
+        events.push({ type: 'text', text: clipText(block.text) });
       } else if (block.type === 'tool_use') {
         events.push({ type: 'tool', name: String(block.name ?? ''), summary: summarizeToolInput(block.name, block.input, cwd) });
       }
@@ -221,16 +264,19 @@ export function createStreamMapper({ cwd } = {}) {
 
   function mapUser(message) {
     const blocks = message && Array.isArray(message.content) ? message.content : [];
-    return blocks
-      .filter((b) => b && b.type === 'tool_result' && b.is_error === true)
-      .map((b) => ({ type: 'tool_error', preview: clipPlain(toolResultText(b.content), TOOL_ERROR_MAX_CHARS) }));
+    const errors = blocks.filter((b) => b && b.type === 'tool_result' && b.is_error === true);
+    for (const b of errors) {
+      const approval = approvalCommandFrom(toolResultText(b.content));
+      if (approval && b.tool_use_id) approvals.set(b.tool_use_id, approval);
+    }
+    return errors.map((b) => ({ type: 'tool_error', preview: clipPlain(toolResultText(b.content), TOOL_ERROR_MAX_CHARS) }));
   }
 
   function mapResult(msg) {
     const events = [{
       type: 'result',
       ok: msg.is_error !== true,
-      text: String(msg.result ?? '').slice(0, TEXT_MAX_CHARS),
+      text: clipText(msg.result),
       costUsd: msg.total_cost_usd ?? null,
       durationMs: msg.duration_ms ?? null,
       numTurns: msg.num_turns ?? null,
@@ -253,7 +299,7 @@ export function createStreamMapper({ cwd } = {}) {
     } catch {
       msg = undefined;
     }
-    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return [{ type: 'output', stream: 'stdout', text: clipPlain(lineText, TEXT_MAX_CHARS) }];
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return [{ type: 'output', stream: 'stdout', text: clipPlain(lineText, OUTPUT_LINE_MAX_CHARS) }];
     if (msg.type === 'system') {
       if (msg.subtype === 'init') return [{ type: 'session', sessionId: msg.session_id ?? null, model: msg.model ?? null }];
       if (msg.subtype === 'api_retry') return [{ type: 'notice', message: `Reintentando la llamada a la API (intento ${msg.attempt ?? '?'})` }];

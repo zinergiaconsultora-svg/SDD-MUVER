@@ -78,10 +78,10 @@
 
 ## C. Lectura del stream-json de Claude
 
-- **R13.** Cuando el CLI emite una línea JSON de tipo `assistant`, el sistema debe generar un evento `text` por cada bloque `text` no vacío y un evento `tool` con `name` y `summary` por cada bloque `tool_use`; y cuando emite `system`/`init`, un evento `session` con `sessionId` y `model`.
+- **R13.** Cuando el CLI emite una línea JSON de tipo `assistant`, el sistema debe generar un evento `text` por cada bloque `text` no vacío y un evento `tool` con `name` y `summary` por cada bloque `tool_use`; y cuando emite `system`/`init`, un evento `session` con `sessionId` y `model`. **Corrección T36:** el texto de cada bloque llega hasta 20 000 caracteres; si se recorta termina en `… (texto recortado)`.
   - *Cómo se prueba:* test unitario de `createStreamMapper` con las líneas del escenario `ok` del CLI falso → secuencia exacta de eventos.
 
-- **R14.** Cuando el CLI emite la línea `result`, el sistema debe generar un evento `result` con `ok` (`!is_error`), `text` (recortado a 2000 caracteres), `costUsd` (`total_cost_usd`), `durationMs`, `numTurns` y `sessionId`, y un evento `permission_denied` por cada elemento de `permission_denials` cuyo `tool_use_id` no se hubiera notificado antes.
+- **R14.** Cuando el CLI emite la línea `result`, el sistema debe generar un evento `result` con `ok` (`!is_error`), `text` (recortado a 2000 caracteres), `costUsd` (`total_cost_usd`), `durationMs`, `numTurns` y `sessionId`, y un evento `permission_denied` por cada elemento de `permission_denials` cuyo `tool_use_id` no se hubiera notificado antes. **Corrección T36:** `text` hasta 20 000 caracteres (con `… (texto recortado)` si se recorta); cada denegación lleva además `suggestions` (lista) y su detalle sale de `tool_input.command` o, si no existe, del texto `requires approval: <comando>` del error de herramienta; nunca `{}`.
   - *Cómo se prueba:* test unitario con un `result` de éxito, uno con `is_error: true` y uno con dos denegaciones, una de ellas ya emitida como `system`/`permission_denied` (→ solo un evento nuevo).
 
 - **R15.** Cuando el CLI emite un bloque `tool_result` con `is_error: true`, el sistema debe generar un evento `tool_error` con `preview` recortado a 300 caracteres; cuando emite `system`/`api_retry`, un evento `notice` con el texto de reintento; y cuando emite una línea que no es JSON, un evento `output` con `stream: "stdout"` y esa línea recortada a 2000 caracteres.
@@ -113,7 +113,7 @@
 - **R23.** Cuando el proceso de Claude termina con código 0, un `result` con `is_error: false` y sin denegaciones, el sistema debe pasar el run por `queued` → `running` → `succeeded`, fijar `endedAt`, `durationMs`, `exitCode`, `costUsd`, `numTurns` y `claudeSessionId`, y emitir los eventos `state` y `end` correspondientes.
   - *Cómo se prueba:* test de integración con el escenario `ok`: secuencia de eventos `state` y campos del `RunMeta` final.
 
-- **R24.** Cuando un run de Claude termina y se ha registrado al menos un evento `permission_denied`, el sistema debe fijar el estado `needs_permission` y guardar en `permissionDenials` cada denegación con `tool`, `detail` y `suggestion` (`design.md` §5.4).
+- **R24.** Cuando un run de Claude termina y se ha registrado al menos un evento `permission_denied`, el sistema debe fijar el estado `needs_permission` y guardar en `permissionDenials` cada denegación con `tool`, `detail` y `suggestion` (`design.md` §5.4). **Corrección T36:** con el CLI real una denegación no detiene el trabajo: si el `result` es éxito el estado es `succeeded` (con `permissionDenials`) y `needs_permission` queda solo cuando el `result` no es éxito y hubo denegaciones.
   - *Cómo se prueba:* test de integración con el escenario `[[denied]]` (Bash `npm run lint` denegado, código 0) → estado `needs_permission` y `permissionDenials` exacto.
 
 - **R25.** Si el proceso termina con código distinto de 0, el `result` trae `is_error: true` o el proceso no se puede lanzar (p. ej. `ENOENT`), entonces el sistema debe fijar el estado `failed` y, en el último caso, emitir un evento `error` con el texto "No se pudo ejecutar Claude Code: <código>" y guardar ese texto en `error`.
@@ -248,7 +248,7 @@
 - **R64.** Cuando una petición autenticada hace `POST /api/projects/:id/permissions` con `{ command }` válido según la regla de `allowedCommands`, el sistema debe añadirlo a `allowedCommands` del proyecto si no estaba (creando la entrada de ajustes si el proyecto era solo de Claude) y responder `200` con `{ allowedCommands }`.
   - *Cómo se prueba:* test de integración: añadir `npm run lint` dos veces (una sola entrada), sobre un proyecto solo de Claude (pasa a `both`) y con `npm test; rm` (`400`).
 
-- **R65.** Cuando el sistema registra una denegación de `Bash`, debe proponer como `suggestion` el primer argumento del comando más el segundo si no empieza por `-` (y el tercero si los dos primeros son `npm`/`pnpm`/`yarn` + `run`), solo si el resultado cumple la regla de `allowedCommands`; y si el comando contiene `&&`, `||`, `;`, `|`, `>`, `<`, `` ` `` o `$(`, o la herramienta no es `Bash`, entonces `suggestion` debe ser `null`.
+- **R65.** Cuando el sistema registra una denegación de `Bash`, debe proponer como `suggestion` el primer argumento del comando más el segundo si no empieza por `-` (y el tercero si los dos primeros son `npm`/`pnpm`/`yarn` + `run`), solo si el resultado cumple la regla de `allowedCommands`; y si el comando contiene `&&`, `||`, `;`, `|`, `>`, `<`, `` ` `` o `$(`, o la herramienta no es `Bash`, entonces `suggestion` debe ser `null`. **Corrección T36:** para un comando compuesto se propone el comando base de cada parte (`suggestions`, p. ej. `head` y `git rev-list`), cada uno validado con la regla de `allowedCommands`.
   - *Cómo se prueba:* test unitario de `suggestAllowedCommand` con `npm run lint -- --fix` → `npm run lint`, `pytest -x` → `pytest`, `cargo test` → `cargo test`, `npm test && rm x` → `null`, y una denegación de `WebFetch` → `null`.
 
 - **R66.** Si `POST /api/projects` o `PATCH /api/projects/:id` reciben `appUrl` o `repoUrl` no vacíos cuyo esquema no es `http:` ni `https:` (o que no parsean como URL), entonces el sistema debe responder `400` con `field` y el texto de URL no válida, sin guardar (mejora M5 de la fase 3).
@@ -295,7 +295,7 @@
 
 ## N. Cola de atención ("Te necesitan")
 
-- **R78.** Cuando una petición autenticada hace `GET /api/attention`, el sistema debe responder `200` con `{ projects, runs }`: los proyectos visibles con estado `atencion` y su motivo (`spec_ready` con las features o `bloqueo` con el texto), y como mucho 20 runs terminados en `needs_permission`, `failed` o `timeout` en los últimos 7 días sin `dismissed`, el más reciente primero.
+- **R78.** Cuando una petición autenticada hace `GET /api/attention`, el sistema debe responder `200` con `{ projects, runs }`: los proyectos visibles con estado `atencion` y su motivo (`spec_ready` con las features o `bloqueo` con el texto), y como mucho 20 runs terminados en `needs_permission`, `failed` o `timeout` en los últimos 7 días sin `dismissed`, el más reciente primero. **Corrección T36:** también aparecen, como aviso informativo (`informative: true`), los runs `succeeded` con denegaciones.
   - *Cómo se prueba:* test de integración con un proyecto con feature `spec_ready`, otro con bloqueo, uno oculto en atención (no aparece), un run `[[denied]]`, un run `ok` (no aparece) y un run antiguo de 8 días escrito en el índice (no aparece).
 
 - **R79.** Cuando una petición autenticada hace `POST /api/runs/:runId/dismiss` sobre un run terminado, el sistema debe marcar `dismissed: true` en su `RunMeta` y responder `204`, y el run no debe volver a aparecer en `GET /api/attention`.
@@ -312,10 +312,10 @@
 - **R82.** Cuando el humano pulsa una acción de ejecución, el sistema debe abrir un diálogo de confirmación cuyo texto, generado por `describeAction`, indique exactamente qué se hará: prompt y modo de sesión para Claude, línea de comando para los tests, feature y cambio de estado para "Aprobar spec", y los pasos de git con el mensaje para "Commit y push".
   - *Cómo se prueba:* test unitario de `describeAction` con cada acción contra los textos exactos de `design.md` §6.3 (con escapado de HTML).
 
-- **R83.** Cuando la interfaz recibe un evento de run, el sistema debe pintarlo con `renderRunEvent` según su tipo (texto del asistente, herramienta con nombre y resumen, error de herramienta, salida, aviso, resultado con coste y duración, error, fin) escapando todo el texto.
+- **R83.** Cuando la interfaz recibe un evento de run, el sistema debe pintarlo con `renderRunEvent` según su tipo (texto del asistente, herramienta con nombre y resumen, error de herramienta, salida, aviso, resultado con coste y duración, error, fin) escapando todo el texto. **Corrección T36:** el `result` no repite el texto si es idéntico al último texto del asistente.
   - *Cómo se prueba:* test unitario de `renderRunEvent` con cada tipo de evento y textos con `<script>` (escapados).
 
-- **R84.** Cuando un run termina en `needs_permission`, la interfaz debe mostrar "Claude necesita permiso para: <herramienta>: <detalle>" por cada denegación y, si tiene `suggestion`, el botón "Permitir en este proyecto y reintentar", que tras confirmar añade el comando y relanza el mismo prompt reanudando la sesión de Claude del run.
+- **R84.** Cuando un run termina en `needs_permission`, la interfaz debe mostrar "Claude necesita permiso para: <herramienta>: <detalle>" por cada denegación y, si tiene `suggestion`, el botón "Permitir en este proyecto y reintentar", que tras confirmar añade el comando y relanza el mismo prompt reanudando la sesión de Claude del run. **Corrección T36:** un run `succeeded` con denegaciones muestra "N comandos denegados durante la ejecución" con un botón "Permitir… y reintentar" por cada comando propuesto.
   - *Cómo se prueba:* test unitario de `renderPermissionPrompt` (con y sin `suggestion`) y de `buildRetryPayload` (`session: { mode: "resume", id: claudeSessionId }` o `continue` si no hay id).
 
 - **R85.** Cuando la interfaz pinta un diff, el sistema debe marcar las líneas que empiezan por `+` con la clase `add`, por `-` con `del`, por `@@` con `hunk` y las de cabecera (`diff `, `index `, `+++ `, `--- `) con `meta`, escapando el contenido, y debe indicar "Diff recortado a 200 KB" si `truncated`.
