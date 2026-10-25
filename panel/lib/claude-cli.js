@@ -56,20 +56,12 @@ export function buildAllowedTools(allowedCommands) {
 }
 
 /**
- * Si el prompt empieza por "-" (tras espacios) se antepone un espacio para que el CLI no lo lea como opción.
- * Un prompt idéntico a un argumento prohibido también lleva el espacio: así nunca coincide con la lista.
+ * Argumentos de `claude` (sin el ejecutable): -p, stream-json, acceptEdits, sesión y, AL FINAL, --allowedTools.
+ * El prompt NO va en argv: se envía por stdin (lib/runs.js). Corrección tras la prueba manual T36 con Claude Code
+ * 2.1.307: --allowedTools es una opción variádica y consumía también un prompt colocado detrás. Por eso además debe
+ * ser la última opción (nada posicional después). Lanza si algún elemento es un argumento prohibido.
  */
-function safePrompt(prompt) {
-  const text = String(prompt ?? '');
-  if (/^\s*-/.test(text)) return ' ' + text.trimStart();
-  return FORBIDDEN_ARGS.includes(text) ? ' ' + text : text;
-}
-
-/**
- * Argumentos de `claude` (sin el ejecutable): -p, stream-json, acceptEdits, herramientas, sesión y el prompt
- * como último y único argumento de texto. Lanza si algún elemento es un argumento prohibido.
- */
-export function buildClaudeArgs({ prompt, session, allowedCommands } = {}) {
+export function buildClaudeArgs({ session, allowedCommands } = {}) {
   const args = [
     CLI_FLAGS.print,
     CLI_FLAGS.outputFormat,
@@ -77,13 +69,11 @@ export function buildClaudeArgs({ prompt, session, allowedCommands } = {}) {
     CLI_FLAGS.verbose,
     CLI_FLAGS.permissionMode,
     CLI_FLAGS.acceptEdits,
-    CLI_FLAGS.allowedTools,
-    buildAllowedTools(allowedCommands),
   ];
   const mode = session && session.mode;
   if (mode === 'continue') args.push(CLI_FLAGS.continueLast);
   else if (mode === 'resume') args.push(CLI_FLAGS.resume, String(session.id));
-  args.push(safePrompt(prompt));
+  args.push(CLI_FLAGS.allowedTools, buildAllowedTools(allowedCommands));
   for (const arg of args) {
     if (FORBIDDEN_ARGS.includes(arg)) throw new Error('Argumento no permitido en la llamada a Claude Code');
   }

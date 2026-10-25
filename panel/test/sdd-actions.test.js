@@ -111,12 +111,15 @@ test('[F4-R44] implement lanza "implementa la siguiente tarea pendiente" en modo
   assert.deepEqual(r.json.session, { mode: 'new', id: null });
   await waitForRun(ctx.app, ctx.cookie, r.json.runId);
   const log = await readFakeLog(ctx.app.fakeLog);
-  assert.deepEqual(log[0].argv, ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--allowedTools', DEFAULT_TOOLS_TEXT, 'implementa la siguiente tarea pendiente']);
+  assert.deepEqual(log[0].argv, ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--allowedTools', DEFAULT_TOOLS_TEXT]);
+  assert.equal(log[0].stdin, 'implementa la siguiente tarea pendiente', 'prompt exacto por stdin');
   assert.ok(!log[0].argv.includes('--continue') && !log[0].argv.includes('--resume'));
   const cont = await ctx.post('/api/projects/proy/sdd/implement', { session: { mode: 'continue' } });
   assert.equal(cont.status, 202);
   await waitForRun(ctx.app, ctx.cookie, cont.json.runId);
-  assert.deepEqual((await readFakeLog(ctx.app.fakeLog)).at(-1).argv.slice(-2), ['--continue', 'implementa la siguiente tarea pendiente']);
+  const contLog = (await readFakeLog(ctx.app.fakeLog)).at(-1);
+  assert.deepEqual(contLog.argv.slice(-3), ['--continue', '--allowedTools', DEFAULT_TOOLS_TEXT]);
+  assert.equal(contLog.stdin, 'implementa la siguiente tarea pendiente');
 });
 
 test('[F4-R45] approve-tests lanza "tests aprobados, lanza al reviewer" con --continue; con session new no', async () => {
@@ -127,13 +130,15 @@ test('[F4-R45] approve-tests lanza "tests aprobados, lanza al reviewer" con --co
   assert.equal(r.json.label, 'Aprobar tests');
   assert.deepEqual(r.json.session, { mode: 'continue', id: null });
   await waitForRun(ctx.app, ctx.cookie, r.json.runId);
-  assert.deepEqual((await readFakeLog(ctx.app.fakeLog))[0].argv.slice(-2), ['--continue', 'tests aprobados, lanza al reviewer']);
+  const first = (await readFakeLog(ctx.app.fakeLog))[0];
+  assert.deepEqual(first.argv.slice(-3), ['--continue', '--allowedTools', DEFAULT_TOOLS_TEXT]);
+  assert.equal(first.stdin, 'tests aprobados, lanza al reviewer');
   const fresh = await ctx.post('/api/projects/proy/sdd/approve-tests', { session: { mode: 'new' } });
   assert.equal(fresh.status, 202);
   await waitForRun(ctx.app, ctx.cookie, fresh.json.runId);
-  const last = (await readFakeLog(ctx.app.fakeLog)).at(-1).argv;
-  assert.ok(!last.includes('--continue'));
-  assert.equal(last.at(-1), 'tests aprobados, lanza al reviewer');
+  const lastEntry = (await readFakeLog(ctx.app.fakeLog)).at(-1);
+  assert.ok(!lastEntry.argv.includes('--continue'));
+  assert.equal(lastEntry.stdin, 'tests aprobados, lanza al reviewer');
   const bad = await ctx.post('/api/projects/proy/sdd/approve-tests', { session: { mode: 'otro' } });
   assert.equal(bad.status, 400);
 });

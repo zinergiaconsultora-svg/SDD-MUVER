@@ -185,11 +185,11 @@ export function createRunManager({
     }
   }
 
-  function spawnOptions(cwd, extra = {}) {
+  function spawnOptions(cwd, extra = {}, { stdin = 'ignore' } = {}) {
     return {
       cwd,
       env: { ...env, ...extraEnv, ...extra },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [stdin, 'pipe', 'pipe'],
       windowsHide: true,
       detached: platform !== 'win32',
       shell: false,
@@ -273,12 +273,27 @@ export function createRunManager({
     emit(rec, event);
   }
 
-  function launchClaude(rec, { file, prefixArgs, args }) {
+  /**
+   * Envía el prompt por stdin (UTF-8) y lo cierra. Un EPIPE (el proceso ya salió o no llegó a arrancar) u otro
+   * error de stdin no tumba el panel: el resultado del run lo decide la salida del proceso.
+   */
+  function writePrompt(child, prompt) {
+    if (!child.stdin) return;
+    child.stdin.on('error', (err) => {
+      if (err && err.code !== 'EPIPE' && err.code !== 'ERR_STREAM_DESTROYED') {
+        console.error('[panel] No se pudo enviar el mensaje a Claude Code:', err.code || err.message);
+      }
+    });
+    child.stdin.end(String(prompt), 'utf8');
+  }
+
+  function launchClaude(rec, { file, prefixArgs, args, prompt }) {
     const mapper = createStreamMapper({ cwd: rec.cwd });
     rec.denials = () => mapper.denials();
     let child;
     try {
-      child = spawnImpl(file, [...prefixArgs, ...args], spawnOptions(rec.cwd));
+      // stdin en 'pipe' solo para Claude: el prompt va por ahí (nunca en argv). Los comandos siguen con 'ignore'.
+      child = spawnImpl(file, [...prefixArgs, ...args], spawnOptions(rec.cwd, {}, { stdin: 'pipe' }));
     } catch (err) {
       rec.launchError = `No se pudo ejecutar Claude Code: ${err && (err.code || err.message)}`;
       emit(rec, { type: 'error', message: rec.launchError });
@@ -286,6 +301,7 @@ export function createRunManager({
       return;
     }
     rec.child = child;
+    writePrompt(child, prompt);
     startTimer(rec);
     let spawned = false;
     child.once('spawn', () => {
@@ -319,7 +335,7 @@ export function createRunManager({
   async function startClaude({ project, prompt, session, action = 'chat', label = 'Chat', allowedCommands = [], claudeCommand, auditContext }) {
     const limit = checkLimits(project.id);
     if (limit) return limit;
-    const args = buildClaudeArgs({ prompt, session, allowedCommands });
+    const args = buildClaudeArgs({ session, allowedCommands });
     const meta = baseMeta({
       projectId: project.id,
       kind: 'claude',
@@ -333,7 +349,7 @@ export function createRunManager({
     await persistNew(rec);
     emit(rec, { type: 'prompt', text: String(prompt) });
     emit(rec, { type: 'state', state: 'queued' });
-    launchClaude(rec, { file: claudeCommand.file, prefixArgs: claudeCommand.prefixArgs || [], args });
+    launchClaude(rec, { file: claudeCommand.file, prefixArgs: claudeCommand.prefixArgs || [], args, prompt });
     return { ok: true, meta: copy(rec.meta) };
   }
 

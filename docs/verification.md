@@ -200,17 +200,17 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R4 | `panel/test/work-api.test.js` → "[F4-R4] GET /api/work/status: valores por defecto, allowExec false, por el túnel y con u…" |
 | R5 | `panel/test/work-api.test.js` → "[F4-R5][F4-R63] allowExec false: las ocho acciones de ejecución → 403 sin procesos ni fi…" |
 | R6 | `panel/test/work-api.test.js` → "[F4-R6] GET /api/projects/:id/work: con arnés, git, init.sh y allowedCommands; sin nada;…" |
-| R7 | `panel/test/claude-cli.test.js` → "[F4-R7] constantes: CLI_FLAGS, herramientas por defecto, prompts SDD y máximo del prompt", "[F4-R7] buildClaudeArgs en modo new: array exacto con el prompt como último argumento" |
-| R8 | `panel/test/claude-cli.test.js` → "[F4-R8] buildClaudeArgs: --continue y --resume <id> justo antes del prompt; nada en modo…" |
+| R7 | `panel/test/claude-cli.test.js` → "[F4-R7] constantes: CLI_FLAGS, herramientas por defecto, prompts SDD y máximo del prompt", "[F4-R7] buildClaudeArgs en modo new: array exacto, --allowedTools al final y sin el prom…" |
+| R8 | `panel/test/claude-cli.test.js` → "[F4-R8] buildClaudeArgs: --continue y --resume <id> antes de --allowedTools (la opción v…" |
 | R9 | `panel/test/claude-cli.test.js` → "[F4-R9] ningún modo incluye argumentos prohibidos, ni con un prompt igual a uno de ellos", "[F4-R9] estático: el fuente de lib/claude-cli.js solo nombra los argumentos prohibidos e…" |
 | R10 | `panel/test/claude-cli.test.js` → "[F4-R10] buildAllowedTools: [], dos comandos y duplicado de una regla por defecto", "[F4-R10][F4-R62] isValidAllowedCommand" |
-| R11 | `panel/test/claude-cli.test.js` → "[F4-R11] un prompt que empieza por "-" se pasa con un espacio delante" |
+| R11 | `panel/test/claude-cli.test.js` → "[F4-R11] un prompt que empieza por "-" no puede leerse como opción: nunca va en argv (se…"; `panel/test/runs-api.test.js` → "[F4-R11] un prompt que empieza por "-" llega por stdin tal cual y no se interpreta como …" |
 | R12 | `panel/test/claude-cli.test.js` → "[F4-R12] resolveClaudeCommand: .js/.mjs/.cjs → node + fichero; Linux → tal cual; ruta ab…", "[F4-R12] resolveClaudeCommand en Windows: claude.exe en PATH, instalador nativo, npm glo…" |
 | R13 | `panel/test/claude-cli.test.js` → "[F4-R13] escenario ok → session, text, tool, tool, text y result en orden exacto" |
 | R14 | `panel/test/claude-cli.test.js` → "[F4-R14] result con is_error, texto de 3000 caracteres y campos ausentes", "[F4-R14][F4-R24] dos denegaciones en result, una ya emitida como system/permission_denie…", "[F4-R14] denegación con toolName/input alternativos, detalle por defecto y recorte a 200" |
 | R15 | `panel/test/claude-cli.test.js` → "[F4-R15] tool_result de error (1000 caracteres), api_retry, línea no JSON y tipos descon…" |
 | R16 | `panel/test/claude-cli.test.js` → "[F4-R16] summarizeToolInput con cada herramienta, rutas fuera, rutas Windows y recorte a…" |
-| R17 | `panel/test/runs-api.test.js` → "[F4-R17][F4-R23][F4-R34][F4-R38] POST /runs con el escenario ok: 202, argumentos, cwd, e…", "[F4-R17] estático: runs.js lanza sin shell, con stdin ignorado, windowsHide y grupo de p…" |
+| R17 | `panel/test/runs-api.test.js` → "[F4-R17][F4-R23][F4-R34][F4-R38] POST /runs con el escenario ok: 202, argumentos, cwd, e…", "[F4-R17] estático: runs.js lanza sin shell, prompt por stdin, windowsHide y grupo de pro…" |
 | R18 | `panel/test/runs-api.test.js` → "[F4-R18] prompt ausente, no cadena, vacío o de más de 20000 caracteres → 400 sin proceso…" |
 | R19 | `panel/test/runs-api.test.js` → "[F4-R19] proyecto inexistente → 404; manual con ruta inexistente y de Claude no resuelto…" |
 | R20 | `panel/test/runs-api.test.js` → "[F4-R20][F4-R26] un run activo bloquea otro chat y los tests (409 con runId); cancelar m…" |

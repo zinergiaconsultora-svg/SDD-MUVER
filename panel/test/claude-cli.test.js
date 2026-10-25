@@ -21,7 +21,9 @@ import {
 import { PANEL_DIR } from './helpers.js';
 
 const DEFAULT_TOOLS_TEXT = 'Read,Edit,Write,Glob,Grep,Bash(git status *),Bash(git diff *),Bash(git log *)';
-const BASE = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--allowedTools'];
+// Corrección tras la prueba manual T36 (Claude Code 2.1.307): --allowedTools es VARIÁDICA en el CLI real y se
+// tragaba el prompt colocado detrás. El prompt va ahora por stdin y --allowedTools es la última opción.
+const BASE = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits'];
 
 test('[F4-R7] constantes: CLI_FLAGS, herramientas por defecto, prompts SDD y máximo del prompt', () => {
   assert.equal(CLI_FLAGS.print, '-p');
@@ -33,19 +35,21 @@ test('[F4-R7] constantes: CLI_FLAGS, herramientas por defecto, prompts SDD y má
   assert.ok(Object.isFrozen(CLI_FLAGS));
 });
 
-test('[F4-R7] buildClaudeArgs en modo new: array exacto con el prompt como último argumento', () => {
-  const args = buildClaudeArgs({ prompt: 'Añade validación de email', session: { mode: 'new' }, allowedCommands: ['npm test'] });
-  assert.deepEqual(args, [...BASE, `${DEFAULT_TOOLS_TEXT},Bash(npm test *)`, 'Añade validación de email']);
-  assert.deepEqual(buildClaudeArgs({ prompt: 'hola' }), [...BASE, DEFAULT_TOOLS_TEXT, 'hola']);
+test('[F4-R7] buildClaudeArgs en modo new: array exacto, --allowedTools al final y sin el prompt (va por stdin)', () => {
+  const args = buildClaudeArgs({ session: { mode: 'new' }, allowedCommands: ['npm test'] });
+  assert.deepEqual(args, [...BASE, '--allowedTools', `${DEFAULT_TOOLS_TEXT},Bash(npm test *)`]);
+  assert.deepEqual(buildClaudeArgs({}), [...BASE, '--allowedTools', DEFAULT_TOOLS_TEXT]);
+  assert.ok(!buildClaudeArgs({ prompt: 'Añade validación de email' }).includes('Añade validación de email'), 'el prompt nunca va en argv');
 });
 
-test('[F4-R8] buildClaudeArgs: --continue y --resume <id> justo antes del prompt; nada en modo new', () => {
-  const cont = buildClaudeArgs({ prompt: 'sigue', session: { mode: 'continue' }, allowedCommands: [] });
-  assert.deepEqual(cont, [...BASE, DEFAULT_TOOLS_TEXT, '--continue', 'sigue']);
-  const resume = buildClaudeArgs({ prompt: 'sigue', session: { mode: 'resume', id: 's-1' }, allowedCommands: [] });
-  assert.deepEqual(resume, [...BASE, DEFAULT_TOOLS_TEXT, '--resume', 's-1', 'sigue']);
-  const fresh = buildClaudeArgs({ prompt: 'sigue', session: { mode: 'new' }, allowedCommands: [] });
+test('[F4-R8] buildClaudeArgs: --continue y --resume <id> antes de --allowedTools (la opción variádica va la última); nada en modo new', () => {
+  const cont = buildClaudeArgs({ session: { mode: 'continue' }, allowedCommands: [] });
+  assert.deepEqual(cont, [...BASE, '--continue', '--allowedTools', DEFAULT_TOOLS_TEXT]);
+  const resume = buildClaudeArgs({ session: { mode: 'resume', id: 's-1' }, allowedCommands: [] });
+  assert.deepEqual(resume, [...BASE, '--resume', 's-1', '--allowedTools', DEFAULT_TOOLS_TEXT]);
+  const fresh = buildClaudeArgs({ session: { mode: 'new' }, allowedCommands: [] });
   assert.ok(!fresh.includes('--continue') && !fresh.includes('--resume'));
+  for (const args of [cont, resume, fresh]) assert.equal(args.at(-2), '--allowedTools', 'la opción variádica es la última');
 });
 
 test('[F4-R9] ningún modo incluye argumentos prohibidos, ni con un prompt igual a uno de ellos', () => {
@@ -56,9 +60,8 @@ test('[F4-R9] ningún modo incluye argumentos prohibidos, ni con un prompt igual
       for (const arg of args) assert.ok(!FORBIDDEN_ARGS.includes(arg), `argumento prohibido: ${arg}`);
     }
   }
-  assert.equal(buildClaudeArgs({ prompt: 'bypassPermissions' }).at(-1), ' bypassPermissions');
   // Defensa en profundidad: si un argumento prohibido llegara por otra vía (aquí el id de sesión), se lanza.
-  assert.throws(() => buildClaudeArgs({ prompt: 'x', session: { mode: 'resume', id: 'bypassPermissions' } }));
+  assert.throws(() => buildClaudeArgs({ session: { mode: 'resume', id: 'bypassPermissions' } }));
 });
 
 test('[F4-R9] estático: el fuente de lib/claude-cli.js solo nombra los argumentos prohibidos en FORBIDDEN_ARGS', async () => {
@@ -81,12 +84,11 @@ test('[F4-R10] buildAllowedTools: [], dos comandos y duplicado de una regla por 
   assert.equal(buildAllowedTools(undefined), DEFAULT_TOOLS_TEXT);
 });
 
-test('[F4-R11] un prompt que empieza por "-" se pasa con un espacio delante', () => {
-  assert.equal(buildClaudeArgs({ prompt: '--resume x' }).at(-1), ' --resume x');
-  assert.equal(buildClaudeArgs({ prompt: '- lista' }).at(-1), ' - lista');
-  assert.equal(buildClaudeArgs({ prompt: '   -x y' }).at(-1), ' -x y');
-  assert.equal(buildClaudeArgs({ prompt: 'hola' }).at(-1), 'hola');
-  assert.equal(buildClaudeArgs({ prompt: 'a -b' }).at(-1), 'a -b');
+test('[F4-R11] un prompt que empieza por "-" no puede leerse como opción: nunca va en argv (se envía por stdin tal cual)', () => {
+  for (const prompt of ['--resume x', '- lista', '   -x y', '--dangerously-skip-permissions']) {
+    const args = buildClaudeArgs({ prompt, session: { mode: 'new' } });
+    assert.deepEqual(args, [...BASE, '--allowedTools', DEFAULT_TOOLS_TEXT], prompt);
+  }
 });
 
 // ---------- R12: resolveClaudeCommand (tabla de design.md §5.2) ----------

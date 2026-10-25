@@ -55,7 +55,8 @@
   `projects.json`, ids estables `slug`/`slug-2`, ocultos y orden: fijados → actividad → nombre).
   En fase 4 (rutas nuevas en `lib/work-api.js`, que `lib/app.js` solo conecta):
   - `lib/claude-cli.js`: llamada a **Claude Code CLI** (`claude -p --output-format stream-json --verbose
-    --permission-mode acceptEdits --allowedTools <reglas> [--continue | --resume <id>] <prompt>`), con todas las
+    --permission-mode acceptEdits [--continue | --resume <id>] --allowedTools <reglas>`, con el prompt por **stdin**:
+    `--allowedTools` es variádica en el CLI real y se tragaba un prompt posicional — corrección tras la prueba T36), con todas las
     flags en `CLI_FLAGS`, la lista por defecto (lectura/edición + `git status/diff/log`) más los
     `allowedCommands` del proyecto, y el traductor del stream-json a eventos. **Nunca** se salta los permisos
     (lista `FORBIDDEN_ARGS` + test estático). Sin `--bare`: el CLI ejecuta los hooks y el `CLAUDE.md` del propio

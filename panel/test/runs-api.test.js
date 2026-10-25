@@ -100,7 +100,10 @@ test('[F4-R17][F4-R23][F4-R34][F4-R38] POST /runs con el escenario ok: 202, argu
 
   const log = await readFakeLog(ctx.app.fakeLog);
   assert.equal(log.length, 1);
-  assert.deepEqual(log[0].argv, ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--allowedTools', DEFAULT_TOOLS_TEXT, prompt]);
+  // El prompt va por stdin (en el CLI real --allowedTools es variádica y se tragaría un prompt posicional).
+  assert.deepEqual(log[0].argv, ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--allowedTools', DEFAULT_TOOLS_TEXT]);
+  assert.equal(log[0].stdin, prompt, 'prompt completo por stdin en UTF-8');
+  assert.deepEqual(log[0].allowedTools, [DEFAULT_TOOLS_TEXT]);
   assert.equal(await fs.realpath(log[0].cwd), await fs.realpath(ctx.dir));
 
   const runDir = path.join(ctx.app.dataDir, 'runs', 'proy');
@@ -111,9 +114,11 @@ test('[F4-R17][F4-R23][F4-R34][F4-R38] POST /runs con el escenario ok: 202, argu
   assert.equal(index.runs[0].state, 'succeeded');
 });
 
-test('[F4-R17] estático: runs.js lanza sin shell, con stdin ignorado, windowsHide y grupo de procesos fuera de Windows', async () => {
+test('[F4-R17] estático: runs.js lanza sin shell, prompt por stdin, windowsHide y grupo de procesos fuera de Windows', async () => {
   const source = await fs.readFile(path.join(PANEL_DIR, 'lib', 'runs.js'), 'utf8');
-  assert.ok(source.includes("stdio: ['ignore', 'pipe', 'pipe']"));
+  assert.ok(source.includes("stdio: [stdin, 'pipe', 'pipe']"), 'stdin explícito: pipe para Claude (prompt), ignore para comandos');
+  assert.ok(source.includes("{ stdin: 'pipe' }") && source.includes("stdin = 'ignore'"));
+  assert.ok(source.includes("child.stdin.end(String(prompt), 'utf8')"), 'el prompt se escribe por stdin y se cierra');
   assert.ok(source.includes('windowsHide: true'));
   assert.ok(source.includes('shell: false'));
   assert.ok(source.includes("detached: platform !== 'win32'"));
@@ -147,6 +152,18 @@ test('[F4-R18] prompt ausente, no cadena, vacío o de más de 20000 caracteres �
   const multibyte = await ctx.post('/api/projects/proy/runs', { prompt: 'ñ'.repeat(20000) });
   assert.equal(multibyte.status, 202, multibyte.text);
   await wait(ctx, multibyte.json.runId);
+});
+
+test('[F4-R11] un prompt que empieza por "-" llega por stdin tal cual y no se interpreta como opción', async () => {
+  const ctx = await setup();
+  const prompt = '--resume x [[ok]] - lista';
+  const r = await ctx.post('/api/projects/proy/runs', { prompt });
+  assert.equal(r.status, 202, r.text);
+  const done = await wait(ctx, r.json.runId);
+  assert.equal(done.run.state, 'succeeded');
+  const [entry] = await readFakeLog(ctx.app.fakeLog);
+  assert.equal(entry.stdin, prompt);
+  assert.ok(!entry.argv.includes('--resume'), 'no aparece ningún --resume en argv');
 });
 
 // ---------- R19 ----------
@@ -257,7 +274,8 @@ test('[F4-R22] sesión new/continue/resume: válida e inválida', async () => {
   assert.deepEqual(resume.json.session, { mode: 'resume', id: 's-1' });
   const done = await wait(ctx, resume.json.runId);
   let log = await readFakeLog(ctx.app.fakeLog);
-  assert.deepEqual(log.at(-1).argv.slice(-3), ['--resume', 's-1', 'sigue']);
+  assert.deepEqual(log.at(-1).argv.slice(-4), ['--resume', 's-1', '--allowedTools', DEFAULT_TOOLS_TEXT]);
+  assert.equal(log.at(-1).stdin, 'sigue');
 
   for (const session of [{ mode: 'resume', id: 's-9' }, { mode: 'resume', id: '../x' }, { mode: 'otro' }, { mode: 'resume' }, 'continue']) {
     const bad = await run(session);
@@ -273,8 +291,9 @@ test('[F4-R22] sesión new/continue/resume: válida e inválida', async () => {
   assert.deepEqual(cont.json.session, { mode: 'continue', id: null });
   await wait(ctx, cont.json.runId);
   log = await readFakeLog(ctx.app.fakeLog);
-  assert.deepEqual(log.at(-1).argv.slice(-2), ['--continue', 'sigue']);
-  assert.deepEqual(log.at(-2).argv.slice(-3), ['--resume', 'fake-session-1', 'sigue']);
+  assert.deepEqual(log.at(-1).argv.slice(-3), ['--continue', '--allowedTools', DEFAULT_TOOLS_TEXT]);
+  assert.deepEqual(log.at(-2).argv.slice(-4), ['--resume', 'fake-session-1', '--allowedTools', DEFAULT_TOOLS_TEXT]);
+  assert.ok(log.every((e) => !e.argv || e.stdin === 'sigue'));
 });
 
 // ---------- R24, R25 ----------

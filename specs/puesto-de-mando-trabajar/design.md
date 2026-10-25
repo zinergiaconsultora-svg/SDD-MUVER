@@ -8,7 +8,7 @@
 
 | # | Decisión | Por qué |
 |---|----------|---------|
-| D1 | **Claude Code CLI en modo no interactivo** (`claude -p … --output-format stream-json --verbose`) lanzado con `child_process.spawn` **sin shell**, `cwd` = ruta del catálogo y el prompt como **un único argumento**. | El humano ya tiene `claude` instalado y con sesión iniciada en su PC; el CLI usa su suscripción y su `CLAUDE.md` de cada proyecto ("implementa la siguiente tarea pendiente" funciona igual que en la terminal). Sin shell no hay inyección posible. |
+| D1 | **Claude Code CLI en modo no interactivo** (`claude -p … --output-format stream-json --verbose`) lanzado con `child_process.spawn` **sin shell**, `cwd` = ruta del catálogo y el prompt **por stdin** (corrección T36: ver §5.2). | El humano ya tiene `claude` instalado y con sesión iniciada en su PC; el CLI usa su suscripción y su `CLAUDE.md` de cada proyecto ("implementa la siguiente tarea pendiente" funciona igual que en la terminal). Sin shell no hay inyección posible. |
 | D2 | **Permisos acotados**: `--permission-mode acceptEdits` + `--allowedTools` con una lista por defecto (lectura/edición + `git status/diff/log`) más los `allowedCommands` del proyecto. **Nunca** `--dangerously-skip-permissions` ni `bypassPermissions` (lista `FORBIDDEN_ARGS` + test estático). | Decisión del humano. En `-p` sin anfitrión de permisos, lo no autorizado se deniega y el stream lo informa (`permission_denied` y `permission_denials`). |
 | D3 | **Todas las flags del CLI en una tabla de constantes** (`lib/claude-cli.js`, `CLI_FLAGS`). | Si la versión del CLI del humano cambia un nombre, se toca un solo sitio. Verificadas en la doc oficial el 2026-10-25 (supuesto 1 de `requirements.md`). |
 | D4 | **Salida en vivo por Server-Sent Events** (`GET /api/runs/:runId/events`) con `id: <seq>` y reconexión nativa del navegador con `Last-Event-ID`. | Unidireccional (servidor → navegador), nativo en `EventSource`, pasa por Cloudflare Tunnel como HTTP normal y lleva la cookie de sesión sin código extra. |
@@ -335,7 +335,7 @@ export const MAX_PROMPT_CHARS = 20000;
 ```
 
 - `buildAllowedTools(allowedCommands)` → cadena: `DEFAULT_ALLOWED_TOOLS` + `BASH_RULE(c)` por cada comando válido, sin duplicados, `join(',')`.
-- `buildClaudeArgs({ prompt, session, allowedCommands })` → `[-p, --output-format, stream-json, --verbose, --permission-mode, acceptEdits, --allowedTools, <tools>, (--continue | --resume <id>)?, <prompt'>]` con `prompt' = /^\s*-/.test(prompt) ? ' ' + prompt.trimStart() : prompt` (el resto del texto intacto). Lanza si algún elemento está en `FORBIDDEN_ARGS` (defensa en profundidad; el prompt nunca coincide porque, si empieza por `-`, lleva el espacio).
+- `buildClaudeArgs({ session, allowedCommands })` → `[-p, --output-format, stream-json, --verbose, --permission-mode, acceptEdits, (--continue | --resume <id>)?, --allowedTools, <tools>]`. Lanza si algún elemento está en `FORBIDDEN_ARGS` (defensa en profundidad). **Corrección tras la prueba manual T36 (Claude Code 2.1.307):** en el CLI real `--allowedTools` es una opción **variádica** y consumía el prompt que antes iba como último argumento (`Error: Input must be provided either through stdin or as a prompt argument when using --print`). Ahora el prompt **no va en argv**: `lib/runs.js` lo escribe en el stdin del proceso (UTF-8) y lo cierra; `--allowedTools` es siempre la última opción. Con ello desaparece el espacio inicial para prompts que empiezan por `-` (R11): por stdin no pueden leerse como opción. El CLI falso de los tests reproduce el parseo variádico y la lectura de stdin.
 - `resolveClaudeCommand(claudeBin, { platform, env, execPath, exists })` → `{ file, prefixArgs }` o `{ error }`:
 
 | Caso | Resultado |
@@ -395,7 +395,7 @@ Estado final (en este orden de prioridad): `cancelled` si se pidió cancelar; `t
 
 `createRunManager({ store, audit, now, maxRuns, runTimeoutMs, outputLimitBytes = 5 * 1024 * 1024, platform, spawnImpl = spawn, killTree = killProcessTree, env = process.env, extraEnv = {} })`:
 - `startClaude({ project, prompt, session, action, allowedCommands, claudeCommand })` y `startCommand({ project, steps, action, commandLabel, env })` → `{ ok: true, meta }` o `{ ok: false, status, error, runId? }` (`runActive` / `tooManyRuns`).
-- `spawn(file, [...prefixArgs, ...args], { cwd, env: { ...env, ...extraEnv, …extra }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: platform !== 'win32', shell: false })`.
+- `spawn(file, [...prefixArgs, ...args], { cwd, env: { ...env, ...extraEnv, …extra }, stdio: [stdin, 'pipe', 'pipe'], windowsHide: true, detached: platform !== 'win32', shell: false })` con `stdin = 'pipe'` en los runs de Claude (se escribe el prompt y se cierra; EPIPE se ignora) e `'ignore'` en los de comando.
 - Eventos: `store.appendEvent` → `subscribers` (SSE). Límite: antes de guardar `text`/`output`/`tool`/`tool_error`, si `outputBytes + bytes > outputLimitBytes` → un `notice` de truncado, `truncated = true` y se descartan los siguientes de esos tipos.
 - Timeout: `setTimeout(runTimeoutMs)` → `notice` + `killTree` + estado `timeout`. Cancelación: `killTree` + estado `cancelled` al recibir `exit` (o a los `graceMs + 1000` si no llega).
 - `cancelAll()` (para `server.on('close')` y señales de `server.js`).
@@ -554,7 +554,7 @@ Aviso de solo lectura (R81): `execEnabled` falso → `<p class="notice">Las acci
 
 `test/fixtures/fake-claude.js` (Node, sin dependencias):
 - Al arrancar añade a `process.env.FAKE_CLAUDE_LOG` (si existe) una línea `{ argv: process.argv.slice(2), cwd: process.cwd(), pid: process.pid }`.
-- El prompt es el último argumento; el escenario es la primera marca `[[nombre]]` que contenga (por defecto `ok`).
+- Parsea como el CLI real: `--allowedTools` es variádica (consume los argumentos siguientes que no empiecen por `-`); el prompt se lee de stdin (o de un posicional suelto) y, si no hay, escribe en stderr `Error: Input must be provided either through stdin or as a prompt argument when using --print` y sale con 1. Registra también `stdin` y `allowedTools`. El escenario es la primera marca `[[nombre]]` del prompt (por defecto `ok`).
 
 | Escenario | Salida stdout (una línea JSON por elemento) | Código |
 |-----------|---------------------------------------------|:---:|

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // CLI de Claude Code FALSO para los tests (design.md §8.1). Nunca se usa el `claude` real en los tests.
 // - Registra en FAKE_CLAUDE_LOG (si existe) una línea { argv, cwd, pid }.
-// - El prompt es el último argumento; el escenario es la primera marca [[nombre]] que contenga (por defecto "ok").
+// - Como el CLI real: --allowedTools es variádica y el prompt se lee de stdin (o de un argumento posicional suelto);
+//   sin prompt → el mismo error que el CLI real y código 1. El escenario es la primera marca [[nombre]] del prompt.
 // - Escribe stream-json (una línea JSON por mensaje) en stdout, como `claude -p --output-format stream-json --verbose`.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,9 +20,44 @@ function log(entry) {
 // Sin argumentos (p. ej. cuando `node --test` recorre test/) no hace nada.
 if (argv.length === 0) process.exit(0);
 
-log({ argv, cwd: process.cwd(), pid: process.pid });
+/**
+ * Parseo como el CLI real (Claude Code 2.1.x): `--allowedTools` es VARIÁDICA y consume todos los argumentos
+ * siguientes que no empiecen por "-" (incluido un prompt colocado detrás). Lo que queda suelto es el prompt posicional.
+ */
+const VALUE_FLAGS = new Set(['--output-format', '--permission-mode', '--resume']);
+const VARIADIC_FLAGS = new Set(['--allowedTools']);
+const positional = [];
+const allowedTools = [];
+for (let i = 0; i < argv.length; i++) {
+  const arg = argv[i];
+  if (VARIADIC_FLAGS.has(arg)) {
+    while (i + 1 < argv.length && !argv[i + 1].startsWith('-')) allowedTools.push(argv[++i]);
+  } else if (VALUE_FLAGS.has(arg)) {
+    i += 1;
+  } else if (!arg.startsWith('-')) {
+    positional.push(arg);
+  }
+}
 
-const prompt = argv.length ? argv[argv.length - 1] : '';
+/** Lee stdin completo (vacío si es /dev/null o un TTY). */
+function readStdin() {
+  if (process.stdin.isTTY) return Promise.resolve('');
+  return new Promise((resolve) => {
+    const chunks = [];
+    process.stdin.on('data', (c) => chunks.push(c));
+    process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    process.stdin.on('error', () => resolve(''));
+  });
+}
+
+const stdinText = await readStdin();
+const prompt = positional.length ? positional.join(' ') : stdinText;
+log({ argv, cwd: process.cwd(), pid: process.pid, prompt, stdin: stdinText, allowedTools });
+if (!prompt.trim()) {
+  process.stderr.write('Error: Input must be provided either through stdin or as a prompt argument when using --print\n');
+  process.exit(1);
+}
+
 const marker = /\[\[([a-z_]+)\]\]/.exec(prompt);
 const scenario = marker ? marker[1] : 'ok';
 const SESSION_ID = 'fake-session-1';

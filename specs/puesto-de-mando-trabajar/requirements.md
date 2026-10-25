@@ -58,10 +58,10 @@
 
 ## B. Construcción de la llamada a Claude Code (`lib/claude-cli.js`)
 
-- **R7.** Cuando el sistema prepara un run de Claude en modo `new`, debe construir los argumentos exactos `['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--allowedTools', <reglas>, <prompt>]` con el prompt como último y único argumento de texto.
-  - *Cómo se prueba:* test unitario de `buildClaudeArgs` comparando el array completo; test de integración en el que el CLI falso registra exactamente esos argumentos y como `cwd` la carpeta del proyecto.
+- **R7.** Cuando el sistema prepara un run de Claude en modo `new`, debe construir los argumentos exactos `['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--allowedTools', <reglas>]` con `--allowedTools` como última opción y enviar el prompt completo por stdin (UTF-8, cerrado tras escribirlo), nunca en argv (corrección tras la prueba manual T36 con Claude Code 2.1.307: `--allowedTools` es variádica y se tragaba un prompt posicional).
+  - *Cómo se prueba:* test unitario de `buildClaudeArgs` comparando el array completo; test de integración en el que el CLI falso (que, como el real, trata `--allowedTools` como variádica y lee el prompt de stdin) registra exactamente esos argumentos, el prompt recibido por stdin y como `cwd` la carpeta del proyecto.
 
-- **R8.** Cuando la petición pide `session: { mode: "continue" }` o `session: { mode: "resume", id }`, el sistema debe insertar `--continue` o `--resume <id>` inmediatamente antes del prompt, y en modo `new` no debe incluir ninguno de los dos.
+- **R8.** Cuando la petición pide `session: { mode: "continue" }` o `session: { mode: "resume", id }`, el sistema debe insertar `--continue` o `--resume <id>` inmediatamente antes de `--allowedTools`, y en modo `new` no debe incluir ninguno de los dos.
   - *Cómo se prueba:* test unitario de `buildClaudeArgs` con los tres modos (posición e igualdad exacta del array).
 
 - **R9.** Cuando el sistema construye cualquier llamada a Claude, la lista de argumentos no debe contener `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions` ni el valor `bypassPermissions`, y el fuente de `lib/claude-cli.js` no debe contener esas cadenas fuera de la lista `FORBIDDEN_ARGS`.
@@ -70,8 +70,8 @@
 - **R10.** Cuando el sistema construye `--allowedTools`, el valor debe ser un único argumento con las reglas por defecto (`Read`, `Edit`, `Write`, `Glob`, `Grep`, `Bash(git status *)`, `Bash(git diff *)`, `Bash(git log *)`) seguidas de `Bash(<comando> *)` por cada entrada de `allowedCommands` del proyecto, sin duplicados y unidas por comas.
   - *Cómo se prueba:* test unitario de `buildAllowedTools` con `[]`, con `["npm test", "npm run build"]` y con un duplicado de una regla por defecto (`git status`).
 
-- **R11.** Si el prompt, tras recortar espacios, empieza por `-`, entonces el sistema debe pasarlo precedido de un espacio para que el CLI no lo interprete como opción, conservando el resto del texto.
-  - *Cómo se prueba:* test unitario de `buildClaudeArgs` con `--resume x` y `- lista` → último argumento ` --resume x` y ` - lista`; con `hola` → `hola`.
+- **R11.** Si el prompt, tras recortar espacios, empieza por `-`, entonces el sistema no debe permitir que el CLI lo interprete como opción: el prompt viaja por stdin tal cual, sin añadirle nada, y nunca en argv (corrección tras la prueba manual T36 con Claude Code 2.1.307: `--allowedTools` es variádica y se tragaba un prompt posicional).
+  - *Cómo se prueba:* test unitario de `buildClaudeArgs` con `--resume x`, `- lista` y `--dangerously-skip-permissions` (el array no cambia); test de integración en el que el CLI falso recibe por stdin `--resume x …` exacto y argv no contiene `--resume`.
 
 - **R12.** Cuando el sistema resuelve el ejecutable de Claude, debe usar `process.execPath` con el fichero como primer argumento si `CLAUDE_BIN` termina en `.js`, `.mjs` o `.cjs` y, en Windows, debe aplicar las reglas de búsqueda de `design.md` §5.3 (`claude.exe` en `PATH`, `%USERPROFILE%\.local\bin\claude.exe`, y paquete npm `@anthropic-ai/claude-code/cli.js` junto a un `claude.cmd`), devolviendo un error descriptivo si solo encuentra un `.cmd`/`.bat` sin su `cli.js`.
   - *Cómo se prueba:* test unitario de `resolveClaudeCommand` con `platform` `linux` y `win32`, `env` y función `exists` inyectados para cada caso de la tabla de `design.md` §5.3.
@@ -92,7 +92,7 @@
 
 ## D. Ciclo de vida de los runs (`lib/runs.js`)
 
-- **R17.** Cuando una petición autenticada hace `POST /api/projects/:id/runs` con `{ prompt, session? }` válido sobre un proyecto ejecutable, el sistema debe responder `202` con el `RunMeta` de `design.md` §3.2 (estado `queued` o `running`) y lanzar el CLI con `spawn` sin shell, `cwd` igual a la ruta del catálogo, `stdin` ignorado y `windowsHide: true`.
+- **R17.** Cuando una petición autenticada hace `POST /api/projects/:id/runs` con `{ prompt, session? }` válido sobre un proyecto ejecutable, el sistema debe responder `202` con el `RunMeta` de `design.md` §3.2 (estado `queued` o `running`) y lanzar el CLI con `spawn` sin shell, `cwd` igual a la ruta del catálogo, el prompt escrito por `stdin` (antes `stdin` ignorado; ver R7) y `windowsHide: true`.
   - *Cómo se prueba:* test de integración con el CLI falso en escenario `ok`: código, campos del `RunMeta`, `cwd` y argumentos registrados por el CLI falso, y estado final `succeeded`.
 
 - **R18.** Si el `prompt` falta, no es una cadena, queda vacío al recortarlo o supera 20 000 caracteres, entonces el sistema debe responder `400` con el texto correspondiente de `design.md` §4.4 y no lanzar ningún proceso.
