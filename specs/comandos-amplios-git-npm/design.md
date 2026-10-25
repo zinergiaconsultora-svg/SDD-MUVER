@@ -569,8 +569,10 @@ El test de R17 sigue el modelo del test `[F14-R32]`: filas `^\| R<n> \|`, cada e
 
 ### Enmienda 1 (2026-10-25)
 
-- Pendiente de la aprobación del humano (puerta 1 de nuevo): lista permitida corregida (§3.2, §3.3), evidencias
-  (§3.4), tareas T18–T23 y los puntos 7 y 8 de §10.
+- **Aprobada por el humano (2026-10-25):** lista permitida corregida (§3.2, §3.3), evidencias (§3.4) y tareas
+  T18–T23. Acepta que `npm view`/`info`/`show`/`v` pidan confirmación (punto 7 de §10) y que `git revert` salga por
+  prudencia. Duda 5 (§10, variables de entorno delante de una regla como `GIT_EXTERNAL_DIFF=P git diff`): el leader la
+  comprobará con el CLI real después de esta feature y, si la regla las cubre, se abre una feature aparte.
 
 ## 11. Alternativas consideradas y descartadas
 

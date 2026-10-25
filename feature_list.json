@@ -40,7 +40,7 @@
       "id": 15,
       "slug": "comandos-amplios-git-npm",
       "description": "Endurecimiento de seguridad, segunda parte (mejoras del reviewer de la feature 14, progress/review_endurecimiento-ejecucion.md): M1 ampliar la lista de comandos amplios con los subcomandos de git y npm que ejecutan programas mediante opciones o configuración (git fetch --upload-pack, git push --receive-pack/--exec, git ls-remote --upload-pack, git clone -u/--upload-pack/-c, git grep -O/--open-files-in-pager, git hook run, npm run-script y alias de npm run) para que no se sugieran nunca y añadirlos a mano exija la confirmación con aviso; M2 que killProcessTree pase por isTrustedPath y añada NoDefaultCurrentDirectoryInExePath (o corregir docs/architecture.md si se decide no hacerlo); M3 que el resolvedor por defecto resuelva la ruta real del cwd al excluir carpetas.",
-      "status": "spec_ready",
+      "status": "in_progress",
       "sdd": true
     },
     {
