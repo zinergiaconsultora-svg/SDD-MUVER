@@ -26,7 +26,7 @@
       "id": 4,
       "slug": "puesto-de-mando-trabajar",
       "description": "Puesto de mando MUVER (fase 4): trabajar desde el panel sin abrir Claude — vista de chat por proyecto que lanza Claude Code CLI en la carpeta del proyecto con salida en vivo (streaming) e historial; botones SDD de un toque (implementar siguiente tarea, aprobar spec, aprobar tests, ejecutar init.sh/tests, ver diff, commit y push) con confirmación previa; cancelación de ejecuciones; registro de acciones.",
-      "status": "spec_ready",
+      "status": "in_progress",
       "sdd": true
     },
     {
