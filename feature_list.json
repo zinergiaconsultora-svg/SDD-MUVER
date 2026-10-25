@@ -44,6 +44,27 @@
       "sdd": true
     },
     {
+      "id": 16,
+      "slug": "git-output-escritura",
+      "description": "Endurecimiento (duda 2 de la feature 15): `git log`/`git diff` y otros subcomandos permitidos aceptan `--output=<ruta>` y escriben texto elegido en cualquier fichero (p. ej. ~/.bashrc), lo que equivale a ejecución diferida; afecta a las reglas por defecto de Claude `Bash(git log *)`/`Bash(git diff *)`. Decidir y aplicar: sustituir esas reglas por herramientas propias de solo lectura, tratar `--output` como amplio o mantener el riesgo documentado.",
+      "status": "pending",
+      "sdd": true
+    },
+    {
+      "id": 17,
+      "slug": "gestores-paquetes-lista-permitida",
+      "description": "Endurecimiento (duda 3 de la feature 15): aplicar a `pnpm`, `yarn` y `bun` la misma clasificación por lista permitida de subcomandos que la feature 15 aplica a `npm`, para que `pnpm install <paquete>` o `yarn add <paquete>` cuenten como comando amplio igual que `npm install`.",
+      "status": "pending",
+      "sdd": true
+    },
+    {
+      "id": 18,
+      "slug": "npm-scripts-opciones",
+      "description": "Endurecimiento (duda 1 de la feature 15): `Bash(npm test *)` y demás comandos de scripts de npm admiten opciones detrás que ejecutan código (`--node-options=--import=data:…`, `--script-shell=<programa>`). Decidir y aplicar: tratar como amplios todos los comandos de npm, añadir reglas de denegación de opciones o mantener el riesgo documentado.",
+      "status": "pending",
+      "sdd": true
+    },
+    {
       "id": 13,
       "slug": "vista-compacta-y-resumen",
       "description": "Vista compacta y comprensible del listado (feedback del humano con 86 proyectos reales): fila compacta por proyecto con nombre, resumen de una frase de qué va el proyecto, semáforo, última actividad relativa y nº de tareas en curso, con el detalle completo al pulsar; resumen obtenido de README/package.json/CLAUDE.md o generado por Claude en solo lectura bajo demanda, guardado y editable en Ajustes; worktrees agrupados bajo su repositorio principal (git common dir) como tareas en curso; buscador, filtros (activos esta semana, fijados, con atención) y proyectos sin actividad en 30 días plegados en Antiguos; opción de vista tarjetas/lista recordada por dispositivo.",

@@ -414,6 +414,15 @@ El test de R17 sigue el modelo del test `[F14-R32]`: filas `^\| R<n> \|`, cada e
    programas a un subcomando permitido. La lista permitida se revisa cuando se actualice git o npm en la máquina del
    panel; se anota en `docs/architecture.md`.
 
+### Decisiones del humano (2026-10-25, aprobación de la spec)
+
+- Spec aprobada tal como está.
+- Duda 4: **ningún** comando se mantiene como normal; `git push`, `git fetch`, `git pull`, `npm install`, `npm ci` y
+  `npm audit` piden confirmación con aviso.
+- Dudas 1, 2 y 3: en esta feature se **aceptan y se documentan** como riesgos conocidos en `docs/architecture.md`, y
+  cada una se trata en su propia feature: #16 (`--output` de git), #17 (`pnpm`/`yarn`/`bun`) y #18 (`npm test` con
+  opciones detrás).
+
 ## 11. Alternativas consideradas y descartadas
 
 | Alternativa | Por qué no |

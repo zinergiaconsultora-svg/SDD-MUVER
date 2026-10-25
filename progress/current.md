@@ -7,7 +7,7 @@
 - **Feature en curso:** #14 `endurecimiento-ejecucion` — seguridad de la ejecución (hallazgos del reviewer de la fase 4)
 - **Estado:** `in_progress` — puerta 2 aprobada por el humano (2026-10-25); **reviewer: APROBADO** (`progress/review_endurecimiento-ejecucion.md`, sin bloqueantes); falta T30 manual en Windows para cerrar
 - **Tarea actual:** T30 (prueba manual en Windows: `whoami.exe` como `git.exe`/`claude.exe`), pendiente del humano.
-- **Siguiente paso:** humano hace T30 → leader anota el resultado en `docs/verification.md` y `progress/history.md` → done. Feature 15 (`comandos-amplios-git-npm`) en `spec_ready`: el humano revisa la spec y responde las dudas de design.md §10. Después la feature 13.
+- **Siguiente paso:** humano hace T30 → leader anota el resultado en `docs/verification.md` y `progress/history.md` → done. **Spec de la feature 15 aprobada por el humano (2026-10-25)**: pasa a `in_progress` en cuanto la 14 quede en `done` (una sola feature en curso). Después: 16, 17, 18 (riesgos de la 15) y la 13.
 - **Bloqueos / esperando:** T30 manual en Windows (necesaria para cerrar la feature como `done`)
 
 ## Decisiones tomadas con el humano
