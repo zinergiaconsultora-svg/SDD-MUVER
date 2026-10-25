@@ -255,6 +255,33 @@ test('[F2-R33] los ocho estáticos son públicos sin sesión y el servidor escuc
   assert.equal(app.server.address().address, '0.0.0.0');
 });
 
+test('[F2-R10][F2-R3][F2-R29] cuerpos JSON que no son un objeto (null, "", 0, []) → 400 "Cuerpo JSON inválido" en login, setup, change-password y POST /api/projects, y el servidor sigue vivo', async () => {
+  const file = await freshRegistry();
+  const app = await boot({ projectsFile: file, password: PASSWORD });
+  const cookie = await app.login();
+  const fresh = await boot({ projectsFile: file });
+  const expected = { error: 'Cuerpo JSON inválido' };
+  const before = await fs.readFile(file, 'utf8');
+  for (const body of ['null', '""', '0', '[]', 'false', '"texto"']) {
+    const targets = [
+      [app, '/api/auth/login', {}],
+      [fresh, '/api/auth/setup', {}],
+      [app, '/api/auth/change-password', { cookie }],
+      [app, '/api/projects', { cookie }],
+    ];
+    for (const [target, urlPath, extra] of targets) {
+      const r = await request(target.baseUrl, urlPath, { method: 'POST', body, ...extra });
+      assert.equal(r.status, 400, `${urlPath} con cuerpo ${body}`);
+      assert.deepEqual(r.json, expected, `${urlPath} con cuerpo ${body}`);
+      assert.equal(r.setCookie, null);
+    }
+  }
+  assert.equal(await fs.readFile(file, 'utf8'), before, 'projects.json intacto');
+  assert.equal(await readJson(path.join(fresh.dataDir, 'auth.json')), null, 'setup no creó auth.json');
+  assert.equal((await request(app.baseUrl, '/api/projects', { cookie })).status, 200, 'servidor vivo');
+  assert.equal((await login(app.baseUrl, PASSWORD)).status, 200, 'los 400 no cuentan como fallos');
+});
+
 // ---------- Bloque C: middleware de sesión ----------
 
 test('[F2-R17] sin cookie / firma incorrecta / id no listado / caducada → 401 "No autenticado" sin tocar projects.json', async () => {
@@ -526,6 +553,16 @@ test('[F2-R28] currentPassword incorrecta → 403 con field, auth.json intacto y
   }
   assert.equal(await fs.readFile(file, 'utf8'), before);
   assert.equal((await login(app.baseUrl, PASSWORD)).status, 429);
+  // M1: change-password también pasa por el limitador: con la IP bloqueada responde 429 aunque la contraseña actual sea correcta.
+  const blocked = await request(app.baseUrl, '/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword: PASSWORD, newPassword: 'nueva-contraseña-789' }),
+    cookie,
+  });
+  assert.equal(blocked.status, 429);
+  assert.equal(blocked.json.error, 'Demasiados intentos. Espera 15 minutos.');
+  assert.ok(Number(blocked.headers.get('retry-after')) >= 1);
+  assert.equal(await fs.readFile(file, 'utf8'), before, 'auth.json sigue intacto');
   assert.equal((await request(app.baseUrl, '/api/projects', { cookie })).status, 200, 'la sesión actual sigue viva');
 });
 

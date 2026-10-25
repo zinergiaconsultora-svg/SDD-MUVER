@@ -73,8 +73,9 @@ $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" 
 
 # cmd.exe /c "set PORT=<puerto>&& "<node>" <script> >> "<log>" 2>&1"
 # (cmd quita las comillas exteriores; las interiores protegen rutas con espacios.)
-function New-PanelAction([string]$script, [string]$log) {
-  $cmdLine = "/c `"set PORT=$Port&& `"$node`" $script >> `"$log`" 2>&1`""
+# $extraEnv: más asignaciones "set VAR=valor&& " para la tarea (la tarea S4U no carga el PATH ni las variables de usuario).
+function New-PanelAction([string]$script, [string]$log, [string]$extraEnv = '') {
+  $cmdLine = "/c `"set PORT=$Port&& $extraEnv`"$node`" $script >> `"$log`" 2>&1`""
   return New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $cmdLine -WorkingDirectory $panelDir
 }
 
@@ -99,7 +100,8 @@ if ($NoTunnel) {
     Write-Warning "No se encuentra cloudflared en el PATH (ni en CLOUDFLARED_BIN). Instálalo con 'winget install Cloudflare.cloudflared' y vuelve a ejecutar este script para registrar la tarea '$tunnelTaskName'. El panel se registra igualmente."
   } else {
     Write-Host "cloudflared: $cloudflared"
-    $tunnelAction = New-PanelAction -script 'scripts/run-tunnel.js' -log $tunnelLog
+    # Propagamos la ruta completa de cloudflared: la tarea S4U arranca sin el PATH de usuario (donde suele instalarlo winget).
+    $tunnelAction = New-PanelAction -script 'scripts/run-tunnel.js' -log $tunnelLog -extraEnv "set CLOUDFLARED_BIN=$cloudflared&& "
     Register-ScheduledTask -TaskName $tunnelTaskName -Action $tunnelAction -Trigger $triggers -Settings $settings -Principal $principal `
       -Description "Puesto de Mando MUVER: Cloudflare Tunnel (URL temporal trycloudflare.com). URL en $dataDir\public-url.txt; log en $dataDir\cloudflared.log" -Force | Out-Null
     Write-Host "Tarea '$tunnelTaskName' registrada (URL pública en $dataDir\public-url.txt, log en $dataDir\cloudflared.log)."

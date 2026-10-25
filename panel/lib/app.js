@@ -99,6 +99,7 @@ export function createApp({ projectsFile, publicDir, dataDir, now = () => Date.n
     res.setHeader('Set-Cookie', buildSetCookie('', { maxAge: 0, secure: isHttpsRequest(req, cookieOptions) }));
   }
 
+  /** Lee el cuerpo JSON (siempre un objeto plano, readJsonBody rechaza lo demás). Si ya respondió 400 devuelve null. */
   async function readBody(req, res) {
     try {
       return await readJsonBody(req);
@@ -106,6 +107,12 @@ export function createApp({ projectsFile, publicDir, dataDir, now = () => Date.n
       sendJson(res, err.status || 400, { error: err.error || 'Cuerpo JSON inválido' });
       return null;
     }
+  }
+
+  function sendTooManyAttempts(res, limit) {
+    const retryAfterSeconds = Math.max(1, Math.ceil(limit.retryAfterMs / 1000));
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+    sendJson(res, 429, { error: ERRORS.tooManyAttempts, retryAfterSeconds });
   }
 
   // ---------- Rutas /api/auth/* ----------
@@ -141,11 +148,7 @@ export function createApp({ projectsFile, publicDir, dataDir, now = () => Date.n
     if (state.state !== 'ok') return sendJson(res, 409, { error: ERRORS.notConfigured });
     const ip = getClientIp(req, { trustProxy });
     const limit = limiter.check(ip);
-    if (limit.blocked) {
-      const retryAfterSeconds = Math.max(1, Math.ceil(limit.retryAfterMs / 1000));
-      res.setHeader('Retry-After', String(retryAfterSeconds));
-      return sendJson(res, 429, { error: ERRORS.tooManyAttempts, retryAfterSeconds });
-    }
+    if (limit.blocked) return sendTooManyAttempts(res, limit);
     const body = await readBody(req, res);
     if (!body) return undefined;
     if (typeof body.password !== 'string') return sendJson(res, 400, { error: ERRORS.missingPassword, field: 'password' });
@@ -170,13 +173,16 @@ export function createApp({ projectsFile, publicDir, dataDir, now = () => Date.n
   async function authChangePassword(req, res) {
     const session = await currentSession(req);
     if (!session) return sendJson(res, 401, { error: ERRORS.unauthenticated });
+    const ip = getClientIp(req, { trustProxy });
+    const limit = limiter.check(ip);
+    if (limit.blocked) return sendTooManyAttempts(res, limit);
     const body = await readBody(req, res);
     if (!body) return undefined;
     const valid = validatePassword(body.newPassword);
     if (!valid.ok) return sendJson(res, 400, { error: valid.error, field: 'newPassword' });
     const record = authState.record;
     if (!(await verifyPassword(body.currentPassword, record))) {
-      limiter.recordFailure(getClientIp(req, { trustProxy }));
+      limiter.recordFailure(ip);
       return sendJson(res, 403, { error: ERRORS.wrongCurrentPassword, field: 'currentPassword' });
     }
     const { salt, hash, params } = await hashPassword(body.newPassword);

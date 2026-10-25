@@ -174,7 +174,9 @@ Borra `auth.json` y `sessions.json` del directorio de datos (respeta `PANEL_DATA
 `Contraseña y sesiones eliminadas. Reinicia el panel y abre su URL para crear una contraseña nueva.`
 Después **reinicia el panel** (`Stop-ScheduledTask`/`Start-ScheduledTask -TaskName PuestoDeMandoMUVER`, o
 `Ctrl+C` y `npm start`) y abre `http://localhost:4310`: volverá a salir **Crear contraseña**. Todas las sesiones
-del móvil y del PC quedan cerradas.
+del móvil y del PC quedan cerradas. **Importante:** desde ese momento y hasta que alguien cree la contraseña nueva,
+el panel está sin contraseña y quien llegue primero a la URL pública podría crearla; hazlo de inmediato y, a ser
+posible, con el túnel parado (`Stop-ScheduledTask -TaskName PuestoDeMandoMUVER-Tunnel`) hasta haberla creado.
 
 Si el panel dice `Fichero de autenticación ilegible; ejecuta npm run reset-password`, es el mismo remedio.
 

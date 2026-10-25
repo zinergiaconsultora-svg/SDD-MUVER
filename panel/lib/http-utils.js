@@ -41,9 +41,13 @@ export function sendText(res, status, text) {
   res.end(text);
 }
 
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 /**
  * Lee el cuerpo de la petición como JSON. Rechaza con { status: 400, error: 'Cuerpo JSON inválido' }
- * si supera `limit` bytes o no parsea.
+ * si supera `limit` bytes, no parsea o no es un objeto plano (null, "", 0, [], false…). Cuerpo vacío → {}.
  */
 export function readJsonBody(req, { limit = BODY_LIMIT_BYTES } = {}) {
   return new Promise((resolve, reject) => {
@@ -69,8 +73,10 @@ export function readJsonBody(req, { limit = BODY_LIMIT_BYTES } = {}) {
       if (settled) return;
       settled = true;
       try {
-        const text = Buffer.concat(chunks).toString('utf8').replace(/^﻿/, '');
-        resolve(text.trim() === '' ? {} : JSON.parse(text));
+        const text = Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/, '');
+        const parsed = text.trim() === '' ? {} : JSON.parse(text);
+        if (!isPlainObject(parsed)) return reject(invalid());
+        resolve(parsed);
       } catch {
         reject(invalid());
       }

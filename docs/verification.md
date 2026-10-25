@@ -79,7 +79,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R7 | `panel/test/deploy.test.js` → "[F2-R7] .gitignore raíz contiene la línea panel/data/…" y "[F2-R7] git check-ignore considera ignorado panel/data/auth.json" |
 | R8 | `panel/test/auth-api.test.js` → "[F2-R8] login correcto → 200, cookie con HttpOnly/SameSite=Lax/Path=//Max-Age=2592000 y sesión con expiresAt = now + 30 d"; `panel/test/auth.test.js` → "[F2-R8][F2-R18][F2-R19] createSessionStore…"; `panel/test/rate-limit.test.js` → "[F2-R8][F2-R20] parseCookies y buildSetCookie…" |
 | R9 | `panel/test/auth-api.test.js` → "[F2-R9] contraseña incorrecta → 401 "Contraseña incorrecta", sin Set-Cookie ni sesión nueva" |
-| R10 | `panel/test/auth-api.test.js` → "[F2-R10] login sin password o con password no cadena → 400 siempre (nunca 429)…" |
+| R10 | `panel/test/auth-api.test.js` → "[F2-R10] login sin password o con password no cadena → 400 siempre (nunca 429)…" y "[F2-R10][F2-R3][F2-R29] cuerpos JSON que no son un objeto (null, "", 0, []) → 400 "Cuerpo JSON inválido" en login, setup, change-password y POST /api/projects…" |
 | R11 | `panel/test/auth-api.test.js` → "[F2-R11] login sin auth.json → 409 "Contraseña no configurada"" |
 | R12 | `panel/test/auth.test.js` → "[F2-R12] hashPassword usa scrypt N=16384 r=8 p=1 keylen=64 con salt nuevo; verifyPassword acepta la correcta y rechaza la alterada" |
 | R13 | `panel/test/auth.test.js` → "[F2-R13] verifyPassword con hash de longitud distinta o hex inválido devuelve false sin lanzar", "[F2-R13] signId/verifyToken…" y "[F2-R13] lib/auth.js y lib/sessions.js usan timingSafeEqual" |
@@ -97,7 +97,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R25 | `panel/test/auth-api.test.js` → "[F2-R25] con proxy de confianza cada CF-Connecting-IP tiene su propio contador"; `panel/test/rate-limit.test.js` → "[F2-R25] getClientIp usa CF-Connecting-IP solo con trustProxy…" |
 | R26 | `panel/test/auth-api.test.js` → "[F2-R26] mutaciones sin X-Requested-With → 403 antes de la sesión, sin efectos ni fallo contado" |
 | R27 | `panel/test/auth-api.test.js` → "[F2-R27] change-password → 204, revoca las otras sesiones, conserva la actual y el sessionSecret, cambia salt y hash"; `panel/test/auth.test.js` → "[F2-R20][F2-R27] destroy elimina una sesión y destroyOthers conserva solo la indicada" |
-| R28 | `panel/test/auth-api.test.js` → "[F2-R28] currentPassword incorrecta → 403 con field, auth.json intacto y cuenta para el 429" |
+| R28 | `panel/test/auth-api.test.js` → "[F2-R28] currentPassword incorrecta → 403 con field, auth.json intacto y cuenta para el 429" (incluye: con la IP bloqueada, change-password responde 429 con `Retry-After`) |
 | R29 | `panel/test/auth-api.test.js` → "[F2-R29] newPassword ausente, no cadena o fuera de 10–128 → 400 con field newPassword sin modificar auth.json"; `panel/test/auth.test.js` → "[F2-R3][F2-R29] validatePassword…" |
 | R30 | `panel/test/config.test.js` → "[F2-R30] reset-password.js borra auth.json y sessions.json y lo anuncia (código 0)", "[F2-R30] reset-password.js sin ficheros imprime "No había contraseña configurada."…" y "[F2-R30] package.json declara el script reset-password" |
 | R31 | `panel/test/config.test.js` → "[F2-R31] readConfig con env vacío…", "[F2-R31] readConfig con las cuatro variables definidas…" y "[F2-R31] readConfig con PORT inválido…" |

@@ -70,6 +70,8 @@ test('[F2-R46] install-service.ps1 registra dos tareas S4U con AtStartup+AtLogOn
     assert.ok(ps1.includes(needle), `falta "${needle}" en install-service.ps1`);
   }
   assert.match(ps1, /\[switch\]\s*\$NoTunnel/, 'parámetro -NoTunnel');
+  assert.ok(ps1.includes('set CLOUDFLARED_BIN='), 'la tarea del túnel propaga la ruta resuelta de cloudflared (la tarea S4U no carga el PATH de usuario)');
+  assert.match(ps1, /set PORT=\$Port&&/, 'la tarea propaga PORT');
   assert.match(ps1, /\[int\]\s*\$Port\s*=\s*4310/, 'parámetro -Port con valor por defecto 4310');
   assert.ok(!/nssm/i.test(ps1), 'no debe usar nssm');
   assert.ok(!/Invoke-WebRequest|Start-BitsTransfer|curl\s/i.test(ps1), 'no descarga nada');
