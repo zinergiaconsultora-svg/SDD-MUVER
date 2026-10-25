@@ -5,12 +5,10 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #1 `puesto-de-mando-base` — Puesto de Mando MUVER, fase 1
-- **Estado:** `spec_ready` (specs redactadas, pendiente de aprobación humana)
-- **Tarea actual:** Revisión humana de `specs/puesto-de-mando-base/`
-- **Siguiente paso:** El humano aprueba la spec → cambia el status a `in_progress` en
-  `feature_list.json` → el leader lanza al implementer.
+- **Estado:** `in_progress` (spec aprobada por el humano; implementer trabajando)
+- **Tarea actual:** Implementación TDD de `specs/puesto-de-mando-base/tasks.md` (T1→T30)
+- **Siguiente paso:** Implementer termina → humano revisa tests (puerta 2) → reviewer → done.
 - **Bloqueos / esperando:**
-  - Aprobación humana de la spec (puerta 1).
   - El humano debe aportar el `muver.html` actual de `panel-muver` (se guardará en
     `panel/legacy/muver.html`) y ajustar las rutas locales de `panel/projects.json`.
 

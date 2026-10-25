@@ -5,7 +5,7 @@
       "id": 1,
       "slug": "puesto-de-mando-base",
       "description": "Puesto de mando MUVER (fase 1): panel web que lista los proyectos registrados (app-flyder, appcc-real, crm-zinergia, app-finanzas-restaurante), lee su estado real en disco (feature_list.json, progress, git), muestra tarjetas con semáforo y acceso directo a cada app, permite dar de alta proyectos nuevos desde la propia interfaz y es usable desde el móvil (responsive + accesible en la red local).",
-      "status": "spec_ready",
+      "status": "in_progress",
       "sdd": true
     },
     {
