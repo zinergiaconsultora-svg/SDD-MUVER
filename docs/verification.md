@@ -459,6 +459,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R59 | `panel/test/work-render.test.js` → "[F13-R59] renderModelSelect y renderWorkView…", "[F13-R59] buildRunPayload con y sin model…" |
 | R60 | `panel/test/work-render.test.js` → "[F13-R60] modelLabel, renderRunHeader y renderRunList…" |
 | R61 | `panel/test/summary-api.test.js` → "[F13-R61] /api/attention excluye los runs de resumen…" |
+| R62 | (ajuste de la revisión visual) `panel/test/summary-api.test.js` → "[F13-R62] /api/attention: los worktrees con principal en la lista no repiten su alerta…"; `panel/test/work-render.test.js` → "[F13-R62] renderAttention: «N tareas en curso esperan tu aprobación»…". Ajuste declarado: `work-api.test.js` "[F4-R78][F4-R79]" espera además `tasksAwaiting: 0` |
 | T26 | **MANUAL — pendiente** (R54). El humano, en su PC Windows y en el móvil con su lista real: anotar `claude --version` y confirmar en `claude --help` `--model`, `--tools`, `--disallowedTools`, `--max-turns` y `--permission-mode default`; worktrees del CRM como "N tareas en curso" y en "Tareas en curso" del detalle; filas con resumen de una línea ≤ 72 px y ningún «…» en PC ni móvil; resúmenes comprensibles; buscar, filtrar, "Antiguos" y Lista/Tarjetas recordado tras recargar; chat con Haiku y con Opus (modelo en la ejecución, en el historial y recordado); "Generar con Claude" en un proyecto y "Generar resúmenes" con 3 con `git status` limpio después y un fallo que no aparece en "Te necesitan". Resultado: _(por anotar)_ |
 
 ## Qué NO se considera verificado

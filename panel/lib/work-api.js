@@ -602,13 +602,29 @@ export function createWorkApi({
 
   async function attention(res) {
     const catalog = await listCatalog();
-    const projects = catalog
-      .filter((p) => p.status === 'atencion')
-      .map((p) => {
-        const features = (p.sdd && p.sdd.awaitingApproval) || [];
-        const blockReason = p.progress && p.progress.blocked ? p.progress.blockReason : null;
-        return { id: p.id, name: p.name, reason: features.length ? 'spec_ready' : 'bloqueo', features, blockReason };
-      });
+    const alertOf = (p) => {
+      const features = (p.sdd && p.sdd.awaitingApproval) || [];
+      const blockReason = p.progress && p.progress.blocked ? p.progress.blockReason : null;
+      return { features, blockReason, key: JSON.stringify([features.map((f) => [f.id, f.slug]), blockReason]) };
+    };
+    // Feature 13 (R62, design.md §5.11): un worktree cuyo principal está en la lista no genera entrada propia; si su
+    // alerta es distinta de la del principal, suma una "tarea en curso que espera" en la entrada del principal.
+    const byId = new Map(catalog.map((p) => [p.id, p]));
+    const isGroupedTask = (p) => Boolean(p.parentId) && byId.has(p.parentId) && p.parentId !== p.id;
+    const entries = new Map();
+    for (const p of catalog) {
+      if (p.status !== 'atencion' || isGroupedTask(p)) continue;
+      const { features, blockReason } = alertOf(p);
+      entries.set(p.id, { id: p.id, name: p.name, reason: features.length ? 'spec_ready' : 'bloqueo', features, blockReason, tasksAwaiting: 0 });
+    }
+    for (const p of catalog) {
+      if (p.status !== 'atencion' || !isGroupedTask(p)) continue;
+      const parent = byId.get(p.parentId);
+      if (parent.status === 'atencion' && alertOf(parent).key === alertOf(p).key) continue;
+      if (!entries.has(parent.id)) entries.set(parent.id, { id: parent.id, name: parent.name, reason: 'tareas', features: [], blockReason: null, tasksAwaiting: 0 });
+      entries.get(parent.id).tasksAwaiting += 1;
+    }
+    const projects = catalog.filter((p) => entries.has(p.id)).map((p) => entries.get(p.id));
     const names = new Map((await loadSources()).registry.projects.map((p) => [p.id, p.name]));
     for (const p of catalog) names.set(p.id, p.name);
     const since = now() - ATTENTION_WINDOW_MS;

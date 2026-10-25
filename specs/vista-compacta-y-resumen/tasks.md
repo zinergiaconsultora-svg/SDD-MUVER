@@ -75,3 +75,7 @@
 
 - [ ] T26. **[MANUAL — humano, Windows + móvil]** Con su lista real (86 proyectos): anotar `claude --version` y confirmar en `claude --help` `--model`, `--tools`, `--disallowedTools`, `--max-turns` y `--permission-mode default`; ver que los worktrees `…-xxxxxx` del CRM aparecen como "N tareas en curso" bajo su repositorio principal y en su detalle "Tareas en curso"; filas con resumen de una línea ≤ 72 px en el PC y ningún texto cortado con «…» en PC ni móvil; resúmenes comprensibles en los proyectos con README o `package.json`; buscar, filtrar, "Antiguos" y Lista/Tarjetas recordado tras recargar; un chat con Haiku y otro con Opus (modelo visible en la ejecución y en el historial, y recordado al volver); "Generar con Claude" en un proyecto y "Generar resúmenes" con 3, comprobando `git status` limpio en esos proyectos después y que un fallo no aparece en "Te necesitan"; anotar el resultado en `docs/verification.md` (R54).
 - [x] T27. Verificar con `./init.sh` desde la raíz: estructura OK, `npm test` del panel en verde (fases 1–4, feature 14 y feature 13) y `node sdd-lint.js` con 0 errores y 0 advertencias (R53).
+
+## Ajuste de la revisión visual
+
+- [x] T28. Tests (integración en `panel/test/summary-api.test.js` y unitario de `renderAttention` en `panel/test/work-render.test.js`) e implementación de "Te necesitan" agrupado por principal en `panel/lib/work-api.js` y `panel/public/work.js` según design.md §5.11; fila en `docs/verification.md` y captura `f13-list-1280-light.png` regenerada (R62).

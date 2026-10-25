@@ -448,6 +448,9 @@ export function renderAttention(attention, now = Date.now()) {
       reasons.push(`Spec lista para aprobar: ${p.features.map((f) => `#${escapeHtml(f.id)} ${escapeHtml(f.slug)}`).join(', ')}`);
     }
     if (p.blockReason) reasons.push(`Bloqueo: ${escapeHtml(p.blockReason)}`);
+    // Feature 13 (R62): las tareas en curso (worktrees) del principal con una alerta distinta, en una sola línea.
+    const tasks = Number(p.tasksAwaiting) || 0;
+    if (tasks > 0) reasons.push(tasks === 1 ? '1 tarea en curso espera tu aprobación' : `${tasks} tareas en curso esperan tu aprobación`);
     return `<li class="attention-item">
         <strong>${escapeHtml(p.name)}</strong>
         <p>${reasons.join(' · ')}</p>

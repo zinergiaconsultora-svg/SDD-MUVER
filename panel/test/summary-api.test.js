@@ -859,3 +859,40 @@ test('[F13-R19] audit.log del lote: summary.batch con detail.count, summary.gene
   assert.deepEqual(ends, done.items.map((i) => i.runId).sort());
   for (const line of audit) assert.ok(!JSON.stringify(line).includes(SUMMARY_PROMPT.slice(0, 121)));
 });
+
+// ======================= Ajuste de la revisión visual: "Te necesitan" agrupado (R62) =======================
+
+test('[F13-R62] /api/attention: los worktrees con principal en la lista no repiten su alerta; distinta → tasksAwaiting; runs intactos', { skip: skipNoGit }, async () => {
+  const spec = (slug) => JSON.stringify({ features: [{ id: 1, slug, status: 'spec_ready', description: 'x' }] });
+  const repo = await makeRepoWithWorktrees(['igual-uno-aaaaaa', 'igual-dos-bbbbbb', 'distinta-cccccc']);
+  cleanup.push(repo.base);
+  await fs.writeFile(path.join(repo.main, 'feature_list.json'), spec('alta-cliente'));
+  await fs.writeFile(path.join(repo.worktrees['igual-uno-aaaaaa'], 'feature_list.json'), spec('alta-cliente'));
+  await fs.writeFile(path.join(repo.worktrees['igual-dos-bbbbbb'], 'feature_list.json'), spec('alta-cliente'));
+  await fs.writeFile(path.join(repo.worktrees['distinta-cccccc'], 'feature_list.json'), spec('facturas'));
+  const other = await makeRepoWithWorktrees(['huerfana-dddddd'], { mainName: 'fuera' });
+  cleanup.push(other.base);
+  await fs.writeFile(path.join(other.worktrees['huerfana-dddddd'], 'feature_list.json'), spec('otra'));
+  const ctx = await setup({
+    entries: [
+      { id: 'crm', name: 'CRM', path: repo.main },
+      { id: 'igual-uno', name: 'igual-uno', path: repo.worktrees['igual-uno-aaaaaa'] },
+      { id: 'igual-dos', name: 'igual-dos', path: repo.worktrees['igual-dos-bbbbbb'] },
+      { id: 'distinta', name: 'distinta', path: repo.worktrees['distinta-cccccc'] },
+      { id: 'huerfana', name: 'huerfana', path: other.worktrees['huerfana-dddddd'] },
+    ],
+  });
+  const run = await ctx.post('/api/projects/igual-uno/runs', { prompt: 'Falla [[error]]' });
+  assert.equal(run.status, 202, run.text);
+  await waitForRun(ctx.app, ctx.cookie, run.json.runId);
+  const r = await ctx.authed('/api/attention');
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual(r.json.projects.map((p) => [p.id, p.reason, p.tasksAwaiting]).sort(), [['crm', 'spec_ready', 1], ['huerfana', 'spec_ready', 0]]);
+  assert.deepEqual(r.json.runs.map((x) => x.runId), [run.json.runId], 'el run del worktree sigue apareciendo');
+
+  // Principal sin alerta propia: aparece solo por sus tareas.
+  await fs.writeFile(path.join(repo.main, 'feature_list.json'), JSON.stringify({ features: [] }));
+  const only = await ctx.authed('/api/attention');
+  const crm = only.json.projects.find((p) => p.id === 'crm');
+  assert.deepEqual([crm.reason, crm.features, crm.blockReason, crm.tasksAwaiting], ['tareas', [], null, 3]);
+});

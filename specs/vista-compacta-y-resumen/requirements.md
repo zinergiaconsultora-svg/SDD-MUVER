@@ -263,7 +263,12 @@
 - **R61.** Cuando una petición autenticada hace `GET /api/attention`, el sistema debe excluir de `runs` los runs con `action: "summary"` en cualquier estado, y el fallo de una generación se debe ver solo en el historial del propio proyecto.
   - *Cómo se prueba:* test de integración con un run de resumen `failed` (escenario de error del CLI falso) y un chat `failed`: `/api/attention` trae solo el chat y `GET /api/projects/:id/runs` trae los dos.
 
-## Supuestos y dudas para el leader (no inventados: a confirmar con el humano)
+## L. Ajuste de la revisión visual (antes de la prueba del humano)
+
+- **R62.** Cuando una petición autenticada hace `GET /api/attention`, el sistema no debe generar entrada propia de `projects` (spec lista o bloqueo) para un worktree cuyo repositorio principal está en la lista, debe mostrar una sola vez la alerta que el worktree comparte con su principal y debe sumar en la entrada del principal (creándola si hace falta) `tasksAwaiting` = número de sus worktrees con una alerta distinta, que la portada muestra como "N tareas en curso esperan tu aprobación"; los worktrees sin principal en la lista y todos los `runs` (también los de worktrees) se siguen mostrando como antes.
+  - *Cómo se prueba:* test de integración con un principal y tres worktrees reales (dos con la misma spec lista que el principal y uno con otra), un worktree de un principal ausente y un run fallido de un worktree: una sola entrada del principal con `tasksAwaiting: 1`, la entrada del grupo virtual y el run; y test unitario puro de `renderAttention` con `tasksAwaiting` (singular y plural) y de un principal que solo aparece por sus tareas.
+
+ (no inventados: a confirmar con el humano)
 
 - **S1 — Flags del CLI (verificadas en la doc oficial `code.claude.com/docs/en/cli-reference` el 2026-10-25).** `--model` admite los alias `sonnet`, `opus`, `haiku` (y `fable`, que no se ofrece) o un nombre completo; `--permission-mode` admite `default`; `--max-turns` existe en modo `-p`; `--tools` restringe las herramientas disponibles; `--disallowedTools` con un nombre suelto quita la herramienta del contexto. Todas viven en `CLI_FLAGS`/`CLI_MODELS`; se confirman con `claude --help` en la tarea manual por si la versión del humano difiere.
 - **S2 — Resuelto por el humano:** los runs de resumen no aparecen en "Te necesitan" (sección K).

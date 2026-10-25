@@ -520,8 +520,8 @@ test('[F4-R78][F4-R79] GET /api/attention y POST /dismiss', async () => {
   const r = await ctx.authed('/api/attention');
   assert.equal(r.status, 200);
   assert.deepEqual(r.json.projects.map((p) => p.id).sort(), ['bloqueado', 'spec']);
-  assert.deepEqual(r.json.projects.find((p) => p.id === 'spec'), { id: 'spec', name: 'Spec', reason: 'spec_ready', features: [{ id: 4, slug: 'puesto-de-mando-trabajar' }], blockReason: null });
-  assert.deepEqual(r.json.projects.find((p) => p.id === 'bloqueado'), { id: 'bloqueado', name: 'Bloqueado', reason: 'bloqueo', features: [], blockReason: 'Esperando credenciales del banco' });
+  assert.deepEqual(r.json.projects.find((p) => p.id === 'spec'), { id: 'spec', name: 'Spec', reason: 'spec_ready', features: [{ id: 4, slug: 'puesto-de-mando-trabajar' }], blockReason: null, tasksAwaiting: 0 }); // F13-R62: campo nuevo (ajuste declarado)
+  assert.deepEqual(r.json.projects.find((p) => p.id === 'bloqueado'), { id: 'bloqueado', name: 'Bloqueado', reason: 'bloqueo', features: [], blockReason: 'Esperando credenciales del banco', tasksAwaiting: 0 });
   // Corrección T36: un succeeded con denegaciones aparece como aviso informativo; el needs_permission como fallo.
   assert.deepEqual(r.json.runs.map((x) => x.runId), [info.json.runId, denied.json.runId]);
   const item = r.json.runs.find((x) => x.runId === denied.json.runId);

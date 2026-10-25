@@ -501,6 +501,17 @@ exportada también como `CMD_REPO_LAYOUT`. `getGitInfo` no la usa.
   `runs.startClaude({ project: { id: merged.id, dir }, prompt, session: { mode: 'new' }, action, label,
   profile: 'readonly', claudeCommand: command, auditContext })`. No pasa por `gateExec` (lo hace quien lo llama).
 
+### 5.11 Ajuste de la revisión visual (R62): "Te necesitan" agrupado
+
+Tras la comprobación visual, cada worktree repetía en "Te necesitan" la misma "Spec lista para aprobar" de su principal
+(cada worktree lleva su copia de `feature_list.json`). En `attention` (`lib/work-api.js`), sobre la lista ya construida
+por `listCatalog` (que trae `parentId`): un elemento en `atencion` con `parentId` presente en la lista no genera entrada
+propia; si su alerta (`features` + `blockReason`) es igual a la del principal no suma nada; si es distinta, suma 1 a
+`tasksAwaiting` del principal (si el principal no está en `atencion`, se crea su entrada con `reason: "tareas"`,
+`features: []`, `blockReason: null`). Todas las entradas llevan `tasksAwaiting` (0 por defecto). Los worktrees sin
+principal en la lista (grupos virtuales, principal oculto) y los `runs` no cambian. `renderAttention` (`public/work.js`)
+añade "1 tarea en curso espera tu aprobación" / "N tareas en curso esperan tu aprobación".
+
 ## 6. Frontend
 
 ### 6.1 `index.html` (dentro de `#list-view`, entre `#attention` y `#projects`)

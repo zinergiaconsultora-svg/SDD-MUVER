@@ -294,7 +294,7 @@ test('[F13-R52] docs/architecture.md y docs/verification.md documentan la featur
     if (entry.endsWith('.js')) testsText.push(await read(path.join(PANEL_DIR, 'test', entry)));
   }
   const allTests = testsText.join('\n');
-  for (let n = 1; n <= 61; n++) {
+  for (let n = 1; n <= 62; n++) {
     const row = new RegExp(`^\\| R${n} \\|(.*)$`, 'm').exec(section);
     assert.ok(row, `fila F13 de R${n}`);
     if (n === 53 || n === 54) continue; // R53 = ./init.sh completo; R54 = comprobación manual (T26)

@@ -511,3 +511,13 @@ test('[F13-R60] modelLabel, renderRunHeader y renderRunList con model: "opus", n
   assert.ok(html.includes('<span class="run-model">Modelo por defecto</span>'));
   assert.equal(html.split('class="run-model"').length - 1, 2, 'el run antiguo sin campo no muestra modelo');
 });
+
+test('[F13-R62] renderAttention: "N tareas en curso esperan tu aprobación" y principal que solo aparece por sus tareas', () => {
+  const one = renderAttention({ projects: [{ id: 'crm', name: 'CRM', reason: 'spec_ready', features: [{ id: 1, slug: 'alta' }], blockReason: null, tasksAwaiting: 1 }], runs: [] }, NOW);
+  assert.ok(one.includes('Spec lista para aprobar: #1 alta · 1 tarea en curso espera tu aprobación'));
+  const many = renderAttention({ projects: [{ id: 'crm', name: 'CRM', reason: 'tareas', features: [], blockReason: null, tasksAwaiting: 3 }], runs: [] }, NOW);
+  assert.ok(many.includes('<p>3 tareas en curso esperan tu aprobación</p>'));
+  assert.ok(many.includes('data-action="open-work" data-id="crm"'));
+  const none = renderAttention({ projects: [{ id: 'a', name: 'A', reason: 'spec_ready', features: [{ id: 2, slug: 'x' }], blockReason: null, tasksAwaiting: 0 }], runs: [] }, NOW);
+  assert.ok(!none.includes('tarea en curso'));
+});

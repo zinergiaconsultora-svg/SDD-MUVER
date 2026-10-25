@@ -297,7 +297,9 @@
   `--model <alias>` solo con un valor de la lista, justo antes de `--allowedTools`; "Por defecto" no pasa la flag. El
   modelo se recuerda por proyecto en `model` del registro y se guarda en `RunMeta.model` (`null` = por defecto).
 - **Feature 13 — "Te necesitan":** los runs de resumen nunca aparecen en la cola (ni fallidos); se ven en el historial
-  del proyecto y en el estado del lote.
+  del proyecto y en el estado del lote. Ajuste de la revisión visual (R62): un worktree cuyo principal está en la lista
+  no genera entrada propia por spec lista o bloqueo; la alerta común se muestra una vez y las distintas se suman en
+  `tasksAwaiting` del principal ("N tareas en curso esperan tu aprobación"); sus runs siguen apareciendo.
 - **Feature 13 — regla "nada recortado":** ningún texto de la lista, las tarjetas ni el detalle se oculta con «…»,
   `text-overflow`, `line-clamp` ni `max-height`; los resúmenes se acotan en origen (una frase, cortada en palabra
   entera) y la fila crece si hace falta (una fila con resumen de una línea mide ≤ 72 px en escritorio).
