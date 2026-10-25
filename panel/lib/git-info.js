@@ -12,7 +12,8 @@ export const GIT_COMMANDS = Object.freeze([
   Object.freeze(['rev-parse', '--abbrev-ref', 'HEAD']),
   Object.freeze(['log', '-1', '--format=%H%x1f%cI%x1f%s']),
   Object.freeze(['log', '-10', '--format=%H%x1f%cI%x1f%s']),
-  Object.freeze(['status', '--porcelain']),
+  // Fase 4 (F4-R61, mejora M4): sin tomar el bloqueo opcional del índice mientras Claude trabaja en el repo.
+  Object.freeze(['--no-optional-locks', 'status', '--porcelain']),
 ]);
 
 const [CMD_IS_REPO, CMD_BRANCH, CMD_LAST_COMMIT, CMD_RECENT_COMMITS, CMD_STATUS] = GIT_COMMANDS;

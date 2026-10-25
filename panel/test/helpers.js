@@ -11,6 +11,9 @@ const execFileAsync = promisify(execFile);
 
 export const PANEL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const PUBLIC_DIR = path.join(PANEL_DIR, 'public');
+/** CLI de Claude falso (fase 4, design.md §8.1): ningún test lanza el `claude` real. */
+export const FAKE_CLAUDE = path.join(PANEL_DIR, 'test', 'fixtures', 'fake-claude.js');
+export const FAKE_COMMAND = path.join(PANEL_DIR, 'test', 'fixtures', 'fake-command.js');
 
 /** Crea un directorio temporal único dentro de os.tmpdir(). */
 export async function makeTempDir(prefix = 'muver-test-') {
@@ -82,18 +85,30 @@ export async function writeRegistry(file, projects) {
  * escribe `auth.json` con esa contraseña antes de arrancar. Acepta `now`, `trustProxy`, `secureCookies`.
  * Fase 3: `claudeHome` (por defecto un directorio temporal VACÍO, para que ningún test vea el ~/.claude real
  * de la máquina → Claude no disponible) y `claudeCacheTtlMs` (por defecto 0: cada GET refleja los fixtures).
- * Devuelve { server, baseUrl, dataDir, claudeHome, close, login(password?) → cabecera Cookie }.
+ * Fase 4: por defecto `claudeCommand` es el CLI falso y `extraEnv.FAKE_CLAUDE_LOG` un fichero temporal (`fakeLog`).
+ * Devuelve { server, baseUrl, dataDir, claudeHome, fakeLog, close, login(password?) → cabecera Cookie }.
  */
 export async function startApp(options = {}) {
   const { createApp } = await import('../lib/app.js');
-  const { password, dataDir: givenDataDir, claudeHome: givenClaudeHome, claudeCacheTtlMs = 0, ...rest } = options;
+  const { password, dataDir: givenDataDir, claudeHome: givenClaudeHome, claudeCacheTtlMs = 0, extraEnv: givenExtraEnv, ...rest } = options;
   const dataDir = givenDataDir || (await makeTempDir('muver-data-'));
   const claudeHome = givenClaudeHome || (await makeTempDir('muver-claude-vacio-'));
   if (password !== undefined) {
     const { createAuthRecord, saveAuth } = await import('../lib/auth.js');
     await saveAuth(path.join(dataDir, 'auth.json'), await createAuthRecord(password));
   }
-  const server = createApp({ publicDir: PUBLIC_DIR, dataDir, claudeHome, claudeCacheTtlMs, ...rest });
+  const logDir = await makeTempDir('muver-fakelog-');
+  const extraEnv = { FAKE_CLAUDE_LOG: path.join(logDir, 'fake-claude.log'), ...(givenExtraEnv || {}) };
+  const fakeLog = extraEnv.FAKE_CLAUDE_LOG;
+  const server = createApp({
+    publicDir: PUBLIC_DIR,
+    dataDir,
+    claudeHome,
+    claudeCacheTtlMs,
+    claudeCommand: { file: process.execPath, prefixArgs: [FAKE_CLAUDE] },
+    extraEnv,
+    ...rest,
+  });
   await new Promise((resolve) => server.listen(0, '0.0.0.0', resolve));
   const { port } = server.address();
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -102,9 +117,11 @@ export async function startApp(options = {}) {
     baseUrl,
     dataDir,
     claudeHome,
+    fakeLog,
     close: async () => {
       await new Promise((resolve) => server.close(resolve));
       if (!givenClaudeHome) await fs.rm(claudeHome, { recursive: true, force: true });
+      await fs.rm(logDir, { recursive: true, force: true });
     },
     async login(pwd = password, init = {}) {
       const r = await request(baseUrl, '/api/auth/login', { method: 'POST', body: JSON.stringify({ password: pwd }), ...init });

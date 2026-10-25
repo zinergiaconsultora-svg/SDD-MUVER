@@ -170,7 +170,8 @@ test('[F2-R8] login correcto → 200, cookie con HttpOnly/SameSite=Lax/Path=//Ma
   assert.ok(!cookie.attributes.has('secure'), 'sin Secure en HTTP plano');
   const id = cookie.value.split('.')[0];
   const saved = await readJson(path.join(app.dataDir, 'sessions.json'));
-  assert.deepEqual(saved.sessions[id], { createdAt: T0, lastSeenAt: T0, expiresAt: T0 + 30 * DAY });
+  // Fase 4 (F4-R69, design.md D13): el login fija además reauthAt = ahora.
+  assert.deepEqual(saved.sessions[id], { createdAt: T0, lastSeenAt: T0, expiresAt: T0 + 30 * DAY, reauthAt: T0 });
 });
 
 test('[F2-R9] contraseña incorrecta → 401 "Contraseña incorrecta", sin Set-Cookie ni sesión nueva', async () => {

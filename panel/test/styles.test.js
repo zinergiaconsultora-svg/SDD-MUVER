@@ -168,3 +168,50 @@ test('[F3-R51] styles.css define .badge.source-claude, .card.pinned, .card.is-hi
   assert.match(base, /:root\s*\{[^}]*--claude:/s, '--claude en tema claro');
   assert.match(mediaBlock(css, '@media (prefers-color-scheme: dark)'), /--claude:/, '--claude en tema oscuro');
 });
+
+// ---------- Fase 4: vista "Trabajar", "Te necesitan" y diálogos (F4-R91) ----------
+
+test('[F4-R91] index.html: #attention dentro de #list-view antes de #projects y diálogos <dialog> de confirmación y contraseña', () => {
+  const listStart = indexHtml.indexOf('id="list-view"');
+  const listEnd = indexHtml.indexOf('id="detail"');
+  const attention = indexHtml.indexOf('id="attention"');
+  const projects = indexHtml.indexOf('id="projects"');
+  assert.ok(attention > listStart && attention < listEnd, '#attention dentro de #list-view');
+  assert.ok(attention < projects, '#attention antes de #projects');
+  assert.match(indexHtml, /<section[^>]*id="attention"[^>]*class="attention"[^>]*hidden|<section[^>]*class="attention"[^>]*id="attention"[^>]*hidden/, '#attention es una sección .attention oculta al principio');
+  assert.match(indexHtml, /<dialog[^>]*id="confirm-dialog"/);
+  assert.match(indexHtml, /<dialog[^>]*id="reauth-dialog"/);
+  const reauth = indexHtml.slice(indexHtml.indexOf('id="reauth-dialog"'), indexHtml.indexOf('</dialog>', indexHtml.indexOf('id="reauth-dialog"')));
+  assert.ok(reauth.includes('type="password"'), 'campo de contraseña');
+  assert.ok(reauth.includes('role="alert"'), 'mensaje de error accesible');
+  assert.ok(reauth.includes('Confirmar') && reauth.includes('Cancelar'));
+  const confirm = indexHtml.slice(indexHtml.indexOf('id="confirm-dialog"'), indexHtml.indexOf('</dialog>', indexHtml.indexOf('id="confirm-dialog"')));
+  assert.ok(confirm.includes('Confirmar') && confirm.includes('Cancelar'));
+});
+
+test('[F4-R91] app.js importa work.js', async () => {
+  const appJs = await fs.readFile(path.join(PUBLIC_DIR, 'app.js'), 'utf8');
+  assert.match(appJs, /from '\.\/work\.js'/);
+  assert.ok(appJs.includes('EventSource'), 'salida en vivo con EventSource');
+});
+
+test('[F4-R91] styles.css define los selectores de la fase 4 con colores en variables para claro y oscuro', () => {
+  for (const selector of ['.run-log', '.diff .add', '.diff .del', '.diff .hunk', '.diff .meta', '.attention', '.work-actions', '.ev-text', '.ev-tool', '.ev-error', '.ev-output', '.ev-notice']) {
+    const escaped = selector.replace(/\./g, '\\.').replace(/ /g, '\\s+');
+    assert.match(css, new RegExp(`${escaped}[^{]*\\{[^}]*:`, 's'), `falta ${selector}`);
+  }
+  for (const state of ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'timeout', 'needs_permission']) {
+    assert.match(css, new RegExp(`\\.state-${state}[^{]*\\{[^}]*:`, 's'), `falta .state-${state}`);
+  }
+  assert.match(css, /\.run-log\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(css, /\.run-log\s*\{[^}]*max-height:\s*60vh/s);
+  assert.match(css, /\.run-log\s*\{[^}]*monospace/s);
+  assert.match(css, /dialog\s*\{[^}]*min\(92vw,\s*34rem\)/s);
+  const base = baseCss(css);
+  const dark = mediaBlock(css, '@media (prefers-color-scheme: dark)');
+  for (const variable of ['--diff-add', '--diff-del', '--state-needs_permission']) {
+    assert.match(base, new RegExp(`:root\\s*\\{[^}]*${variable}:`, 's'), `${variable} en tema claro`);
+    assert.ok(dark.includes(`${variable}:`), `${variable} en tema oscuro`);
+  }
+  assert.match(css, /\.prompt-form textarea[^{]*\{[^}]*width:\s*100%/s, 'caja de mensaje a todo el ancho');
+});

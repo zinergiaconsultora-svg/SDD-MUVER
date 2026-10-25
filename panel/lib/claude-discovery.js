@@ -218,7 +218,7 @@ export async function parseSessionFile(file, { maxFileBytes = MAX_SESSION_FILE_B
     for (const line of content.split('\n')) accumulateLine(acc, line);
   }
 
-  const title = acc.lastSummary ?? (acc.firstUserText !== null ? clipTitle(acc.firstUserText) : null) ?? id;
+  const title = (acc.lastSummary !== null ? clipTitle(acc.lastSummary) : null) ?? (acc.firstUserText !== null ? clipTitle(acc.firstUserText) : null) ?? id;
   const startedAt = acc.minTs !== null ? new Date(acc.minTs).toISOString() : mtimeIso;
   const lastActivityAt = truncated ? mtimeIso : acc.maxTs !== null ? new Date(acc.maxTs).toISOString() : mtimeIso;
   return {

@@ -1,4 +1,4 @@
-// Tests de lib/registry.js — R17, R18, R19, R21; fase 3: F3-R32, F3-R34, F3-R36
+// Tests de lib/registry.js — R17, R18, R19, R21; fase 3: F3-R32, F3-R34, F3-R36; fase 4: F4-R62, F4-R66
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -14,6 +14,8 @@ import {
   validatePatch,
   upsertSettings,
   PATCHABLE_FIELDS,
+  isHttpUrl,
+  execSettingsOf,
 } from '../lib/registry.js';
 import { makeTempDir, removeDir } from './helpers.js';
 
@@ -174,7 +176,8 @@ test('[F3-R34] upsertSettings sustituye por id o añade al final sin mutar el re
 });
 
 test('[F3-R34] validatePatch acepta cada campo válido, recorta e ignora campos ajenos', () => {
-  assert.deepEqual(PATCHABLE_FIELDS, ['name', 'appUrl', 'repoUrl', 'tags', 'hidden', 'pinned']);
+  // Fase 4 (F4-R62): se añaden allowedCommands y testCommand a la lista de campos admitidos.
+  assert.deepEqual(PATCHABLE_FIELDS, ['name', 'appUrl', 'repoUrl', 'tags', 'hidden', 'pinned', 'allowedCommands', 'testCommand']);
   const r = validatePatch({ name: '  Nuevo  ', appUrl: ' http://localhost:5173 ', repoUrl: '', tags: [' web ', '', 'crm'], hidden: false, pinned: true, path: '/otra', id: 'x' });
   assert.deepEqual(r, { ok: true, changes: { name: 'Nuevo', appUrl: 'http://localhost:5173', repoUrl: '', tags: ['web', 'crm'], hidden: false, pinned: true } });
   assert.deepEqual(validatePatch({ pinned: false }), { ok: true, changes: { pinned: false } });
@@ -198,4 +201,66 @@ test('[F3-R36] validatePatch rechaza cada campo inválido con el texto y field d
   for (const body of [{}, { path: '/otra' }, { id: 'x' }]) {
     assert.deepEqual(validatePatch(body), { ok: false, status: 400, error: 'Nada que actualizar' }, JSON.stringify(body));
   }
+});
+
+// ---------- Fase 4: ajustes de ejecución y URLs http(s) (F4-R62, F4-R66) ----------
+
+const URL_ERROR = 'La URL debe empezar por http:// o https://';
+
+test('[F4-R62] validatePatch: allowedCommands válidos (recorte, colapso de espacios, sin duplicados) y testCommand', () => {
+  const r = validatePatch({ allowedCommands: [' npm test ', 'npm   run build', 'npm test'], testCommand: '  node "mi script.js" --x  ' });
+  assert.deepEqual(r, { ok: true, changes: { allowedCommands: ['npm test', 'npm run build'], testCommand: 'node "mi script.js" --x' } });
+  assert.deepEqual(validatePatch({ allowedCommands: [], testCommand: '' }), { ok: true, changes: { allowedCommands: [], testCommand: '' } });
+  assert.deepEqual(validatePatch({ testCommand: '   ' }), { ok: true, changes: { testCommand: '' } });
+});
+
+test('[F4-R62] validatePatch: allowedCommands y testCommand inválidos con field y texto de design.md §4.4', () => {
+  const invalidCommand = 'Comando no válido: solo letras, números, espacios y . _ : / = @ + - (máx. 200)';
+  const cases = [
+    [{ allowedCommands: ['npm test && rm'] }, invalidCommand, 'allowedCommands'],
+    [{ allowedCommands: ['a(b)'] }, invalidCommand, 'allowedCommands'],
+    [{ allowedCommands: [''] }, invalidCommand, 'allowedCommands'],
+    [{ allowedCommands: 'npm test' }, invalidCommand, 'allowedCommands'],
+    [{ allowedCommands: [5] }, invalidCommand, 'allowedCommands'],
+    [{ allowedCommands: Array.from({ length: 31 }, (_, i) => `cmd${i}`) }, 'Como mucho 30 comandos autorizados', 'allowedCommands'],
+    [{ testCommand: '"sin cerrar' }, 'Comando de tests no válido: comillas sin cerrar', 'testCommand'],
+    [{ testCommand: 'a\nb' }, 'Comando de tests no válido: contiene saltos de línea o NUL', 'testCommand'],
+    [{ testCommand: 5 }, 'Comando de tests no válido: vacío', 'testCommand'],
+  ];
+  for (const [body, error, field] of cases) {
+    assert.deepEqual(validatePatch(body), { ok: false, status: 400, error, field }, JSON.stringify(body).slice(0, 80));
+  }
+  assert.equal(validatePatch({ allowedCommands: Array.from({ length: 30 }, (_, i) => `cmd${i}`) }).ok, true, '30 entradas se admiten');
+});
+
+test('[F4-R66] isHttpUrl y validatePatch con URLs que no son http(s)', () => {
+  for (const ok of ['', 'https://ok.example', 'http://localhost:3000', 'HTTPS://X.example/a?b']) assert.equal(isHttpUrl(ok), true, ok);
+  for (const bad of ['javascript:alert(1)', 'JaVaScRiPt:x', 'ftp://x', 'no es url', 'data:text/html,x', 5]) assert.equal(isHttpUrl(bad), false, String(bad));
+  assert.deepEqual(validatePatch({ appUrl: 'javascript:alert(1)' }), { ok: false, status: 400, error: URL_ERROR, field: 'appUrl' });
+  assert.deepEqual(validatePatch({ repoUrl: 'ftp://x' }), { ok: false, status: 400, error: URL_ERROR, field: 'repoUrl' });
+  assert.deepEqual(validatePatch({ repoUrl: 'no es url' }), { ok: false, status: 400, error: URL_ERROR, field: 'repoUrl' });
+  assert.deepEqual(validatePatch({ appUrl: '', repoUrl: ' https://ok.example ' }), { ok: true, changes: { appUrl: '', repoUrl: 'https://ok.example' } });
+});
+
+test('[F4-R66] validateNewProject rechaza appUrl/repoUrl que no son http(s) y acepta vacías o https', async () => {
+  const dir = await makeTempDir();
+  for (const [field, value] of [['appUrl', 'javascript:alert(1)'], ['repoUrl', 'ftp://x'], ['appUrl', 'no es url']]) {
+    const r = await validateNewProject({ name: 'Nuevo', path: dir, [field]: value }, []);
+    assert.deepEqual(r, { ok: false, status: 400, error: URL_ERROR, field }, `${field}=${value}`);
+  }
+  const ok = await validateNewProject({ name: 'Nuevo', path: dir, appUrl: '', repoUrl: 'https://ok.example' }, []);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.project.repoUrl, 'https://ok.example');
+  await removeDir(dir);
+});
+
+test('[F4-R62] normalizeSettings conserva allowedCommands/testCommand válidos y execSettingsOf da los valores por defecto', () => {
+  const n = normalizeSettings({ id: 'a', allowedCommands: ['npm test', 'a(b)', 3], testCommand: 'npm test' });
+  assert.deepEqual(n.allowedCommands, ['npm test']);
+  assert.equal(n.testCommand, 'npm test');
+  assert.deepEqual(normalizeSettings({ allowedCommands: 'x', testCommand: 7 }).allowedCommands, []);
+  assert.equal(normalizeSettings({ allowedCommands: 'x', testCommand: 7 }).testCommand, '');
+  assert.deepEqual(execSettingsOf(null), { allowedCommands: [], testCommand: '' });
+  assert.deepEqual(execSettingsOf({ id: 'a' }), { allowedCommands: [], testCommand: '' });
+  assert.deepEqual(execSettingsOf({ allowedCommands: ['npm test', 'npm test', 'x;y'], testCommand: ' make ' }), { allowedCommands: ['npm test'], testCommand: 'make' });
 });

@@ -558,3 +558,24 @@ test('[F3-R50] relativeTime: ahora mismo, minutos, horas, días y fecha inválid
   assert.equal(relativeTime(twoDays, NOW), 'hace 2 días');
   assert.equal(relativeTime('basura', NOW), 'fecha desconocida');
 });
+
+// ---------- Fase 4: mejora M5 de la fase 3 (F4-R90) ----------
+
+test('[F4-R90] renderProjectCard y renderProjectDetail no generan href con URLs que no sean http(s)', async () => {
+  const { safeHttpUrl } = await import('../public/render.js');
+  for (const bad of ['javascript:alert(1)', 'JaVaScRiPt:x', ' javascript:x', 'data:text/html,x', 'ftp://x']) {
+    const project = { ...FULL_PROJECT, appUrl: bad, repoUrl: bad };
+    for (const html of [renderProjectCard(project, NOW), renderProjectDetail({ ...project, sdd: { ...project.sdd, features: [] }, progress: { ...project.progress, text: null }, git: { ...project.git, recentCommits: [], dirtyFiles: [] } }, NOW)]) {
+      assert.ok(!/href="[^"]*(javascript|data:|ftp:)/i.test(html), `href peligroso con ${bad}`);
+    }
+    const card = renderProjectCard(project, NOW);
+    assert.ok(card.includes('aria-disabled="true"'), '"Abrir app" deshabilitado');
+    assert.ok(!card.includes('>Repositorio<'), 'sin enlace al repositorio');
+    assert.equal(safeHttpUrl(bad), '');
+  }
+  const good = renderProjectCard({ ...FULL_PROJECT, appUrl: 'https://ok.example', repoUrl: 'https://ok.example/repo' }, NOW);
+  assert.ok(good.includes('href="https://ok.example"'));
+  assert.ok(good.includes('href="https://ok.example/repo"'));
+  assert.equal(safeHttpUrl('HTTP://ok.example'), 'HTTP://ok.example');
+  assert.equal(safeHttpUrl(5), '');
+});

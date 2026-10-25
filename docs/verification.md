@@ -16,7 +16,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 
 ## Cómo se ejecutan
 
-- Todo se lanza desde `init.sh` (paso 3: `(cd panel && npm test)`, que ejecuta `node --test` sobre `panel/test/*.test.js`; también puede lanzarse a mano con `cd panel && npm test`). Los tests de la fase 1 llevan el prefijo `[R<n>]`, los de la fase 2 `[F2-R<n>]` y los de la fase 3 `[F3-R<n>]` (siempre con un `claudeHome` temporal); los de la fase 1 que tocan la API se autentican con la cookie de sesión del `before()` (`F2-R16`).
+- Todo se lanza desde `init.sh` (paso 3: `(cd panel && npm test)`, que ejecuta `node --test` sobre `panel/test/*.test.js`; también puede lanzarse a mano con `cd panel && npm test`). Los tests de la fase 1 llevan el prefijo `[R<n>]`, los de la fase 2 `[F2-R<n>]` y los de la fase 3 `[F3-R<n>]` (siempre con un `claudeHome` temporal) y los de la fase 4 `[F4-R<n>]` (siempre con el CLI de Claude falso `panel/test/fixtures/fake-claude.js`, repos git temporales con un remoto `--bare` local y claves de Cloudflare Access generadas en el test; nunca el `claude` real ni un remoto real); los de la fase 1 que tocan la API se autentican con la cookie de sesión del `before()` (`F2-R16`).
 - Los requisitos **[MANUAL — Windows]** y **[MANUAL — Internet]** de la fase 2 no pueden ejecutarse en el entorno de tests (Linux, sin `cloudflared`): el humano los comprueba siguiendo `docs/acceso-web.md` y anota aquí el resultado.
 - El reviewer ejecuta `init.sh` y exige que esté **todo en verde** antes de aprobar.
 
@@ -182,6 +182,120 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R53 | `panel/test/deploy.test.js` → "[F3-R53] docs/architecture.md documenta la fase 3…" |
 | T23 (UI) | Comprobación automatizada en Linux por el implementer con Chromium headless (Playwright) a 360×640 en tema claro y oscuro sobre fixtures: sin scroll horizontal, badge y línea de sesión, fijar reordena, "Mostrar ocultos (1)" / "Ocultar ocultos", formulario de ajustes → "Ajustes guardados", sin errores de consola. |
 | T27 | **MANUAL — Windows — pendiente del humano**: arrancar el panel en el PC con Claude Code; comprobar que aparecen solos los proyectos abiertos en Claude Code, que las sesiones recientes y sus títulos son reconocibles, que la línea de arranque dice `Claude Code: detectado en C:\Users\…`, poner las rutas reales de los 4 proyectos iniciales en `projects.json` (o fijarlas con el formulario de ajustes) y verificar que se fusionan como un único proyecto con distintivo "Claude Code" (`both`). Confirmar además los supuestos de design.md §9 (orden de `history` y codificación de carpetas). Resultado: _(anotar fecha y resultado)_ |
+
+## Mapa de trazabilidad — Feature 4: `puesto-de-mando-trabajar` (prefijo `[F4-R<n>]`)
+
+> Tests en `panel/test/` (todos con `node --test`, sin dependencias). Los de procesos reales (cancelación con nieto,
+> timeout, cierre del servidor, SSE con `[[hang]]`) se saltan en Windows y allí se cubren con R97. Los de git se
+> saltan si no hay `git`. Cambios declarados en tests de fases anteriores (design.md §8.4 y desviaciones del
+> implementer): `git-info.test.js` (`--no-optional-locks` en `GIT_COMMANDS` y el runner espía), `config.test.js`
+> (`readConfig` incluye los campos nuevos), `registry.test.js` (`PATCHABLE_FIELDS` ampliado) y
+> `auth-api.test.js` (la sesión del login lleva `reauthAt`).
+
+| Requisito | Test(s) que lo verifican |
+|-----------|---------------------------|
+| R1 | `panel/test/config.test.js` → "[F4-R1] readConfig: valores por defecto de la fase 4 con env vacío", "[F4-R1] readConfig: cada variable nueva válida", "[F4-R1] readConfig: valores fuera de rango vuelven al defecto y PANEL_ALLOW_EXEC 0/false…" |
+| R2 | `panel/test/config.test.js` → "[F4-R2] readConfig: cfAccess válido, incompleto y con equipo no válido"; `panel/test/reauth-api.test.js` → "[F4-R2] cfAccess con error: todo por el túnel → 403 "Access mal configurado"; la red loc…" |
+| R3 | `panel/test/config.test.js` → "[F4-R3] buildStartupLines con work: activada + Access, desactivada + sin Access, Access …" |
+| R4 | `panel/test/work-api.test.js` → "[F4-R4] GET /api/work/status: valores por defecto, allowExec false, por el túnel y con u…" |
+| R5 | `panel/test/work-api.test.js` → "[F4-R5][F4-R63] allowExec false: las ocho acciones de ejecución → 403 sin procesos ni fi…" |
+| R6 | `panel/test/work-api.test.js` → "[F4-R6] GET /api/projects/:id/work: con arnés, git, init.sh y allowedCommands; sin nada;…" |
+| R7 | `panel/test/claude-cli.test.js` → "[F4-R7] constantes: CLI_FLAGS, herramientas por defecto, prompts SDD y máximo del prompt", "[F4-R7] buildClaudeArgs en modo new: array exacto con el prompt como último argumento" |
+| R8 | `panel/test/claude-cli.test.js` → "[F4-R8] buildClaudeArgs: --continue y --resume <id> justo antes del prompt; nada en modo…" |
+| R9 | `panel/test/claude-cli.test.js` → "[F4-R9] ningún modo incluye argumentos prohibidos, ni con un prompt igual a uno de ellos", "[F4-R9] estático: el fuente de lib/claude-cli.js solo nombra los argumentos prohibidos e…" |
+| R10 | `panel/test/claude-cli.test.js` → "[F4-R10] buildAllowedTools: [], dos comandos y duplicado de una regla por defecto", "[F4-R10][F4-R62] isValidAllowedCommand" |
+| R11 | `panel/test/claude-cli.test.js` → "[F4-R11] un prompt que empieza por "-" se pasa con un espacio delante" |
+| R12 | `panel/test/claude-cli.test.js` → "[F4-R12] resolveClaudeCommand: .js/.mjs/.cjs → node + fichero; Linux → tal cual; ruta ab…", "[F4-R12] resolveClaudeCommand en Windows: claude.exe en PATH, instalador nativo, npm glo…" |
+| R13 | `panel/test/claude-cli.test.js` → "[F4-R13] escenario ok → session, text, tool, tool, text y result en orden exacto" |
+| R14 | `panel/test/claude-cli.test.js` → "[F4-R14] result con is_error, texto de 3000 caracteres y campos ausentes", "[F4-R14][F4-R24] dos denegaciones en result, una ya emitida como system/permission_denie…", "[F4-R14] denegación con toolName/input alternativos, detalle por defecto y recorte a 200" |
+| R15 | `panel/test/claude-cli.test.js` → "[F4-R15] tool_result de error (1000 caracteres), api_retry, línea no JSON y tipos descon…" |
+| R16 | `panel/test/claude-cli.test.js` → "[F4-R16] summarizeToolInput con cada herramienta, rutas fuera, rutas Windows y recorte a…" |
+| R17 | `panel/test/runs-api.test.js` → "[F4-R17][F4-R23][F4-R34][F4-R38] POST /runs con el escenario ok: 202, argumentos, cwd, e…", "[F4-R17] estático: runs.js lanza sin shell, con stdin ignorado, windowsHide y grupo de p…" |
+| R18 | `panel/test/runs-api.test.js` → "[F4-R18] prompt ausente, no cadena, vacío o de más de 20000 caracteres → 400 sin proceso…" |
+| R19 | `panel/test/runs-api.test.js` → "[F4-R19] proyecto inexistente → 404; manual con ruta inexistente y de Claude no resuelto…" |
+| R20 | `panel/test/runs-api.test.js` → "[F4-R20][F4-R26] un run activo bloquea otro chat y los tests (409 con runId); cancelar m…" |
+| R21 | `panel/test/runs-api.test.js` → "[F4-R21] con maxRuns 1 un run en A hace que B responda 429; tras cancelar A, B → 202" |
+| R22 | `panel/test/runs-api.test.js` → "[F4-R22] sesión new/continue/resume: válida e inválida" |
+| R23 | `panel/test/runs-api.test.js` → "[F4-R17][F4-R23][F4-R34][F4-R38] POST /runs con el escenario ok: 202, argumentos, cwd, e…" |
+| R24 | `panel/test/claude-cli.test.js` → "[F4-R14][F4-R24] dos denegaciones en result, una ya emitida como system/permission_denie…"; `panel/test/runs-api.test.js` → "[F4-R24] escenario denied → needs_permission con permissionDenials exacto" |
+| R25 | `panel/test/runs-api.test.js` → "[F4-R25] escenarios error y crash → failed; ejecutable inexistente → failed con evento e…" |
+| R26 | `panel/test/runs-api.test.js` → "[F4-R20][F4-R26] un run activo bloquea otro chat y los tests (409 con runId); cancelar m…" |
+| R27 | `panel/test/runs-api.test.js` → "[F4-R27] cancelar un run terminado → 409; id bien formado inexistente o mal formado → 404" |
+| R28 | `panel/test/exec-utils.test.js` → "[F4-R28] killProcessTree en Windows: taskkill /PID <pid> /T /F sin shell", "[F4-R28] killProcessTree en Linux: SIGTERM al grupo y SIGKILL a los 5 s si sigue vivo", "[F4-R28] killProcessTree en Linux: si el hijo ya salió no hay SIGKILL; ESRCH no lanza" |
+| R29 | `panel/test/runs-api.test.js` → "[F4-R29] runTimeoutMs 300 con hang → timeout y aviso de límite de tiempo" |
+| R30 | `panel/test/runs-api.test.js` → "[F4-R30] outputLimitBytes 10000 con big: un único aviso, .jsonl acotado, truncated y suc…" |
+| R31 | `panel/test/exec-utils.test.js` → "[F4-R31] createLineSplitter: línea de 250 bytes en tres trozos con máximo 100 → descarta…", "[F4-R31] createLineSplitter: UTF-8 partido entre trozos y línea larga completa en un sol…" |
+| R32 | `panel/test/run-store.test.js` → "[F4-R32] recoverOrphans marca queued/running como failed con endedAt = ahora"; `panel/test/runs-api.test.js` → "[F4-R32] al arrancar, un run running del índice pasa a failed "Interrumpida al reiniciar…" |
+| R33 | `panel/test/runs-api.test.js` → "[F4-R33] al cerrar el servidor se cancelan los runs activos y mueren sus procesos" |
+| R34 | `panel/test/run-store.test.js` → "[F4-R34] newRunId cumple RUN_ID_RE y no se repite", "[F4-R34] create + appendEvent + updateMeta + readEvents sobre un directorio temporal"; `panel/test/runs-api.test.js` → "[F4-R17][F4-R23][F4-R34][F4-R38] POST /runs con el escenario ok: 202, argumentos, cwd, e…" |
+| R35 | `panel/test/run-store.test.js` → "[F4-R35] list con 60 metas devuelve 50, la más reciente primero"; `panel/test/runs-api.test.js` → "[F4-R35][F4-R36] historial con dos terminados y uno activo; GET /api/runs/:runId termina…" |
+| R36 | `panel/test/run-store.test.js` → "[F4-R36] find con id válido, inexistente y con formato inválido"; `panel/test/runs-api.test.js` → "[F4-R35][F4-R36] historial con dos terminados y uno activo; GET /api/runs/:runId termina…" |
+| R37 | `panel/test/run-store.test.js` → "[F4-R37] rotate con keepRuns: 3 y 5 runs → 3 en el índice y sus 3 .jsonl; nunca borra un…" |
+| R38 | `panel/test/runs-api.test.js` → "[F4-R17][F4-R23][F4-R34][F4-R38] POST /runs con el escenario ok: 202, argumentos, cwd, e…" |
+| R39 | `panel/test/runs-api.test.js` → "[F4-R39][F4-R43] SSE durante un run: cabeceras, retry, eventos ya producidos, eventos nu…" |
+| R40 | `panel/test/runs-api.test.js` → "[F4-R40][F4-R41] SSE de un run terminado con Last-Event-ID: 3 empieza en 4 y se cierra t…" |
+| R41 | `panel/test/runs-api.test.js` → "[F4-R40][F4-R41] SSE de un run terminado con Last-Event-ID: 3 empieza en 4 y se cierra t…" |
+| R42 | `panel/test/runs-api.test.js` → "[F4-R42] SSE sin sesión → 401 y con id inexistente → 404 JSON" |
+| R43 | `panel/test/runs-api.test.js` → "[F4-R39][F4-R43] SSE durante un run: cabeceras, retry, eventos ya producidos, eventos nu…" |
+| R44 | `panel/test/sdd-actions.test.js` → "[F4-R44] implement lanza "implementa la siguiente tarea pendiente" en modo new con actio…" |
+| R45 | `panel/test/sdd-actions.test.js` → "[F4-R45] approve-tests lanza "tests aprobados, lanza al reviewer" con --continue; con se…" |
+| R46 | `panel/test/sdd-actions.test.js` → "[F4-R46] botones SDD sin arnés (sin feature_list.json o roto) → 409 sin proceso ni fiche…" |
+| R47 | `panel/test/sdd-actions.test.js` → "[F4-R47] setFeatureStatus con 2 espacios: solo cambia el valor", "[F4-R47] setFeatureStatus con BOM y \\r\\n conserva todos los bytes salvo el valor", "[F4-R47] status antes y después de objetos anidados, clave duplicada y features con elem…", "[F4-R47] approve-spec cambia solo el status (bytes idénticos salvo el valor), sin .tmp y…" |
+| R48 | `panel/test/sdd-actions.test.js` → "[F4-R48] approve-spec: featureId ausente o de tipo no válido → 400; no spec_ready, inexi…" |
+| R49 | `panel/test/sdd-actions.test.js` → "[F4-R49] un escáner defectuoso (locateFn) produce el error de verificación y no devuelve…" |
+| R50 | `panel/test/exec-utils.test.js` → "[F4-R50] stripAnsi elimina colores y secuencias OSC"; `panel/test/work-api.test.js` → "[F4-R50] POST /tests con testCommand ok: run command/tests, salida stdout y stderr sin A…", "[F4-R50] POST /tests con fail 3 → failed con exitCode 3" |
+| R51 | `panel/test/work-api.test.js` → "[F4-R51] sin testCommand usa bash init.sh; sin ninguno → 409" |
+| R52 | `panel/test/exec-utils.test.js` → "[F4-R52] findGitBash prueba en orden y descarta System32/Sysnative" |
+| R53 | `panel/test/exec-utils.test.js` → "[F4-R53] parseCommandLine: casos válidos", "[F4-R53] parseCommandLine: cada error", "[F4-R53] formatCommandLine entrecomilla los argumentos con espacios, vacíos o comillas" |
+| R54 | `panel/test/exec-utils.test.js` → "[F4-R54] resolveExecutable en Windows: node, npm, npx, bash, git (.exe) y yarn (solo .cm…", "[F4-R54] resolveExecutable en Windows: .com antes que .exe, npm sin npm-cli.js y bash si…", "[F4-R54] resolveExecutable fuera de Windows: bash → bashBin o bash, .js → node, resto ta…" |
+| R55 | `panel/test/git-actions.test.js` → "[F4-R55] parsePorcelainZ: modificado, nuevo, renombrado (salta el origen) y nombres con …"; `panel/test/work-api.test.js` → "[F4-R55] GET /changes: modificado, sin seguimiento, renombrado y nombre con espacios y a…"; `panel/test/work-render.test.js` → "[F4-R55] renderChanges lista los ficheros con su estado y botón de diff" |
+| R56 | `panel/test/work-api.test.js` → "[F4-R56] GET /changes/diff: modificado (-antes/+después), sin seguimiento y 300 KB recor…" |
+| R57 | `panel/test/git-actions.test.js` → "[F4-R57] getFileDiff con un fichero que no está en la lista no ejecuta git diff"; `panel/test/work-api.test.js` → "[F4-R57] diff de un fichero no listado (../secreto.txt, sin cambios, sin parámetro) → 40…" |
+| R58 | `panel/test/git-actions.test.js` → "[F4-R58] planCommitPush sin upstream → push -u origin <rama>"; `panel/test/work-api.test.js` → "[F4-R58] commit-push con upstream: add, commit y push al remoto --bare con el mensaje ex…", "[F4-R58] commit-push sin upstream → push -u origin main; remoto inexistente → failed tra…" |
+| R59 | `panel/test/git-actions.test.js` → "[F4-R59] planCommitPush: mensaje vacío, largo o con NUL; sin cambios; HEAD separado o ra…"; `panel/test/work-api.test.js` → "[F4-R59] commit-push: mensaje inválido → 400; sin cambios → 409; HEAD separado → 409; si…" |
+| R60 | `panel/test/git-actions.test.js` → "[F4-R60] planCommitPush: el mensaje "--amend; rm -rf /" llega intacto como un único argu…", "[F4-R60] estático: git-actions.js solo usa argumentos fijos, sin forzar nunca el push"; `panel/test/work-api.test.js` → "[F4-R60] commit-push: un mensaje "--amend; rm -rf /" llega como un único argumento (git …" |
+| R61 | `panel/test/git-info.test.js` → "[R12][F4-R61] GIT_COMMANDS es la lista cerrada documentada en design.md (status con --no…", "[F4-R61] getGitInfo ejecuta git --no-optional-locks status --porcelain y nunca status si…" |
+| R62 | `panel/test/claude-cli.test.js` → "[F4-R10][F4-R62] isValidAllowedCommand"; `panel/test/registry.test.js` → "[F4-R62] validatePatch: allowedCommands válidos (recorte, colapso de espacios, sin dupli…", "[F4-R62] validatePatch: allowedCommands y testCommand inválidos con field y texto de des…", "[F4-R62] normalizeSettings conserva allowedCommands/testCommand válidos y execSettingsOf…"; `panel/test/work-api.test.js` → "[F4-R62][F4-R63] PATCH con allowedCommands/testCommand: válidos se guardan, inválidos 40…" |
+| R63 | `panel/test/work-api.test.js` → "[F4-R5][F4-R63] allowExec false: las ocho acciones de ejecución → 403 sin procesos ni fi…", "[F4-R62][F4-R63] PATCH con allowedCommands/testCommand: válidos se guardan, inválidos 40…" |
+| R64 | `panel/test/work-api.test.js` → "[F4-R64] POST /permissions: añade sin duplicar, crea la entrada de un proyecto solo de C…" |
+| R65 | `panel/test/claude-cli.test.js` → "[F4-R65] suggestAllowedCommand", "[F4-R65] la denegación de una herramienta distinta de Bash no propone comando" |
+| R66 | `panel/test/registry.test.js` → "[F4-R66] isHttpUrl y validatePatch con URLs que no son http(s)", "[F4-R66] validateNewProject rechaza appUrl/repoUrl que no son http(s) y acepta vacías o …"; `panel/test/work-api.test.js` → "[F4-R66] POST /api/projects y PATCH con appUrl/repoUrl que no son http(s) → 400 con fiel…" |
+| R67 | `panel/test/reauth-api.test.js` → "[F4-R67] reauth.js: TTL de 15 minutos, petición por el túnel y confirmación reciente", "[F4-R67] por el túnel sin confirmación reciente (16 min) → 401 reauthRequired sin proces…" |
+| R68 | `panel/test/auth.test.js` → "[F4-R68] createSessionStore: create({ reauthAt }), markReauth, persistencia y carga de r…"; `panel/test/reauth-api.test.js` → "[F4-R68] POST /api/auth/reauth correcto → 204, reauthAt en sessions.json y la acción pas…", "[F4-R68] reauth incorrecto → 401 "Contraseña incorrecta" (sin reauthRequired); al sexto …" |
+| R69 | `panel/test/reauth-api.test.js` → "[F4-R69] login fija reauthAt: acción por el túnel inmediata → 202; a los 16 minutos → 401", "[F4-R69] setup (crear contraseña) también fija reauthAt" |
+| R70 | `panel/test/reauth-api.test.js` → "[F4-R70] desde la red local basta la sesión: 2 horas después del login → 202" |
+| R71 | `panel/test/cf-access.test.js` → "[F4-R71] con Access configurado: estáticos y /api/auth/status por el túnel sin token o c…" |
+| R72 | `panel/test/cf-access.test.js` → "[F4-R72] accessIssuer, accessCertsUrl y decodeJwt", "[F4-R72] token válido aceptado (aud cadena o array) y cada motivo de rechazo" |
+| R73 | `panel/test/cf-access.test.js` → "[F4-R73] caché de claves de 1 h, recarga por kid desconocido como mucho una vez por minu…", "[F4-R73] rotación de claves: un kid nuevo publicado se acepta tras recargar" |
+| R74 | `panel/test/reauth-api.test.js` → "[F4-R74] con Access configurado y token válido no se pide confirmación (1 h después); si…" |
+| R75 | `panel/test/audit.test.js` → "[F4-R75] createAuditLog escribe una línea JSON por entrada con "at" primero y clipPrompt…", "[F4-R75][F4-R77] run aceptado, 409 y 401 por confirmación: líneas con sus campos y run.e…" |
+| R76 | `panel/test/audit.test.js` → "[F4-R76] audit.log no contiene la contraseña, el token de sesión, el JWT de Access ni el…" |
+| R77 | `panel/test/audit.test.js` → "[F4-R77] createAuditLog rota a audit.log.1 al superar maxBytes (sustituyendo la copia an…", "[F4-R75][F4-R77] run aceptado, 409 y 401 por confirmación: líneas con sus campos y run.e…" |
+| R78 | `panel/test/run-store.test.js` → "[F4-R78] listAll devuelve las metas de todos los proyectos"; `panel/test/work-api.test.js` → "[F4-R78][F4-R79] GET /api/attention y POST /dismiss" |
+| R79 | `panel/test/work-api.test.js` → "[F4-R78][F4-R79] GET /api/attention y POST /dismiss" |
+| R80 | `panel/test/work-render.test.js` → "[F4-R80] renderWorkView completo: caja de mensaje, selector de sesión y todos los botones", "[F4-R80] renderWorkView: cada botón depende de hasSdd, specReady, isRepo y effectiveTest…", "[F4-R80] renderSessionSelect y buildRunPayload" |
+| R81 | `panel/test/work-render.test.js` → "[F4-R81] renderWorkView en solo lectura (ejecución desactivada o sin carpeta): aviso, si…" |
+| R82 | `panel/test/work-render.test.js` → "[F4-R82] describeAction: textos exactos de cada acción con escapado" |
+| R83 | `panel/test/work-render.test.js` → "[F4-R83] renderRunEvent pinta cada tipo de evento escapando el texto", "[F4-R83] renderRunLog pinta como mucho los últimos 2000 eventos y avisa" |
+| R84 | `panel/test/work-render.test.js` → "[F4-R84] renderPermissionPrompt con y sin sugerencia, y buildRetryPayload" |
+| R85 | `panel/test/work-render.test.js` → "[F4-R85] renderDiff marca add/del/hunk/meta, escapa y avisa del recorte" |
+| R86 | `panel/test/work-render.test.js` → "[F4-R86] createApiClient: un 401 con reauthRequired no llama a onUnauthorized y el error…", "[F4-R86] withReauth: repite la acción una vez tras un reauth correcto; nada si se cancela" |
+| R87 | `panel/test/work-render.test.js` → "[F4-R87] renderAttention con proyectos y runs; vacío → cadena vacía" |
+| R88 | `panel/test/work-render.test.js` → "[F4-R88] renderRunList con un run de cada estado y lista vacía" |
+| R89 | `panel/test/work-render.test.js` → "[F4-R89] suggestCommitMessage con y sin feature in_progress" |
+| R90 | `panel/test/render.test.js` → "[F4-R90] renderProjectCard y renderProjectDetail no generan href con URLs que no sean ht…" |
+| R91 | `panel/test/styles.test.js` → "[F4-R91] index.html: #attention dentro de #list-view antes de #projects y diálogos <dial…", "[F4-R91] app.js importa work.js", "[F4-R91] styles.css define los selectores de la fase 4 con colores en variables para cla…" |
+| R92 | `panel/test/claude-discovery.test.js` → "[F4-R92] un summary de 120 caracteres se recorta con clipTitle a 80 + "…"" |
+| R93 | `panel/test/deploy.test.js` → "[F4-R93] uninstall-service.ps1 cierra también los cloudflared.exe del túnel" |
+| R94 | `panel/test/deploy.test.js` → "[F4-R94] docs: architecture.md con módulos, rutas y variables de la fase 4; verification…" |
+| R95 | **MANUAL — pendiente del humano** (ver fila T36/T37) |
+| R96 | **MANUAL — pendiente del humano** (ver fila T36/T37) |
+| R97 | **MANUAL — pendiente del humano** (ver fila T36/T37) |
+| R98 | **MANUAL — pendiente del humano** (ver fila T36/T37) |
+| R99 | **MANUAL — pendiente del humano** (ver fila T36/T37) |
+| T30 (UI) | Comprobación automatizada en Linux por el implementer con Chromium headless (Playwright, fuera del repo) a 360×780 en tema claro y oscuro contra el panel con el CLI falso: "Te necesitan" con la spec lista → "Trabajar"; mensaje → diálogo de confirmación → salida en vivo → "Necesita permiso" → "Permitir en este proyecto y reintentar" → pasados 16 min por el túnel (`X-Forwarded-Proto: https`) pide la contraseña (incorrecta → error en el diálogo sin cerrar la sesión; correcta → repite la acción) → reintento lanzado y `npm run lint` guardado en `projects.json`; "Ver cambios" + diff; "Commit y push" con mensaje prerrellenado; sin scroll horizontal ni errores de JavaScript. |
+| T36 | **MANUAL — Windows + móvil — pendiente del humano** (R95–R98): anotar `claude --version`; chat desde el móvil por la red local y por el túnel (texto y herramientas en vivo, `Terminada` con coste y duración, reabrir desde el historial, "Continuar la última sesión" recuerda el mensaje anterior); pedir un comando no autorizado (p. ej. `npm run lint`) → "Necesita permiso" → "Permitir en este proyecto y reintentar" lo ejecuta (anotar el texto exacto de la denegación del CLI real); cancelar un run largo (`testCommand` que espera 120 s) y comprobar en el Administrador de tareas que no quedan `claude.exe`/`node.exe`/`bash.exe` hijos; "Ejecutar tests" con `init.sh` (anotar la ruta de Git Bash detectada) y "Commit y push" real sin quedarse esperando credenciales. Resultado: _(anotar fecha y resultado)_ |
+| T37 | **MANUAL — Internet — pendiente del humano** (R99): por la URL temporal, una acción pasados 15 minutos pide la contraseña; con dominio propio y Access según `docs/acceso-web.md` §9: código de un solo uso, contraseña del panel y acciones sin reconfirmar. Resultado: _(anotar fecha y resultado)_ |
 
 ## Qué NO se considera verificado
 

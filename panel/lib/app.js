@@ -1,16 +1,18 @@
 // Servidor HTTP del panel: autenticación por contraseña, sesiones firmadas, defensa CSRF, API JSON y estáticos.
 // Fase 3: catálogo fusionado con los proyectos de Claude Code (solo lectura de ~/.claude), ajustes por PATCH.
+// Fase 4: rutas de trabajo (lib/work-api.js), Cloudflare Access, confirmación de contraseña y auditoría.
 // Sin listen (lo hace server.js o los tests).
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { loadRegistry, saveRegistry, validateNewProject, removeProject, validatePatch, upsertSettings } from './registry.js';
+import { loadRegistry, saveRegistry, validateNewProject, removeProject, validatePatch, upsertSettings, EXEC_FIELDS } from './registry.js';
 import { createClaudeDiscovery, DEFAULT_TTL_MS } from './claude-discovery.js';
 import { buildCatalog, findMerged, buildCatalogDetail, buildCatalogSummary } from './project-catalog.js';
 import {
   sendJson,
   sendEmpty,
+  sendText,
   readJsonBody,
   serveStatic,
   parseCookies,
@@ -23,6 +25,11 @@ import { validatePassword, hashPassword, verifyPassword, createAuthRecord, loadA
 import { createSessionStore, SESSION_TTL_MS } from './sessions.js';
 import { createRateLimiter } from './rate-limit.js';
 import { readPublicUrl } from './public-url.js';
+import { createWorkApi } from './work-api.js';
+import { resolveClaudeCommand } from './claude-cli.js';
+import { isTunnelRequest } from './reauth.js';
+import { createAccessVerifier, ACCESS_HEADER } from './cf-access.js';
+import { createAuditLog } from './audit.js';
 
 const API_PREFIX = '/api/';
 const AUTH_PREFIX = '/api/auth/';
@@ -49,10 +56,18 @@ const ERRORS = Object.freeze({
   unresolvedSettings: 'No se puede guardar ajustes de un proyecto sin ruta resuelta',
 });
 
+const ACCESS_ERRORS = Object.freeze({
+  denied: 'Acceso denegado: falta o no es válida la identificación de Cloudflare Access',
+  misconfigured: 'Cloudflare Access mal configurado en el panel',
+});
+
 /**
  * Crea la app HTTP.
  * @param {{ projectsFile: string, publicDir: string, dataDir: string, now?: () => number, runner?: Function,
- *           trustProxy?: boolean, secureCookies?: boolean, claudeHome?: string, claudeCacheTtlMs?: number }} options
+ *           trustProxy?: boolean, secureCookies?: boolean, claudeHome?: string, claudeCacheTtlMs?: number,
+ *           allowExec?: boolean, maxRuns?: number, runTimeoutMs?: number, claudeCommand?: object, bashBin?: string|null,
+ *           cfAccess?: object|null, cfCertsUrl?: string, fetchImpl?: Function, platform?: string,
+ *           outputLimitBytes?: number, keepRuns?: number, sseHeartbeatMs?: number, extraEnv?: object }} options
  */
 export function createApp({
   projectsFile,
@@ -64,6 +79,19 @@ export function createApp({
   secureCookies = false,
   claudeHome = os.homedir(),
   claudeCacheTtlMs = DEFAULT_TTL_MS,
+  allowExec = true,
+  maxRuns = 2,
+  runTimeoutMs = 30 * 60000,
+  claudeCommand,
+  bashBin = null,
+  cfAccess = null,
+  cfCertsUrl,
+  fetchImpl,
+  platform = process.platform,
+  outputLimitBytes,
+  keepRuns,
+  sseHeartbeatMs = 15000,
+  extraEnv = {},
 } = {}) {
   if (!projectsFile) throw new Error('createApp: falta projectsFile');
   if (!publicDir) throw new Error('createApp: falta publicDir');
@@ -81,6 +109,34 @@ export function createApp({
   let sessions = null;
 
   const catalogOptions = () => (runner ? { now, runner } : { now });
+
+  const accessConfigured = Boolean(cfAccess && !cfAccess.error && cfAccess.team && cfAccess.aud);
+  const accessVerifier = accessConfigured
+    ? createAccessVerifier({ team: cfAccess.team, aud: cfAccess.aud, now, ...(cfCertsUrl ? { certsUrl: cfCertsUrl } : {}), ...(fetchImpl ? { fetchImpl } : {}) })
+    : null;
+  const audit = createAuditLog({ file: path.join(dataDir, 'audit.log'), now });
+
+  const workApi = createWorkApi({
+    projectsFile,
+    dataDir,
+    now,
+    runner,
+    platform,
+    claudeCommand: claudeCommand || resolveClaudeCommand('claude', { platform }),
+    bashBin,
+    allowExec,
+    maxRuns,
+    runTimeoutMs,
+    outputLimitBytes,
+    keepRuns,
+    sseHeartbeatMs,
+    trustProxy,
+    accessConfigured,
+    loadSources: () => loadSources(),
+    listCatalog: async () => buildCatalog({ ...(await loadSources()), includeHidden: false, ...catalogOptions() }),
+    extraEnv,
+    audit,
+  });
 
   // ---------- Estado de autenticación ----------
 
@@ -158,7 +214,7 @@ export function createApp({
     const record = await createAuthRecord(body.password, { now });
     await saveAuth(authFile, record);
     setAuthRecord(record);
-    const created = await sessions.create();
+    const created = await sessions.create({ reauthAt: now() });
     setSessionCookie(req, res, created.token);
     sendJson(res, 201, { authenticated: true });
   }
@@ -179,7 +235,7 @@ export function createApp({
     }
     limiter.reset(ip);
     const store = await getSessions();
-    const created = await store.create();
+    const created = await store.create({ reauthAt: now() });
     setSessionCookie(req, res, created.token);
     sendJson(res, 200, { authenticated: true });
   }
@@ -214,6 +270,31 @@ export function createApp({
     sendEmpty(res, 204);
   }
 
+  /** Confirmación de la contraseña para las acciones por el túnel (F4-R68). No cierra ni renueva la sesión. */
+  async function authReauth(req, res) {
+    const session = await currentSession(req);
+    if (!session) return sendJson(res, 401, { error: ERRORS.unauthenticated });
+    const ip = getClientIp(req, { trustProxy });
+    const entry = { ip, tunnel: isTunnelRequest(req), projectId: null, action: 'auth.reauth' };
+    const limit = limiter.check(ip);
+    if (limit.blocked) {
+      await audit.write({ ...entry, result: 'rejected', status: 429 });
+      return sendTooManyAttempts(res, limit);
+    }
+    const body = await readBody(req, res);
+    if (!body) return undefined;
+    if (typeof body.password !== 'string') return sendJson(res, 400, { error: ERRORS.missingPassword, field: 'password' });
+    if (!(await verifyPassword(body.password, authState.record))) {
+      limiter.recordFailure(ip);
+      await audit.write({ ...entry, result: 'rejected', status: 401 });
+      return sendJson(res, 401, { error: ERRORS.wrongPassword });
+    }
+    limiter.reset(ip);
+    await sessions.markReauth(session.id);
+    await audit.write({ ...entry, result: 'ok', status: 204 });
+    return sendEmpty(res, 204);
+  }
+
   async function routeAuth(req, res, pathname) {
     const method = req.method;
     if (pathname === '/api/auth/status' && method === 'GET') return authStatus(req, res);
@@ -221,6 +302,7 @@ export function createApp({
     if (pathname === '/api/auth/login' && method === 'POST') return authLogin(req, res);
     if (pathname === '/api/auth/logout' && method === 'POST') return authLogout(req, res);
     if (pathname === '/api/auth/change-password' && method === 'POST') return authChangePassword(req, res);
+    if (pathname === '/api/auth/reauth' && method === 'POST') return authReauth(req, res);
     return sendJson(res, 404, { error: ERRORS.notFound });
   }
 
@@ -255,15 +337,22 @@ export function createApp({
     sendJson(res, 201, result.project);
   }
 
-  async function patchProject(req, res, id) {
+  async function patchProject(req, res, id, session) {
     const body = await readBody(req, res);
     if (!body) return undefined;
+    // Fase 4 (F4-R63): con allowedCommands/testCommand el PATCH es una acción de ejecución (puerta + auditoría).
+    let ctx = null;
+    if (workApi.isExecPatch(body)) {
+      ctx = await workApi.gateExec(req, res, session, { projectId: id, action: 'settings.exec', detail: { fields: EXEC_FIELDS.filter((f) => body[f] !== undefined) } });
+      if (!ctx) return undefined;
+    }
+    const reply = (status, payload) => (ctx ? ctx.respond(res, status, payload) : sendJson(res, status, payload));
     const sources = await loadSources();
     const merged = findMerged(sources, id);
-    if (!merged) return sendJson(res, 404, { error: ERRORS.projectNotFound });
+    if (!merged) return reply(404, { error: ERRORS.projectNotFound });
     const valid = validatePatch(body);
-    if (!valid.ok) return sendJson(res, valid.status, valid.field ? { error: valid.error, field: valid.field } : { error: valid.error });
-    if (merged.unresolved || !merged.path) return sendJson(res, 400, { error: ERRORS.unresolvedSettings });
+    if (!valid.ok) return reply(valid.status, valid.field ? { error: valid.error, field: valid.field } : { error: valid.error });
+    if (merged.unresolved || !merged.path) return reply(400, { error: ERRORS.unresolvedSettings });
     const entry = merged.settingsEntry ?? {
       id: merged.id,
       name: merged.name,
@@ -279,7 +368,7 @@ export function createApp({
     await saveRegistry(projectsFile, registry);
     // Se recalcula la fusión con el registro nuevo (el proyecto pasa a "both" si era solo de Claude).
     const updated = findMerged({ registry, discovery: sources.discovery }, id);
-    sendJson(res, 200, await buildCatalogSummary(updated, catalogOptions()));
+    return reply(200, await buildCatalogSummary(updated, catalogOptions()));
   }
 
   async function deleteProject(res, id) {
@@ -298,7 +387,7 @@ export function createApp({
     sendJson(res, 200, discovery.status());
   }
 
-  async function routeApi(req, res, url) {
+  async function routeApi(req, res, url, session) {
     const pathname = url.pathname;
     const method = req.method;
     if (pathname === '/api/claude/status' && method === 'GET') return claudeStatus(res);
@@ -316,7 +405,7 @@ export function createApp({
         return sendJson(res, 404, { error: ERRORS.projectNotFound });
       }
       if (method === 'GET') return getProject(res, id);
-      if (method === 'PATCH') return patchProject(req, res, id);
+      if (method === 'PATCH') return patchProject(req, res, id, session);
       if (method === 'DELETE') return deleteProject(res, id);
     }
     return sendJson(res, 404, { error: ERRORS.notFound });
@@ -337,18 +426,44 @@ export function createApp({
     if (!session) return sendJson(res, 401, { error: ERRORS.unauthenticated });
     const { renewed } = await sessions.touch(session.id);
     if (renewed) setSessionCookie(req, res, sessionToken(req));
-    return routeApi(req, res, url);
+    if (await workApi.route(req, res, url, session)) return undefined;
+    return routeApi(req, res, url, session);
+  }
+
+  /** Rechazo 403 en JSON para la API y en texto para el resto (estáticos). */
+  function sendForbidden(res, pathname, message) {
+    if (pathname === '/api' || pathname.startsWith(API_PREFIX)) return sendJson(res, 403, { error: message });
+    return sendText(res, 403, message);
+  }
+
+  /**
+   * Cloudflare Access (F4-R2, F4-R71): solo para peticiones por el túnel, antes de todo (estáticos incluidos).
+   * Devuelve true si ya respondió con 403.
+   */
+  async function rejectByAccess(req, res, pathname) {
+    if (!isTunnelRequest(req)) return false;
+    if (cfAccess && cfAccess.error) {
+      sendForbidden(res, pathname, ACCESS_ERRORS.misconfigured);
+      return true;
+    }
+    if (!accessVerifier) return false;
+    const raw = req.headers[ACCESS_HEADER];
+    const result = await accessVerifier.verify(Array.isArray(raw) ? raw[0] : raw);
+    if (result.ok) return false;
+    sendForbidden(res, pathname, ACCESS_ERRORS.denied);
+    return true;
   }
 
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const pathname = url.pathname;
+    if (await rejectByAccess(req, res, pathname)) return undefined;
     if (pathname === '/api' || pathname.startsWith(API_PREFIX)) return handleApi(req, res, url);
     if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 404, { error: ERRORS.notFound });
     return serveStatic(publicDir, pathname, res);
   }
 
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     Promise.resolve()
       .then(() => handle(req, res))
       .catch((err) => {
@@ -360,4 +475,15 @@ export function createApp({
         }
       });
   });
+
+  // Al cerrar el servidor se cancelan los runs activos (y sus árboles de procesos) y se cierran los flujos SSE,
+  // que de otro modo mantendrían abiertas sus conexiones e impedirían el cierre (F4-R33).
+  const originalClose = server.close.bind(server);
+  server.close = (callback) => {
+    workApi.close();
+    return originalClose(callback);
+  };
+  server.on('close', () => workApi.close());
+  server.workApi = workApi;
+  return server;
 }

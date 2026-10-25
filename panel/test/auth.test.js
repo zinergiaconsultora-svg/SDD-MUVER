@@ -222,3 +222,34 @@ test('[F2-R21] createSessionStore carga desde fichero existente; roto → cero s
   }
   await removeDir(dir);
 });
+
+// ---------- Fase 4: reauthAt en las sesiones (F4-R68, F4-R69) ----------
+
+test('[F4-R68] createSessionStore: create({ reauthAt }), markReauth, persistencia y carga de reauthAt', async () => {
+  const dir = await makeTempDir('muver-sessions-');
+  const file = path.join(dir, 'sessions.json');
+  const clock = makeClock(Date.parse('2026-10-25T10:00:00Z'));
+  const store = createSessionStore({ file, secret: SECRET, now: clock.now });
+  const withReauth = await store.create({ reauthAt: clock.now() });
+  const without = await store.create();
+  assert.equal((await store.verify(withReauth.token)).reauthAt, clock.now());
+  assert.equal((await store.verify(without.token)).reauthAt, undefined);
+
+  clock.advance(20 * 60 * 1000);
+  await store.markReauth(without.id);
+  assert.equal((await store.verify(without.token)).reauthAt, clock.now());
+  const saved = JSON.parse(await fs.readFile(file, 'utf8'));
+  assert.equal(saved.sessions[without.id].reauthAt, clock.now());
+  assert.equal(saved.sessions[withReauth.id].reauthAt, clock.now() - 20 * 60 * 1000);
+
+  // Una sesión con reauthAt no numérico se carga sin él (se trata como no confirmada).
+  saved.sessions[withReauth.id].reauthAt = 'ayer';
+  await fs.writeFile(file, JSON.stringify(saved));
+  const reloaded = createSessionStore({ file, secret: SECRET, now: clock.now });
+  assert.equal((await reloaded.verify(without.token)).reauthAt, clock.now());
+  const loadedWithout = await reloaded.verify(withReauth.token);
+  assert.ok(loadedWithout, 'la sesión sigue siendo válida');
+  assert.equal(loadedWithout.reauthAt, undefined);
+  await reloaded.markReauth('f'.repeat(64)); // sesión inexistente: no lanza
+  await removeDir(dir);
+});

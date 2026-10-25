@@ -1,12 +1,27 @@
 // Registro de proyectos (panel/projects.json): carga, guardado atómico y validación de altas/bajas.
 // Fase 3: projects.json es además la capa de ajustes (hidden, pinned) que se fusiona con los proyectos de Claude.
+// Fase 4: ajustes de ejecución (allowedCommands, testCommand) y URLs restringidas a http(s) (mejora M5).
 import fs from 'node:fs/promises';
 import path from 'node:path';
+
+import { isValidAllowedCommand, normalizeCommand } from './claude-cli.js';
+import { parseCommandLine } from './exec-utils.js';
 
 export const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** Campos que admite PATCH /api/projects/:id (fase 3). */
-export const PATCHABLE_FIELDS = Object.freeze(['name', 'appUrl', 'repoUrl', 'tags', 'hidden', 'pinned']);
+export const PATCHABLE_FIELDS = Object.freeze(['name', 'appUrl', 'repoUrl', 'tags', 'hidden', 'pinned', 'allowedCommands', 'testCommand']);
+
+/** Campos de ejecución: un PATCH que los trae es una acción de ejecución (F4-R63). */
+export const EXEC_FIELDS = Object.freeze(['allowedCommands', 'testCommand']);
+export const MAX_ALLOWED_COMMANDS = 30;
+
+export const EXEC_ERRORS = Object.freeze({
+  invalidCommand: 'Comando no válido: solo letras, números, espacios y . _ : / = @ + - (máx. 200)',
+  tooManyCommands: 'Como mucho 30 comandos autorizados',
+  invalidTestCommand: (reason) => `Comando de tests no válido: ${reason}`,
+  invalidUrl: 'La URL debe empezar por http:// o https://',
+});
 
 const PATCH_ERRORS = Object.freeze({
   name: 'El nombre es obligatorio',
@@ -17,16 +32,55 @@ const PATCH_ERRORS = Object.freeze({
   pinned: 'pinned debe ser true o false',
 });
 
-/** Normaliza una entrada de ajustes: hidden/pinned booleanos (false salvo true), tags de cadenas, URLs cadena. */
+/** '' o una URL con esquema http: o https: (F4-R66). */
+export function isHttpUrl(value) {
+  if (value === '') return true;
+  if (typeof value !== 'string') return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/** Lista de comandos autorizados normalizada (recorte, colapso de espacios), válidos y sin duplicados. */
+function cleanAllowedCommands(list) {
+  const out = [];
+  for (const c of Array.isArray(list) ? list : []) {
+    if (!isValidAllowedCommand(c)) continue;
+    const normalized = normalizeCommand(c);
+    if (!out.includes(normalized)) out.push(normalized);
+  }
+  return out;
+}
+
+/**
+ * Normaliza una entrada de ajustes: hidden/pinned booleanos (false salvo true), tags de cadenas, URLs cadena.
+ * Fase 4: allowedCommands y testCommand se normalizan si la entrada los trae (inválidos → [] / ''); si no los trae
+ * no se añaden, para no reescribir projects.json con campos vacíos (los valores por defecto los da execSettingsOf).
+ */
 export function normalizeSettings(entry) {
   const source = entry && typeof entry === 'object' ? entry : {};
-  return {
+  const normalized = {
     ...source,
     appUrl: typeof source.appUrl === 'string' ? source.appUrl : '',
     repoUrl: typeof source.repoUrl === 'string' ? source.repoUrl : '',
     tags: Array.isArray(source.tags) ? source.tags.filter((t) => typeof t === 'string') : [],
     hidden: source.hidden === true,
     pinned: source.pinned === true,
+  };
+  if ('allowedCommands' in source) normalized.allowedCommands = cleanAllowedCommands(source.allowedCommands);
+  if ('testCommand' in source) normalized.testCommand = typeof source.testCommand === 'string' ? source.testCommand : '';
+  return normalized;
+}
+
+/** Ajustes de ejecución efectivos de una entrada (o null): { allowedCommands: [], testCommand: '' } por defecto. */
+export function execSettingsOf(entry) {
+  const source = entry && typeof entry === 'object' ? entry : {};
+  return {
+    allowedCommands: cleanAllowedCommands(source.allowedCommands),
+    testCommand: typeof source.testCommand === 'string' ? source.testCommand.trim() : '',
   };
 }
 
@@ -103,14 +157,19 @@ export async function validateNewProject(input, existing = [], { statFn = fs.sta
     ? body.tags.filter((t) => typeof t === 'string').map((t) => t.trim()).filter(Boolean)
     : [];
 
+  const appUrl = typeof body.appUrl === 'string' ? body.appUrl.trim() : '';
+  const repoUrl = typeof body.repoUrl === 'string' ? body.repoUrl.trim() : '';
+  if (!isHttpUrl(appUrl)) return reject(EXEC_ERRORS.invalidUrl, 'appUrl');
+  if (!isHttpUrl(repoUrl)) return reject(EXEC_ERRORS.invalidUrl, 'repoUrl');
+
   return {
     ok: true,
     project: {
       id,
       name,
       path: resolvedPath,
-      appUrl: typeof body.appUrl === 'string' ? body.appUrl.trim() : '',
-      repoUrl: typeof body.repoUrl === 'string' ? body.repoUrl.trim() : '',
+      appUrl,
+      repoUrl,
       tags,
     },
   };
@@ -122,9 +181,30 @@ export function removeProject(registry, id) {
   return { removed: projects.length !== registry.projects.length, registry: { projects } };
 }
 
+function patchAllowedCommands(value) {
+  if (!Array.isArray(value) || !value.every((c) => isValidAllowedCommand(c))) return { ok: false, error: EXEC_ERRORS.invalidCommand };
+  const list = cleanAllowedCommands(value);
+  if (list.length > MAX_ALLOWED_COMMANDS) return { ok: false, error: EXEC_ERRORS.tooManyCommands };
+  return { ok: true, value: list };
+}
+
+function patchTestCommand(value) {
+  if (typeof value !== 'string') return { ok: false, error: EXEC_ERRORS.invalidTestCommand('vacío') };
+  const trimmed = value.trim();
+  if (trimmed === '') return { ok: true, value: '' };
+  const parsed = parseCommandLine(trimmed);
+  return parsed.ok ? { ok: true, value: trimmed } : { ok: false, error: EXEC_ERRORS.invalidTestCommand(parsed.error) };
+}
+
 function patchValue(field, value) {
   if (field === 'name') return typeof value === 'string' && value.trim() ? { ok: true, value: value.trim() } : { ok: false };
-  if (field === 'appUrl' || field === 'repoUrl') return typeof value === 'string' ? { ok: true, value: value.trim() } : { ok: false };
+  if (field === 'appUrl' || field === 'repoUrl') {
+    if (typeof value !== 'string') return { ok: false };
+    const trimmed = value.trim();
+    return isHttpUrl(trimmed) ? { ok: true, value: trimmed } : { ok: false, error: EXEC_ERRORS.invalidUrl };
+  }
+  if (field === 'allowedCommands') return patchAllowedCommands(value);
+  if (field === 'testCommand') return patchTestCommand(value);
   if (field === 'tags') {
     if (!Array.isArray(value) || !value.every((t) => typeof t === 'string')) return { ok: false };
     return { ok: true, value: value.map((t) => t.trim()).filter(Boolean) };
@@ -142,7 +222,7 @@ export function validatePatch(body) {
   for (const field of PATCHABLE_FIELDS) {
     if (source[field] === undefined) continue;
     const result = patchValue(field, source[field]);
-    if (!result.ok) return reject(PATCH_ERRORS[field], field);
+    if (!result.ok) return reject(result.error || PATCH_ERRORS[field], field);
     changes[field] = result.value;
   }
   if (Object.keys(changes).length === 0) return { ok: false, status: 400, error: 'Nada que actualizar' };

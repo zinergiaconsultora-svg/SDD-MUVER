@@ -143,3 +143,43 @@ test('[F3-R53] docs/architecture.md documenta la fase 3 y docs/verification.md t
   assert.ok(verification.includes('[F3-R'), 'docs/verification.md debe tener la tabla con prefijo [F3-R');
   for (let n = 1; n <= 53; n++) assert.match(verification, new RegExp(`^\\| R${n} \\|.*\\[F3-R`, 'm'), `fila F3 de R${n}`);
 });
+
+// ---------- Fase 4: mejora M5 de la fase 2 y documentación (F4-R93, F4-R94) ----------
+
+test('[F4-R93] uninstall-service.ps1 cierra también los cloudflared.exe del túnel', async () => {
+  const ps1 = await read(path.join(DEPLOY_DIR, 'uninstall-service.ps1'));
+  assert.ok(ps1.includes("Name = 'cloudflared.exe'"), "filtro Name = 'cloudflared.exe'");
+  assert.ok(ps1.includes('--url http://localhost:'), 'solo los túneles rápidos hacia el panel local');
+  const block = ps1.slice(ps1.indexOf("Name = 'cloudflared.exe'"));
+  assert.ok(block.includes('Stop-Process'), 'Stop-Process tras el filtro de cloudflared');
+  assert.ok(ps1.includes("Name = 'node.exe'"), 'se conserva el cierre de node.exe');
+});
+
+test('[F4-R94] docs: architecture.md con módulos, rutas y variables de la fase 4; verification.md con [F4-R; acceso-web.md termina con la sección 9', async () => {
+  const architecture = await read(path.join(REPO_DIR, 'docs', 'architecture.md'));
+  for (const needle of [
+    'PANEL_ALLOW_EXEC', 'PANEL_MAX_RUNS', 'PANEL_RUN_TIMEOUT_MIN', 'CLAUDE_BIN', 'PANEL_BASH_BIN', 'PANEL_CF_ACCESS_TEAM', 'PANEL_CF_ACCESS_AUD',
+    'lib/work-api.js', 'lib/runs.js', 'lib/run-store.js', 'lib/claude-cli.js', 'lib/cf-access.js', 'lib/audit.js', 'lib/reauth.js',
+    '/api/runs/:runId/events', 'POST /api/projects/:id/runs', 'audit.log', 'public/work.js',
+  ]) {
+    assert.ok(architecture.includes(needle), `docs/architecture.md debe mencionar ${needle}`);
+  }
+  const verification = await read(path.join(REPO_DIR, 'docs', 'verification.md'));
+  assert.ok(verification.includes('[F4-R'), 'tabla con prefijo [F4-R');
+  const f4 = verification.slice(verification.indexOf('Feature 4: `puesto-de-mando-trabajar`'));
+  assert.ok(f4.length > 100, 'sección de la feature 4');
+  for (let n = 1; n <= 99; n++) assert.match(f4, new RegExp(`^\\| R${n} \\|.*(\\[F4-R${n}\\]|MANUAL)`, 'm'), `fila F4 de R${n}`);
+  const doc = await read(path.join(REPO_DIR, 'docs', 'acceso-web.md'));
+  const s8 = doc.indexOf('## 8.');
+  const s9 = doc.indexOf('## 9. Cloudflare Access');
+  assert.ok(s9 > s8 && s8 >= 0, 'la sección 9 va después de la 8');
+  assert.equal(doc.indexOf('\n## ', s9 + 1), -1, 'la sección 9 es la última');
+  const section = doc.slice(s9);
+  for (const needle of ['PANEL_CF_ACCESS_TEAM', 'PANEL_CF_ACCESS_AUD', 'Zero Trust', 'self-hosted', 'código de un solo uso', 'email', 'AUD', 'setx']) {
+    assert.ok(section.includes(needle), `la sección 9 debe mencionar ${needle}`);
+  }
+  const envTable = doc.slice(doc.indexOf('## 5.'), doc.indexOf('## 6.'));
+  for (const variable of ['PANEL_ALLOW_EXEC', 'PANEL_MAX_RUNS', 'PANEL_RUN_TIMEOUT_MIN', 'CLAUDE_BIN', 'PANEL_BASH_BIN', 'PANEL_CF_ACCESS_TEAM', 'PANEL_CF_ACCESS_AUD']) {
+    assert.match(envTable, new RegExp(`\\|\\s*\`${variable}\`\\s*\\|`), `fila de ${variable} en la tabla de §5`);
+  }
+});

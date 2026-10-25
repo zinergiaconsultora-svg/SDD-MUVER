@@ -149,6 +149,13 @@ Todas son opcionales. El panel las lee al arrancar (`panel/lib/config.js`).
 | `PANEL_SECURE_COOKIES` | desactivado | Con `1` la cookie de sesión lleva siempre el atributo `Secure` (solo HTTPS). **Solo** si usas el panel exclusivamente a través del túnel: con ella activada, el login por `http://<ip-lan>:4310` deja de funcionar. Por defecto el atributo se añade solo cuando la petición entra por Cloudflare. |
 | `PANEL_TRUST_PROXY` | activado | Con `0` el panel ignora las cabeceras que añade Cloudflare (`X-Forwarded-Proto`, `CF-Connecting-IP`). Úsalo si **no** publicas con Cloudflare Tunnel y no quieres que un cliente de la red local pueda falsear su IP ante el límite de intentos. |
 | `CLOUDFLARED_BIN` | `cloudflared` (en el PATH) | Ruta completa a `cloudflared.exe` si no está en el PATH. |
+| `PANEL_ALLOW_EXEC` | activado | Fase 4. Con `0` (o `false`) el panel queda en **solo lectura**: no lanza Claude Code, ni tests, ni commit y push, ni cambia `feature_list.json` (responde `403`). Útil si un día quieres solo mirar desde fuera. |
+| `PANEL_MAX_RUNS` | `2` | Fase 4. Ejecuciones a la vez en todo el panel (1–10). Siempre como mucho una por proyecto. |
+| `PANEL_RUN_TIMEOUT_MIN` | `30` | Fase 4. Minutos máximos de cada ejecución (1–240); al llegar se detiene con todos sus procesos. |
+| `CLAUDE_BIN` | `claude` | Fase 4. Ejecutable de Claude Code. Normalmente no hace falta: se busca `claude.exe` en el PATH, en `%USERPROFILE%\.local\bin` y la instalación de npm. Si solo existe un `claude.cmd`, indica aquí la ruta del `.exe` o del `cli.js`. |
+| `PANEL_BASH_BIN` | Git Bash detectado | Fase 4. bash con el que se ejecuta `init.sh` en "Ejecutar tests" si el proyecto no tiene comando de tests. Por defecto `C:\Program Files\Git\bin\bash.exe` (nunca el bash de WSL). |
+| `PANEL_CF_ACCESS_TEAM` | sin definir | Fase 4. Nombre del equipo de Cloudflare Zero Trust (lo que va antes de `.cloudflareaccess.com`). Ver sección 9. |
+| `PANEL_CF_ACCESS_AUD` | sin definir | Fase 4. "Application Audience (AUD) Tag" de la aplicación de Cloudflare Access. Ver sección 9. |
 
 **Cómo fijarlas para las tareas programadas**: como variables de usuario, que la tarea S4U lee al arrancar.
 En PowerShell (sin administrador):
@@ -212,3 +219,47 @@ Si tienes un dominio gestionado en Cloudflare (plan gratuito vale), puedes tener
 | `Demasiados intentos. Espera 15 minutos.` | 5 contraseñas erróneas seguidas desde tu IP | Espera 15 minutos (o reinicia el panel si estás en el PC: el contador vive en memoria). |
 | La URL de trycloudflare de ayer ya no funciona | Es temporal: cambia en cada arranque de `cloudflared` | Lee la nueva en `public-url.txt` o en el encabezado del panel desde la Wi-Fi. Para una fija, sección 7. |
 | El móvil con datos no carga pero en la Wi-Fi sí | El túnel no está activo | Comprueba la tarea `PuestoDeMandoMUVER-Tunnel` y `cloudflared.log`. |
+
+## 9. Cloudflare Access
+
+Desde la fase 4 el panel puede **lanzar Claude Code, los tests y el commit y push** de tus proyectos. Por eso,
+mientras uses la URL temporal de trycloudflare, cada acción de ejecución pedida desde Internet te pide **repetir
+la contraseña cada 15 minutos** (desde la Wi-Fi de casa no). Cuando tengas dominio propio, la protección
+recomendada es poner **Cloudflare Access** delante: antes de ver siquiera la pantalla de login, Cloudflare te pide
+un código de un solo uso que llega a tu email. Con Access activo el panel ya no te repite la contraseña para las
+acciones (sigue pidiendo la del login).
+
+1. **Pasa a dominio propio** siguiendo la sección 7 (túnel con nombre, `hostname` fijo, por ejemplo
+   `https://panel.tudominio.com`, y `public-url.txt` con esa URL).
+2. En el panel de Cloudflare entra en **Zero Trust** (la primera vez te pide un nombre de equipo: es el
+   *team name*, por ejemplo `muver`; queda como `muver.cloudflareaccess.com`).
+3. **Access → Applications → Add an application → Self-hosted** (aplicación *self-hosted*):
+   - *Application domain*: el mismo hostname del túnel (`panel.tudominio.com`).
+   - *Session duration*: la que prefieras (por ejemplo 24 horas).
+4. Crea una **política** (*policy*) de tipo *Allow* con la regla **Emails** = tu email (solo el tuyo). Como
+   método de identificación deja **One-time PIN** (código de un solo uso por email), que no necesita nada más.
+5. Guarda la aplicación y, en su pestaña de resumen (*Overview*), copia el **Application Audience (AUD) Tag**.
+6. En el PC, en PowerShell (sin administrador), fija las dos variables con el nombre del equipo y el AUD:
+
+   ```powershell
+   setx PANEL_CF_ACCESS_TEAM "muver"
+   setx PANEL_CF_ACCESS_AUD "pega-aquí-el-AUD-tag"
+   ```
+
+7. Reinicia la tarea del panel (`Stop-ScheduledTask -TaskName PuestoDeMandoMUVER` y
+   `Start-ScheduledTask -TaskName PuestoDeMandoMUVER`) o el PC. En `panel\data\panel.log` debe aparecer
+   `Cloudflare Access: activado (equipo muver)`.
+8. Prueba desde el móvil con datos móviles: primero Cloudflare te pide el email y el código; después aparece el
+   login del panel. Las acciones ya no piden repetir la contraseña.
+
+Cómo funciona: Cloudflare añade a cada petición la cabecera `Cf-Access-Jwt-Assertion` (un token firmado). El
+panel comprueba la firma con las claves públicas de `https://<equipo>.cloudflareaccess.com/cdn-cgi/access/certs`,
+que el AUD es el tuyo y que no ha caducado. Si alguien llegara al túnel por otro camino sin pasar por Access, el
+panel lo rechaza con `403`. Desde la red local (`http://<ip-del-PC>:4310`) no se mira Access.
+
+**Si solo defines una de las dos variables** (o el nombre del equipo no es válido: solo minúsculas, números y
+guiones), el panel avisa al arrancar con `AVISO: Cloudflare Access mal configurado (…)` y **rechaza todo acceso
+por el túnel** con `403 Cloudflare Access mal configurado en el panel` (la red local sigue funcionando). Corrige
+la variable con `setx` y reinicia la tarea. Para volver a la URL temporal sin Access, bórralas
+(`[Environment]::SetEnvironmentVariable('PANEL_CF_ACCESS_TEAM', $null, 'User')` y lo mismo con
+`PANEL_CF_ACCESS_AUD`) y reinicia la tarea.

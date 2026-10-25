@@ -37,7 +37,7 @@ export function createSessionStore({ file, secret, now = () => Date.now(), ttlMs
   if (!file) throw new Error('createSessionStore: falta file');
   if (!secret) throw new Error('createSessionStore: falta secret');
 
-  let sessions = null; // Map<id, { createdAt, lastSeenAt, expiresAt }>
+  let sessions = null; // Map<id, { createdAt, lastSeenAt, expiresAt, reauthAt? }>
   let loading = null;
   let writeQueue = Promise.resolve();
 
@@ -56,7 +56,10 @@ export function createSessionStore({ file, secret, now = () => Date.now(), ttlMs
       if (!entries) throw new Error('sin sessions');
       for (const [id, s] of Object.entries(entries)) {
         if (/^[0-9a-f]{64}$/.test(id) && s && Number.isFinite(s.expiresAt)) {
-          map.set(id, { createdAt: Number(s.createdAt) || 0, lastSeenAt: Number(s.lastSeenAt) || 0, expiresAt: Number(s.expiresAt) });
+          const session = { createdAt: Number(s.createdAt) || 0, lastSeenAt: Number(s.lastSeenAt) || 0, expiresAt: Number(s.expiresAt) };
+          // Fase 4 (F4-R68): reauthAt solo se conserva si es un número finito.
+          if (Number.isFinite(s.reauthAt)) session.reauthAt = s.reauthAt;
+          map.set(id, session);
         }
       }
     } catch {
@@ -93,11 +96,13 @@ export function createSessionStore({ file, secret, now = () => Date.now(), ttlMs
   return {
     ensureLoaded,
 
-    async create() {
+    /** Crea una sesión; con `reauthAt` (fase 4, login/setup) la marca como recién confirmada. */
+    async create({ reauthAt } = {}) {
       await ensureLoaded();
       const current = now();
       const id = crypto.randomBytes(32).toString('hex');
       const session = { createdAt: current, lastSeenAt: current, expiresAt: current + ttlMs };
+      if (Number.isFinite(reauthAt)) session.reauthAt = reauthAt;
       purgeExpired(current);
       sessions.set(id, session);
       await persist();
@@ -125,6 +130,16 @@ export function createSessionStore({ file, secret, now = () => Date.now(), ttlMs
       session.expiresAt = current + ttlMs;
       await persist();
       return { renewed: true };
+    },
+
+    /** Confirmación reciente de la contraseña (F4-R68): reauthAt = ahora, persistido. */
+    async markReauth(id) {
+      await ensureLoaded();
+      const session = sessions.get(id);
+      if (!session) return false;
+      session.reauthAt = now();
+      await persist();
+      return true;
     },
 
     async destroy(id) {

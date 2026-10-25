@@ -43,5 +43,13 @@ Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyC
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
   }
 
+# Fase 4 (mejora M5 de la fase 2): tampoco deben quedar túneles rápidos de cloudflared hacia el panel local.
+Get-CimInstance Win32_Process -Filter "Name = 'cloudflared.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--url http://localhost:') } |
+  ForEach-Object {
+    Write-Host "Cerrando proceso cloudflared.exe (PID $($_.ProcessId)) del túnel del panel."
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+
 Write-Host ''
 Write-Host 'Listo. El panel ya no arranca con Windows. Comprueba con: Get-ScheduledTask -TaskName PuestoDeMandoMUVER*'

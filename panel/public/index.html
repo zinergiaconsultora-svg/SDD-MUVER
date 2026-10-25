@@ -34,6 +34,7 @@
         <button type="button" class="btn" id="refresh-button">Actualizar</button>
       </div>
       <div id="claude-notice" class="claude-notice"></div>
+      <section id="attention" class="attention" hidden aria-live="polite"></section>
       <div id="projects" class="projects" aria-live="polite" aria-busy="true">
         <p class="muted" id="loading-message">Cargando el estado de los proyectos…</p>
       </div>
@@ -73,8 +74,36 @@
     <section id="detail" class="detail-view" hidden aria-live="polite"></section>
   </main>
 
+  <dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-dialog-title">
+    <form method="dialog" class="dialog-form">
+      <h2 id="confirm-dialog-title">¿Confirmas la acción?</h2>
+      <div id="confirm-dialog-body" class="dialog-body"></div>
+      <div id="confirm-dialog-extra" class="dialog-extra"></div>
+      <div class="dialog-actions">
+        <button type="submit" class="btn" value="cancel">Cancelar</button>
+        <button type="submit" class="btn primary" value="confirm" id="confirm-dialog-ok">Confirmar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="reauth-dialog" class="dialog" aria-labelledby="reauth-dialog-title">
+    <form method="dialog" class="dialog-form" id="reauth-form">
+      <h2 id="reauth-dialog-title">Confirma tu contraseña</h2>
+      <p class="muted">Estás usando el panel desde Internet: para ejecutar acciones repite la contraseña del panel (se pide cada 15 minutos).</p>
+      <div class="field">
+        <label for="reauth-password">Contraseña del panel</label>
+        <input id="reauth-password" type="password" name="password" autocomplete="current-password" required>
+      </div>
+      <p id="reauth-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="submit" class="btn" value="cancel" formnovalidate>Cancelar</button>
+        <button type="submit" class="btn primary" value="confirm">Confirmar</button>
+      </div>
+    </form>
+  </dialog>
+
   <footer class="footer">
-    <p>Acceso protegido por contraseña. Los proyectos abiertos en Claude Code aparecen solos; se actualiza cada minuto.</p>
+    <p>Acceso protegido por contraseña. Los proyectos abiertos en Claude Code aparecen solos; se actualiza cada minuto. Desde la pestaña «Trabajar» de cada proyecto puedes lanzar Claude Code, los tests y el commit.</p>
   </footer>
 
   <script type="module" src="/app.js"></script>

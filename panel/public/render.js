@@ -103,9 +103,15 @@ function renderTags(tags) {
   return `<ul class="tags">${tags.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ul>`;
 }
 
+/** La URL si empieza por http:// o https://; si no, '' (nunca un href con javascript:, data:… — F4-R90). */
+export function safeHttpUrl(value) {
+  return typeof value === 'string' && /^https?:\/\//i.test(value) ? value : '';
+}
+
 function renderOpenApp(appUrl) {
-  if (appUrl) {
-    return `<a class="btn primary" href="${escapeHtml(appUrl)}" target="_blank" rel="noopener">Abrir app</a>`;
+  const safe = safeHttpUrl(appUrl);
+  if (safe) {
+    return `<a class="btn primary" href="${escapeHtml(safe)}" target="_blank" rel="noopener">Abrir app</a>`;
   }
   return '<a class="btn primary" aria-disabled="true" title="Sin URL de la app configurada">Abrir app</a>';
 }
@@ -157,8 +163,9 @@ export function renderProjectCard(project, now = Date.now()) {
   const body = project.exists === false
     ? `${activity}<p class="missing">Ruta no encontrada</p>`
     : `${activity}${renderGitBlock(project.git, now)}${renderSddBlock(project.sdd, project.progress)}`;
-  const repoLink = project.repoUrl
-    ? `<a class="btn link" href="${escapeHtml(project.repoUrl)}" target="_blank" rel="noopener">Repositorio</a>`
+  const repoUrl = safeHttpUrl(project.repoUrl);
+  const repoLink = repoUrl
+    ? `<a class="btn link" href="${escapeHtml(repoUrl)}" target="_blank" rel="noopener">Repositorio</a>`
     : '';
   const deleteButton = isManual(project)
     ? `<button type="button" class="btn danger" data-action="delete" data-id="${id}">Eliminar</button>`

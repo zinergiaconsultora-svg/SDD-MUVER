@@ -14,8 +14,9 @@
   Code (app-flyder, appcc-real, crm-zinergia, app-finanzas-restaurante y los que se añadan).
 - Se construye en fases (ver `feature_list.json`): fase 1 lectura + alta/baja de proyectos (hecha);
   fase 2 acceso web seguro desde Internet con contraseña y Cloudflare Tunnel (hecha); fase 3 descubrimiento
-  automático de los proyectos abiertos en Claude Code (esta); después acciones de desarrollo con confirmación
-  y visual/avisos.
+  automático de los proyectos abiertos en Claude Code (hecha); fase 4 **trabajar desde el panel** (esta):
+  hablar con Claude Code (lanzado en el PC con permisos acotados), botones del flujo SDD, ejecutar tests, ver
+  cambios, commit y push, salida en vivo e historial, y la cola "Te necesitan"; después visual/avisos (fase 5).
 
 ## Piezas principales (a alto nivel)
 > Ej: una base de datos, un servidor/backend, una interfaz/frontend, integraciones externas.
@@ -37,7 +38,11 @@
   atómica (`.tmp` + `rename`). Contiene `auth.json` (hash scrypt de la contraseña única, `salt`, `params`,
   `sessionSecret` para firmar cookies), `sessions.json` (lista blanca de sesiones con `createdAt`,
   `lastSeenAt`, `expiresAt` en ms; caducidad deslizante de 30 días), `public-url.txt` (URL pública del túnel),
-  `panel.log` y `cloudflared.log`.
+  `panel.log` y `cloudflared.log`. Fase 4: `runs/<projectId>/index.json` (historial de ejecuciones: `RunMeta`,
+  más reciente primero, máx. 200 por proyecto) y `runs/<projectId>/<runId>.jsonl` (eventos de cada ejecución, el
+  prompt completo incluido), `audit.log` (una línea JSON por acción de ejecución: quién, desde dónde, qué y con qué
+  resultado; nunca contraseñas, cookies, tokens ni más de 120 caracteres del prompt; rota a 5 MB → `audit.log.1`)
+  y, en `sessions.json`, `reauthAt` (última confirmación de la contraseña).
 - **Backend / lógica:** `panel/server.js` + `panel/lib/` (Node.js, módulos nativos `http`,
   `fs`, `path`, `child_process`, `os`, `crypto`). Lee por proyecto `feature_list.json`,
   `progress/current.md` y git (rama, último commit, cambios sin commitear), calcula el
@@ -48,14 +53,37 @@
   y `scripts/run-tunnel.js`. En fase 3: `lib/path-key.js` (claves de ruta Windows/POSIX sin `path.resolve`),
   `lib/claude-discovery.js` (descubrimiento de solo lectura con caché) y `lib/project-catalog.js` (fusión con
   `projects.json`, ids estables `slug`/`slug-2`, ocultos y orden: fijados → actividad → nombre).
+  En fase 4 (rutas nuevas en `lib/work-api.js`, que `lib/app.js` solo conecta):
+  - `lib/claude-cli.js`: llamada a **Claude Code CLI** (`claude -p --output-format stream-json --verbose
+    --permission-mode acceptEdits --allowedTools <reglas> [--continue | --resume <id>] <prompt>`), con todas las
+    flags en `CLI_FLAGS`, la lista por defecto (lectura/edición + `git status/diff/log`) más los
+    `allowedCommands` del proyecto, y el traductor del stream-json a eventos. **Nunca** se salta los permisos
+    (lista `FORBIDDEN_ARGS` + test estático). Sin `--bare`: el CLI ejecuta los hooks y el `CLAUDE.md` del propio
+    proyecto, como en la terminal.
+  - `lib/runs.js` (gestor de runs en memoria: estados `queued` → `running` → `succeeded`/`failed`/`cancelled`/
+    `timeout`/`needs_permission`, un run por proyecto y `PANEL_MAX_RUNS` en total, límite de tiempo, límite de
+    salida de 5 MB y cancelación del **árbol de procesos**: `taskkill /T /F` en Windows, grupo de procesos en
+    POSIX), `lib/run-store.js` (historial en disco), `lib/command-runner.js` (pasos en serie de "Ejecutar tests" y
+    "Commit y push"), `lib/exec-utils.js` (parser propio de líneas de comando, `.cmd`/`.bat` rechazados, `npm`/`npx`
+    → `node npm-cli.js`, Git Bash en Windows), `lib/sse.js` (salida en vivo), `lib/sdd-actions.js` (botones SDD;
+    "Aprobar spec" edita **solo** el valor del `status` en `feature_list.json`, byte a byte), `lib/git-actions.js`
+    (cambios, diff y commit/push con argumentos fijos y `--no-optional-locks`, nunca forzado),
+    `lib/reauth.js` (confirmación de la contraseña por el túnel), `lib/cf-access.js` (verificación del JWT de
+    Cloudflare Access con `node:crypto`) y `lib/audit.js` (registro de auditoría).
 - **Interfaz / frontend:** `panel/public/` (index.html, styles.css, app.js, render.js, api-client.js,
   app-config.js) en vanilla JS, mobile-first (usable a 360 px), tema claro/oscuro automático
   (`prefers-color-scheme`), `manifest.webmanifest` para "añadir a pantalla de inicio". Pantallas de
   creación de contraseña, login y cambio de contraseña integradas con los mismos estilos; botones
   "Salir" y "Cambiar contraseña"; URL pública visible en el encabezado (también sin sesión). Fase 3: distintivo
   "Claude Code", línea de última sesión, botones fijar/ocultar, enlace "Mostrar ocultos (N)", sesiones recientes
-  y formulario de ajustes en el detalle, y aviso discreto si no se detecta Claude Code.
-- **Servicios externos:** `git` del sistema se invoca localmente con argumentos fijos. GitHub solo
+  y formulario de ajustes en el detalle, y aviso discreto si no se detecta Claude Code. Fase 4: `public/work.js`
+  (funciones puras) con la pestaña **"Trabajar"** del detalle (caja de mensaje con selector de sesión, botones
+  "Implementar siguiente tarea", "Aprobar tests", "Aprobar spec", "Ejecutar tests", "Ver cambios", "Commit y push",
+  salida en vivo con `EventSource`, "Cancelar", historial y "Ajustes de ejecución"), la sección **"Te necesitan"**
+  en la portada, el diálogo de confirmación (`<dialog>`) que dice exactamente qué se va a ejecutar y el diálogo de
+  contraseña cuando la API responde `reauthRequired`.
+- **Servicios externos:** el CLI `claude` instalado en el PC del humano (con su sesión iniciada) lo lanza el panel
+  en la carpeta del proyecto (fase 4). `git` del sistema se invoca localmente con argumentos fijos. GitHub solo
   como enlace (`repoUrl`). Para el acceso desde Internet se usa **Cloudflare Tunnel** (`cloudflared`):
   camino principal con URL temporal gratuita `*.trycloudflare.com` (sin cuenta ni dominio) y opción
   avanzada con dominio propio (`panel/deploy/cloudflared-config.example.yml`). El túnel es saliente:
@@ -78,6 +106,12 @@
   `PORT`, `PANEL_DATA_DIR`, `PANEL_SECURE_COOKIES`, `PANEL_TRUST_PROXY`, `CLOUDFLARED_BIN` y (fase 3)
   `CLAUDE_HOME_DIR` (carpeta que contiene `.claude.json` y `.claude/`; por defecto la del usuario). Al arrancar
   imprime también `Claude Code: detectado en … (N proyectos, M sesiones)` o `Claude Code: no detectado en …`.
+  Fase 4: `PANEL_ALLOW_EXEC` (interruptor general; `0`/`false` = solo lectura), `PANEL_MAX_RUNS` (1–10, por
+  defecto 2), `PANEL_RUN_TIMEOUT_MIN` (1–240, por defecto 30), `CLAUDE_BIN` (ejecutable de Claude Code; por
+  defecto `claude`, buscado en el `PATH`, en `%USERPROFILE%\.local\bin` o como paquete npm), `PANEL_BASH_BIN`
+  (bash para `init.sh`; en Windows se busca Git Bash), `PANEL_CF_ACCESS_TEAM` y `PANEL_CF_ACCESS_AUD` (Cloudflare
+  Access). Al arrancar imprime `Ejecución desde el panel: activada (máx. N a la vez, límite M min)` (o
+  desactivada) y el estado de Cloudflare Access.
 
 ## Cómo se comunican las piezas
 > Una frase o un esquema simple. Ej: "el frontend pide datos al backend por una API; el backend guarda en la base de datos".
@@ -92,6 +126,25 @@
   `name`, `appUrl`, `repoUrl`, `tags`, `hidden`, `pinned`; sobre un proyecto solo de Claude crea su entrada en
   `projects.json`) y `GET /api/claude/status` (fase 3: si se detecta Claude Code, dónde y cuántos proyectos y
   sesiones).
+- **Fase 4 (trabajar):** `GET /api/work/status`, `GET /api/projects/:id/work`, `POST /api/projects/:id/runs`
+  (`{ prompt, session? }` → `202` con el `RunMeta`), `POST /api/projects/:id/sdd/implement`,
+  `POST /api/projects/:id/sdd/approve-tests`, `POST /api/projects/:id/sdd/approve-spec`, `POST /api/projects/:id/tests`,
+  `GET /api/projects/:id/changes`, `GET /api/projects/:id/changes/diff?file=`, `POST /api/projects/:id/git/commit-push`,
+  `POST /api/projects/:id/permissions`, `GET /api/projects/:id/runs`, `GET /api/runs/:runId`,
+  `GET /api/runs/:runId/events` (**Server-Sent Events**: `id: <seq>` y reconexión con `Last-Event-ID`, latido
+  `: ping` cada 15 s), `POST /api/runs/:runId/cancel`, `POST /api/runs/:runId/dismiss`, `GET /api/attention` y
+  `POST /api/auth/reauth`. `PATCH /api/projects/:id` admite además `allowedCommands` y `testCommand`, y `appUrl`/
+  `repoUrl` solo con `http(s)`. La carpeta de trabajo sale **siempre** del catálogo, nunca del cuerpo de la petición.
+- **Puerta de ejecución (fase 4):** toda acción de ejecución (lanzar Claude, tests, commit y push, aprobar spec,
+  permitir un comando, cambiar los ajustes de ejecución) pasa por `gateExec`: sesión → `PANEL_ALLOW_EXEC` →
+  si llega **por el túnel** (cabecera `CF-Connecting-IP`, `Cf-Ray` o `X-Forwarded-Proto: https`, se mire o no
+  `PANEL_TRUST_PROXY`) y Cloudflare Access no está configurado, contraseña confirmada en los últimos 15 minutos
+  (`401 reauthRequired` → diálogo → `POST /api/auth/reauth`) → validaciones → auditoría. Cancelar nunca se bloquea.
+- **Cloudflare Access (fase 4, con dominio propio):** con `PANEL_CF_ACCESS_TEAM` y `PANEL_CF_ACCESS_AUD`, antes
+  de todo (estáticos incluidos) las peticiones por el túnel deben traer `Cf-Access-Jwt-Assertion` válido (RS256,
+  claves de `https://<equipo>.cloudflareaccess.com/cdn-cgi/access/certs` en caché 1 h, `aud`, `iss`, `exp`); si
+  no, `403`. La sesión del panel sigue siendo obligatoria. Con solo una de las dos variables, se rechaza todo por
+  el túnel. Pasos en `docs/acceso-web.md` §9.
 - **Sesión y defensa CSRF:** la autenticación viaja en la cookie `muver_session=<id>.<firma HMAC>`
   (`HttpOnly; SameSite=Lax; Path=/; Max-Age=30 días`, más `Secure` cuando la petición entra por HTTPS a través
   de Cloudflare — `X-Forwarded-Proto: https` — o con `PANEL_SECURE_COOKIES=1`). Toda mutación a `/api/*` (desde la
@@ -114,6 +167,9 @@
                                                                  panel/projects.json + panel/data/ (auth.json, sessions.json, public-url.txt)
                                                                                      |
                                                      solo lectura --> ~/.claude.json + ~/.claude/projects/*/*.jsonl (Claude Code)
+                                                                                     |
+                                      fase 4: spawn sin shell, cwd = carpeta del catálogo --> claude -p … / tests / git
+                                                    (stream-json → eventos → runs/*.jsonl + SSE al navegador; audit.log)
 ```
 
 ## Restricciones y decisiones de arquitectura
@@ -124,9 +180,14 @@
   sin usuarios ni roles); límite de intentos en memoria (5 fallos → 15 min de bloqueo por IP, `429`);
   cambio de contraseña revoca las demás sesiones; rescate solo desde el PC con `npm run reset-password`.
   Fuera de la red local el panel se publica únicamente a través de Cloudflare Tunnel (HTTPS).
-- El servidor no ejecuta comandos arbitrarios: en fase 1 solo lectura + alta/baja del registro;
-  `git` se invoca con una lista cerrada de argumentos. Las acciones de desarrollo llegan en
-  fase 2 y siempre con confirmación previa.
+- El servidor **no ejecuta comandos arbitrarios** ni ofrece shell o terminal libre. Desde la fase 4 solo lanza,
+  siempre con `spawn`/`execFile` **sin shell** y con los argumentos en un array: Claude Code con
+  `--permission-mode acceptEdits` y la lista autorizada de herramientas (las de lectura/edición, `git status/diff/log`
+  y los `allowedCommands` del proyecto; nunca `--dangerously-skip-permissions` ni `bypassPermissions`; lo no
+  autorizado se deniega y la interfaz ofrece "Permitir en este proyecto y reintentar"), el comando de tests
+  configurado (o `bash init.sh`) parseado por un parser propio sin significado especial para `|`, `&`, `;`, `>`…,
+  y los pasos fijos de `git add -A` → `git commit -m <mensaje>` → `git push` (nunca forzado). Cada acción pide
+  confirmación en la interfaz y queda en `audit.log`; `PANEL_ALLOW_EXEC=0` lo desactiva todo.
 - No se exponen rutas absolutas del disco al cliente más allá de lo necesario. Nunca se registran
   contraseñas ni cookies en los logs; los secretos viven solo en `panel/data/` (fuera de git).
 - El equipo del humano es Windows (rutas `C:\...`): el código debe ser portable (usar

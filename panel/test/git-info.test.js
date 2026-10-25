@@ -1,4 +1,4 @@
-// Tests de lib/git-info.js — R2, R9, R10, R12
+// Tests de lib/git-info.js — R2, R9, R10, R12; fase 4: F4-R61 (mejora M4: --no-optional-locks en status)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -72,7 +72,8 @@ test('[R12] runner espía: binario git, argumentos permitidos, cwd y timeout 500
     if (key === JSON.stringify(['rev-parse', '--is-inside-work-tree'])) return { stdout: 'true\n' };
     if (key === JSON.stringify(['rev-parse', '--abbrev-ref', 'HEAD'])) return { stdout: 'main\n' };
     if (args[0] === 'log') return { stdout: `${'a'.repeat(40)}\x1f2026-10-20T17:03:11+02:00\x1fMensaje\n` };
-    if (args[0] === 'status') return { stdout: ' M src/app.js\n?? nuevo.txt\n' };
+    // F4-R61: el estado se consulta con la opción global --no-optional-locks.
+    if (key === JSON.stringify(['--no-optional-locks', 'status', '--porcelain'])) return { stdout: ' M src/app.js\n?? nuevo.txt\n' };
     throw new Error('argumentos inesperados');
   };
   const dir = '/ruta/del/proyecto';
@@ -90,12 +91,26 @@ test('[R12] runner espía: binario git, argumentos permitidos, cwd y timeout 500
   assert.equal(info.lastCommit.date, '2026-10-20T17:03:11+02:00');
 });
 
-test('[R12] GIT_COMMANDS es la lista cerrada documentada en design.md', () => {
+test('[R12][F4-R61] GIT_COMMANDS es la lista cerrada documentada en design.md (status con --no-optional-locks)', () => {
   assert.deepEqual(GIT_COMMANDS, [
     ['rev-parse', '--is-inside-work-tree'],
     ['rev-parse', '--abbrev-ref', 'HEAD'],
     ['log', '-1', '--format=%H%x1f%cI%x1f%s'],
     ['log', '-10', '--format=%H%x1f%cI%x1f%s'],
-    ['status', '--porcelain'],
+    ['--no-optional-locks', 'status', '--porcelain'],
   ]);
+});
+
+test('[F4-R61] getGitInfo ejecuta git --no-optional-locks status --porcelain y nunca status sin esa opción', async () => {
+  const calls = [];
+  const runner = async (file, args) => {
+    calls.push(args);
+    if (args.includes('--is-inside-work-tree')) return { stdout: 'true\n' };
+    if (args.includes('--abbrev-ref')) return { stdout: 'main\n' };
+    if (args[0] === 'log') return { stdout: '' };
+    return { stdout: '' };
+  };
+  await getGitInfo('/x', { runner });
+  const statusCalls = calls.filter((a) => a.includes('status'));
+  assert.deepEqual(statusCalls, [['--no-optional-locks', 'status', '--porcelain']]);
 });

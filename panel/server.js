@@ -1,5 +1,7 @@
 // Arranque del Puesto de Mando MUVER: escucha en 0.0.0.0:PORT (defecto 4310) e imprime las URLs de acceso,
-// el directorio de datos, si hay contraseña configurada, si se detecta Claude Code y la URL pública del túnel.
+// el directorio de datos, si hay contraseña configurada, si se detecta Claude Code, si la ejecución desde el panel
+// está activada (fase 4), el estado de Cloudflare Access y la URL pública del túnel.
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,6 +11,7 @@ import { readConfig, buildStartupLines } from './lib/config.js';
 import { loadAuth } from './lib/auth.js';
 import { readPublicUrl } from './lib/public-url.js';
 import { createClaudeDiscovery } from './lib/claude-discovery.js';
+import { resolveClaudeCommand } from './lib/claude-cli.js';
 
 const PANEL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const config = readConfig(process.env, { panelDir: PANEL_DIR });
@@ -20,7 +23,31 @@ const server = createApp({
   trustProxy: config.trustProxy,
   secureCookies: config.secureCookies,
   claudeHome: config.claudeHome,
+  allowExec: config.allowExec,
+  maxRuns: config.maxRuns,
+  runTimeoutMs: config.runTimeoutMs,
+  claudeCommand: resolveClaudeCommand(config.claudeBin, {
+    platform: process.platform,
+    env: process.env,
+    execPath: process.execPath,
+    exists: (file) => fs.existsSync(file),
+  }),
+  bashBin: config.bashBin,
+  cfAccess: config.cfAccess,
 });
+
+/** Ctrl+C o parada de la tarea: cierra el servidor (cancela los runs activos y mata sus árboles de procesos). */
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Recibido ${signal}: cerrando el panel y cancelando las ejecuciones en marcha…`);
+  server.close(() => process.exit(0));
+  if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+  setTimeout(() => process.exit(0), 8000).unref();
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 /** Estado de Claude Code para la línea de arranque (escaneo propio de solo lectura; nunca impide arrancar). */
 async function claudeStartupStatus() {
@@ -54,6 +81,7 @@ server.listen(config.port, '0.0.0.0', async () => {
     configured: auth.state === 'ok',
     publicUrl,
     claude,
+    work: { allowExec: config.allowExec, maxRuns: config.maxRuns, runTimeoutMin: config.runTimeoutMs / 60000, cfAccess: config.cfAccess },
   });
   if (auth.state === 'corrupt') lines.push('AVISO: auth.json ilegible; ejecuta npm run reset-password');
   console.log(lines.join('\n'));

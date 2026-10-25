@@ -524,3 +524,15 @@ test('[F3-R22] tras un escaneo completo el árbol de claudeHome es idéntico (no
   const after = await snapshotTree(base.claudeHome);
   assert.deepEqual(after, before);
 });
+
+// ---------- Fase 4: mejora M1 (F4-R92) ----------
+
+test('[F4-R92] un summary de 120 caracteres se recorta con clipTitle a 80 + "…"', async () => {
+  const summary = 'r'.repeat(120);
+  const { session } = await singleSession([sessionLine({ type: 'summary', summary }), sessionLine({ type: 'user', text: 'hola' })]);
+  assert.equal([...session.title].length, 81);
+  assert.ok(session.title.endsWith('…'));
+  assert.equal(session.title, 'r'.repeat(80) + '…');
+  const spaced = await singleSession([sessionLine({ type: 'summary', summary: '  Resumen   con  espacios ' })]);
+  assert.equal(spaced.session.title, 'Resumen con espacios');
+});
