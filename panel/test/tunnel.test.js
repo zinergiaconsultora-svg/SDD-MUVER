@@ -32,7 +32,11 @@ test('[F2-R34] readPublicUrl: fichero ausente → null; con URL → URL; vacío 
 });
 
 test('[F2-R34] GET /api/auth/status devuelve publicUrl según public-url.txt (sin fichero, con URL, vacío) leyéndolo en cada petición', async () => {
-  const app = await startApp({ projectsFile: path.join(PANEL_DIR, 'projects.json') });
+  // Corrección T36: registro temporal (nunca el panel/projects.json local del humano, que además la app podría escribir).
+  const registryDir = await makeTempDir('muver-reg-');
+  const registryFile = path.join(registryDir, 'projects.json');
+  await fs.copyFile(path.join(PANEL_DIR, 'projects.example.json'), registryFile);
+  const app = await startApp({ projectsFile: registryFile });
   const file = path.join(app.dataDir, 'public-url.txt');
   assert.equal((await request(app.baseUrl, '/api/auth/status')).json.publicUrl, null);
   await fs.writeFile(file, 'https://abc-def-123.trycloudflare.com\n');
@@ -43,6 +47,7 @@ test('[F2-R34] GET /api/auth/status devuelve publicUrl según public-url.txt (si
   assert.equal((await request(app.baseUrl, '/api/auth/status')).json.publicUrl, null);
   await app.close();
   await removeDir(app.dataDir);
+  await removeDir(registryDir);
 });
 
 test('[F2-R35] extractTunnelUrl con la línea real de cloudflared, una sin URL y una con http://localhost', () => {

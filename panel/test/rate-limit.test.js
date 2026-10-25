@@ -62,19 +62,24 @@ function fakeReq(headers = {}, remoteAddress = '192.168.1.20') {
 }
 
 test('[F2-R25] getClientIp usa CF-Connecting-IP solo con trustProxy; si no, remoteAddress', () => {
-  assert.equal(getClientIp(fakeReq({ 'cf-connecting-ip': '  203.0.113.5 ' }), { trustProxy: true }), '203.0.113.5');
-  assert.equal(getClientIp(fakeReq({ 'cf-connecting-ip': '203.0.113.5, 10.0.0.1' }), { trustProxy: true }), '203.0.113.5');
+  // Desviación (corrección T36 / M3 de la fase 2): las cabeceras del proxy solo cuentan si la conexión viene de
+  // loopback (cloudflared); estos casos de la fase 2 se adaptan para llegar desde 127.0.0.1.
+  const viaTunnel = (headers) => fakeReq(headers, '127.0.0.1');
+  assert.equal(getClientIp(viaTunnel({ 'cf-connecting-ip': '  203.0.113.5 ' }), { trustProxy: true }), '203.0.113.5');
+  assert.equal(getClientIp(viaTunnel({ 'cf-connecting-ip': '203.0.113.5, 10.0.0.1' }), { trustProxy: true }), '203.0.113.5');
   assert.equal(getClientIp(fakeReq({}), { trustProxy: true }), '192.168.1.20');
-  assert.equal(getClientIp(fakeReq({ 'cf-connecting-ip': '203.0.113.5' }), { trustProxy: false }), '192.168.1.20');
+  assert.equal(getClientIp(viaTunnel({ 'cf-connecting-ip': '203.0.113.5' }), { trustProxy: false }), '127.0.0.1');
   assert.equal(getClientIp({ headers: {}, socket: {} }, { trustProxy: true }), 'unknown');
 });
 
 test('[F2-R14][F2-R15] isHttpsRequest según X-Forwarded-Proto, trustProxy y secureCookies', () => {
-  assert.equal(isHttpsRequest(fakeReq({}), { trustProxy: true, secureCookies: false }), false);
-  assert.equal(isHttpsRequest(fakeReq({ 'x-forwarded-proto': 'https' }), { trustProxy: true, secureCookies: false }), true);
-  assert.equal(isHttpsRequest(fakeReq({ 'x-forwarded-proto': 'HTTPS, http' }), { trustProxy: true, secureCookies: false }), true);
-  assert.equal(isHttpsRequest(fakeReq({ 'x-forwarded-proto': 'http' }), { trustProxy: true, secureCookies: false }), false);
-  assert.equal(isHttpsRequest(fakeReq({ 'x-forwarded-proto': 'https' }), { trustProxy: false, secureCookies: false }), false);
+  // Desviación (corrección T36): X-Forwarded-Proto solo cuenta desde loopback.
+  const viaTunnel = (headers) => fakeReq(headers, '127.0.0.1');
+  assert.equal(isHttpsRequest(viaTunnel({}), { trustProxy: true, secureCookies: false }), false);
+  assert.equal(isHttpsRequest(viaTunnel({ 'x-forwarded-proto': 'https' }), { trustProxy: true, secureCookies: false }), true);
+  assert.equal(isHttpsRequest(viaTunnel({ 'x-forwarded-proto': 'HTTPS, http' }), { trustProxy: true, secureCookies: false }), true);
+  assert.equal(isHttpsRequest(viaTunnel({ 'x-forwarded-proto': 'http' }), { trustProxy: true, secureCookies: false }), false);
+  assert.equal(isHttpsRequest(viaTunnel({ 'x-forwarded-proto': 'https' }), { trustProxy: false, secureCookies: false }), false);
   assert.equal(isHttpsRequest(fakeReq({}), { trustProxy: false, secureCookies: true }), true);
 });
 
@@ -98,4 +103,32 @@ test('[F2-R8][F2-R20] parseCookies y buildSetCookie (con y sin Secure, borrado c
   assert.ok(cleared.includes('Path=/'));
   assert.ok(cleared.includes('HttpOnly'));
   assert.ok(cleared.includes('SameSite=Lax'));
+});
+
+// ---------- Corrección T36 (= M3 de la fase 2): IP real para el límite de intentos y mapa acotado ----------
+
+test('[F4-R68] corrección T36: las cabeceras del proxy solo cuentan desde loopback (cloudflared); desde la LAN, remoteAddress', async () => {
+  const { isLoopbackAddress } = await import('../lib/http-utils.js');
+  for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) assert.equal(isLoopbackAddress(ip), true, ip);
+  for (const ip of ['192.168.1.20', '10.0.0.1', '::ffff:192.168.1.20', '', undefined, '127.0.0.1.evil']) assert.equal(isLoopbackAddress(ip), false, String(ip));
+  const lan = fakeReq({ 'cf-connecting-ip': '203.0.113.9', 'x-forwarded-for': '198.51.100.1', 'x-forwarded-proto': 'https' }, '192.168.1.20');
+  assert.equal(getClientIp(lan, { trustProxy: true }), '192.168.1.20', 'IP inventada desde la LAN ignorada');
+  assert.equal(isHttpsRequest(lan, { trustProxy: true }), false);
+  assert.equal(getClientIp(fakeReq({ 'cf-connecting-ip': '203.0.113.9' }, '::1'), { trustProxy: true }), '203.0.113.9');
+  assert.equal(getClientIp(fakeReq({ 'x-forwarded-for': '198.51.100.1, 10.0.0.2' }, '::ffff:127.0.0.1'), { trustProxy: true }), '198.51.100.1', 'X-Forwarded-For desde loopback');
+});
+
+test('[F4-R68] corrección T36: el mapa del limitador está acotado (tope y limpieza de caducadas)', () => {
+  const clock = makeClock(0);
+  const limiter = createRateLimiter({ now: clock.now, maxEntries: 100 });
+  for (let i = 0; i < 250; i++) limiter.recordFailure(`10.0.${Math.floor(i / 250)}.${i}`);
+  assert.ok(limiter.size() <= 100, `tamaño ${limiter.size()}`);
+  // Las más antiguas se descartan primero; un bloqueo reciente sobrevive.
+  for (let i = 0; i < 5; i++) limiter.recordFailure('atacante');
+  for (let i = 0; i < 99; i++) limiter.recordFailure(`relleno-${i}`);
+  assert.equal(limiter.check('atacante').blocked, true, 'el bloqueo activo no se descarta por el tope');
+  clock.advance(WINDOW_MS + BLOCK_MS + 1000);
+  limiter.recordFailure('nuevo');
+  assert.ok(limiter.size() <= 2, `caducadas eliminadas: ${limiter.size()}`);
+  assert.equal(createRateLimiter().size(), 0);
 });

@@ -117,17 +117,34 @@ function firstHeaderValue(value) {
   return typeof raw === 'string' ? raw.split(',')[0].trim() : '';
 }
 
-/** true si la cookie debe llevar Secure: secureCookies, o X-Forwarded-Proto: https con proxy de confianza. */
+/**
+ * Corrección T36 (= M3 de la fase 2): true si la conexión viene de la propia máquina (127.0.0.0/8, ::1 o su forma
+ * IPv4 mapeada). cloudflared conecta desde ahí; solo entonces se creen las cabeceras que añade el proxy.
+ */
+export function isLoopbackAddress(address) {
+  if (typeof address !== 'string') return false;
+  const ip = address.startsWith('::ffff:') ? address.slice(7) : address;
+  return ip === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip);
+}
+
+function fromProxy(req, trustProxy) {
+  return Boolean(trustProxy) && isLoopbackAddress(req && req.socket ? req.socket.remoteAddress : undefined);
+}
+
+/** true si la cookie debe llevar Secure: secureCookies, o X-Forwarded-Proto: https llegado desde el proxy local. */
 export function isHttpsRequest(req, { trustProxy = true, secureCookies = false } = {}) {
   if (secureCookies) return true;
-  if (!trustProxy) return false;
+  if (!fromProxy(req, trustProxy)) return false;
   return firstHeaderValue(req.headers['x-forwarded-proto']).toLowerCase() === 'https';
 }
 
-/** IP del cliente: CF-Connecting-IP (proxy de confianza) o remoteAddress; 'unknown' si no hay ninguna. */
+/**
+ * IP del cliente: CF-Connecting-IP (o X-Forwarded-For) SOLO si trustProxy y la conexión viene de loopback; si no,
+ * remoteAddress (una IP inventada desde la LAN ya no evita el límite de intentos); 'unknown' si no hay ninguna.
+ */
 export function getClientIp(req, { trustProxy = true } = {}) {
-  if (trustProxy) {
-    const forwarded = firstHeaderValue(req.headers['cf-connecting-ip']);
+  if (fromProxy(req, trustProxy)) {
+    const forwarded = firstHeaderValue(req.headers['cf-connecting-ip']) || firstHeaderValue(req.headers['x-forwarded-for']);
     if (forwarded) return forwarded;
   }
   return (req.socket && req.socket.remoteAddress) || 'unknown';

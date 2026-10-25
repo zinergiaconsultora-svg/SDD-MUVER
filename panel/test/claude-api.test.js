@@ -251,10 +251,11 @@ test('[F3-R31] detalle: 22 sesiones → 20 ordenadas con 7 campos; manual con cl
   assert.equal(hidden.json.hidden, true);
 });
 
-test('[F3-R33] projects.json real copiado sin Claude: las 4 entradas iniciales no_encontrado y manual', async () => {
+test('[F3-R33] projects.json de ejemplo copiado sin Claude: las 4 entradas iniciales no_encontrado y manual', async () => {
   const base = await tempDir('muver-real-');
   const registryFile = path.join(base, 'projects.json');
-  await fs.copyFile(path.join(PANEL_DIR, 'projects.json'), registryFile);
+  // Corrección T36: la semilla versionada (projects.example.json), nunca el registro local del humano.
+  await fs.copyFile(path.join(PANEL_DIR, 'projects.example.json'), registryFile);
   const app = await startApp({ projectsFile: registryFile, password: PASSWORD });
   apps.push(app);
   cleanup.push(app.dataDir);

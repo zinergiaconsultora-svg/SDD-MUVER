@@ -13,6 +13,8 @@ import { RUN_ID_RE } from '../lib/run-store.js';
 
 const PASSWORD = 'contraseña-de-la-fase-4';
 const IS_WINDOWS = process.platform === 'win32';
+// Solo se omiten en Windows los tests que comprueban de verdad la muerte del árbol de procesos (allí se cubre con la
+// comprobación manual R97); el resto se ejecuta en todos los sistemas y solo salta la aserción de procesos vivos.
 const skipWindows = IS_WINDOWS ? 'árbol de procesos en Windows: comprobación manual (R97)' : false;
 const DEFAULT_TOOLS_TEXT = 'Read,Edit,Write,Glob,Grep,Bash(git status *),PowerShell(git status *),Bash(git diff *),PowerShell(git diff *),Bash(git log *),PowerShell(git log *)' // corrección T36: reglas Bash y PowerShell;
 
@@ -187,7 +189,7 @@ test('[F4-R19] proyecto inexistente → 404; manual con ruta inexistente y de Cl
 
 // ---------- R20, R21, R26, R27 ----------
 
-test('[F4-R20][F4-R26] un run activo bloquea otro chat y los tests (409 con runId); cancelar mata el árbol y deja cancelled', { skip: skipWindows }, async () => {
+test('[F4-R20][F4-R26] un run activo bloquea otro chat y los tests (409 con runId); cancelar mata el árbol y deja cancelled', async () => {
   const dir = await makeProjectDir();
   const ctx = await setup({ projectDir: dir, entries: [{ id: 'proy', name: 'Proy', path: dir, testCommand: `node ${FAKE_COMMAND} ok` }] });
   const first = await ctx.post('/api/projects/proy/runs', { prompt: '[[hang]] espera' });
@@ -208,16 +210,19 @@ test('[F4-R20][F4-R26] un run activo bloquea otro chat y los tests (409 con runI
   const cancel = await ctx.post(`/api/runs/${runId}/cancel`);
   assert.equal(cancel.status, 202);
   assert.equal(cancel.json.runId, runId);
-  const done = await wait(ctx, runId, { timeoutMs: 10000 });
+  const done = await wait(ctx, runId, { timeoutMs: 15000 });
   assert.equal(done.run.state, 'cancelled');
-  await waitFor(() => !isAlive(grandchild) && !isAlive(claudePid), { timeoutMs: 10000, message: 'nieto y CLI terminados' });
   assert.ok(Date.now() - started < 10000);
-  assert.throws(() => process.kill(grandchild, 0), { code: 'ESRCH' });
+  if (!IS_WINDOWS) {
+    // Muerte del árbol de procesos: solo aquí (en Windows lo comprueba el humano, R97).
+    await waitFor(() => !isAlive(grandchild) && !isAlive(claudePid), { timeoutMs: 10000, message: 'nieto y CLI terminados' });
+    assert.throws(() => process.kill(grandchild, 0), { code: 'ESRCH' });
+  }
   assert.equal(done.events.at(-1).type, 'end');
   assert.equal(done.events.at(-1).state, 'cancelled');
 });
 
-test('[F4-R21] con maxRuns 1 un run en A hace que B responda 429; tras cancelar A, B → 202', { skip: skipWindows }, async () => {
+test('[F4-R21] con maxRuns 1 un run en A hace que B responda 429; tras cancelar A, B → 202', async () => {
   const a = await makeProjectDir();
   const b = await makeProjectDir();
   const ctx = await setup({ maxRuns: 1, entries: [{ id: 'a', name: 'A', path: a }, { id: 'b', name: 'B', path: b }] });
@@ -374,14 +379,16 @@ test('[F4-R25] escenarios error y crash → failed; ejecutable inexistente → f
 
 // ---------- R29, R30 ----------
 
-test('[F4-R29] runTimeoutMs 300 con hang → timeout y aviso de límite de tiempo', { skip: skipWindows }, async () => {
+test('[F4-R29] runTimeoutMs 300 con hang → timeout y aviso de límite de tiempo', async () => {
   const ctx = await setup({ runTimeoutMs: 300 });
   const r = await ctx.post('/api/projects/proy/runs', { prompt: '[[hang]]' });
   const done = await wait(ctx, r.json.runId, { timeoutMs: 10000 });
   assert.equal(done.run.state, 'timeout');
   assert.ok(done.events.some((e) => e.type === 'notice' && /^Tiempo máximo alcanzado \(.+ min\): se detiene la ejecución$/.test(e.message)), JSON.stringify(done.events.filter((e) => e.type === 'notice')));
-  const grandchild = await grandchildPid(ctx.app.fakeLog);
-  await waitFor(() => !isAlive(grandchild), { message: 'nieto terminado tras el timeout' });
+  if (!IS_WINDOWS) {
+    const grandchild = await grandchildPid(ctx.app.fakeLog);
+    await waitFor(() => !isAlive(grandchild), { message: 'nieto terminado tras el timeout' });
+  }
 });
 
 test('[F4-R30] outputLimitBytes 10000 con big: un único aviso, .jsonl acotado, truncated y succeeded con coste', async () => {
@@ -429,7 +436,7 @@ test('[F4-R33] al cerrar el servidor se cancelan los runs activos y mueren sus p
 
 // ---------- R35, R36 ----------
 
-test('[F4-R35][F4-R36] historial con dos terminados y uno activo; GET /api/runs/:runId terminado, activo e ids no válidos', { skip: skipWindows }, async () => {
+test('[F4-R35][F4-R36] historial con dos terminados y uno activo; GET /api/runs/:runId terminado, activo e ids no válidos', async () => {
   const ctx = await setup();
   const one = await ctx.post('/api/projects/proy/runs', { prompt: 'uno' });
   await wait(ctx, one.json.runId);
@@ -464,7 +471,7 @@ test('[F4-R35][F4-R36] historial con dos terminados y uno activo; GET /api/runs/
 
 // ---------- R39–R43: SSE ----------
 
-test('[F4-R39][F4-R43] SSE durante un run: cabeceras, retry, eventos ya producidos, eventos nuevos y latido', { skip: skipWindows }, async () => {
+test('[F4-R39][F4-R43] SSE durante un run: cabeceras, retry, eventos ya producidos, eventos nuevos y latido', async () => {
   const ctx = await setup({ sseHeartbeatMs: 50 });
   const r = await ctx.post('/api/projects/proy/runs', { prompt: '[[hang]]' });
   const runId = r.json.runId;
@@ -488,7 +495,7 @@ test('[F4-R39][F4-R43] SSE durante un run: cabeceras, retry, eventos ya producid
   await wait(ctx, runId);
 });
 
-test('[F4-R40][F4-R41] SSE de un run terminado con Last-Event-ID: 3 empieza en 4 y se cierra tras end; abierto durante un run que termina', { skip: skipWindows }, async () => {
+test('[F4-R40][F4-R41] SSE de un run terminado con Last-Event-ID: 3 empieza en 4 y se cierra tras end; abierto durante un run que termina', async () => {
   const ctx = await setup();
   const r = await ctx.post('/api/projects/proy/runs', { prompt: 'hola' });
   const done = await wait(ctx, r.json.runId);

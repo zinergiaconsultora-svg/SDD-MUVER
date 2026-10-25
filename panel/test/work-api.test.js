@@ -13,7 +13,11 @@ import { defaultRunner } from '../lib/git-info.js';
 const PASSWORD = 'contraseña-de-la-fase-4';
 const gitAvailable = await hasGit();
 const skipNoGit = gitAvailable ? false : 'git no está disponible en este sistema';
-const skipNoBash = process.platform === 'win32' ? 'init.sh con bash: comprobación manual en Windows (R98)' : false;
+// init.sh necesita bash: en Windows se ejecuta si se encuentra Git Bash (misma búsqueda que el panel).
+const { findGitBash } = await import('../lib/exec-utils.js');
+const { existsSync } = await import('node:fs');
+const gitBash = process.platform === 'win32' ? findGitBash({ env: process.env, exists: existsSync, bashBin: process.env.PANEL_BASH_BIN || null }) : null;
+const skipNoBash = process.platform === 'win32' && !gitBash ? 'init.sh con bash: no se encontró Git Bash (comprobación manual R98)' : false;
 
 const cleanup = [];
 const apps = [];
@@ -291,7 +295,7 @@ async function readJsonFile(file) {
   return JSON.parse(await fs.readFile(file, 'utf8'));
 }
 
-test('[F4-R4] GET /api/work/status: valores por defecto, allowExec false, por el túnel y con un run activo', { skip: process.platform === 'win32' ? 'usa [[hang]]' : false }, async () => {
+test('[F4-R4] GET /api/work/status: valores por defecto, allowExec false, por el túnel y con un run activo', async () => {
   const ctx = await setup();
   const r = await ctx.authed('/api/work/status');
   assert.equal(r.status, 200);
@@ -478,7 +482,7 @@ test('[F4-R66] POST /api/projects y PATCH con appUrl/repoUrl que no son http(s) 
   assert.equal(ok.status, 201);
 });
 
-test('[F4-R78][F4-R79] GET /api/attention y POST /dismiss', { skip: process.platform === 'win32' ? 'usa [[hang]]' : false }, async () => {
+test('[F4-R78][F4-R79] GET /api/attention y POST /dismiss', async () => {
   const spec = await makeProjectDir({ featureList: SPEC_READY_FEATURES });
   const blocked = await makeProjectDir({ featureList: { features: [] }, currentMd: '# Estado\n- **Bloqueos / esperando:** Esperando credenciales del banco\n' });
   const hidden = await makeProjectDir({ featureList: SPEC_READY_FEATURES });

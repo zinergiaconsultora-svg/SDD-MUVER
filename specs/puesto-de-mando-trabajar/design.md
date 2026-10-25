@@ -466,7 +466,7 @@ export const GIT_ACTION_ARGS = Object.freeze({
 ### 5.10 `lib/reauth.js`
 
 - `REAUTH_TTL_MS = 15 * 60 * 1000`.
-- `isTunnelRequest(req)`: `cf-connecting-ip` o `cf-ray` no vacías, o primer valor de `x-forwarded-proto` = `https`.
+- `isTunnelRequest(req)`: `cf-connecting-ip` o `cf-ray` no vacías, o primer valor de `x-forwarded-proto` = `https`. **Corrección T36 (= M3 de la fase 2):** esta detección no cambia (desde la LAN, traer esas cabeceras solo endurece: se pide la contraseña), pero `getClientIp` e `isHttpsRequest` (`lib/http-utils.js`) solo se fían de `CF-Connecting-IP`/`X-Forwarded-For`/`X-Forwarded-Proto` si `req.socket.remoteAddress` es loopback (`isLoopbackAddress`: 127.0.0.0/8, `::1`, `::ffff:127.x`), y `lib/rate-limit.js` limpia las entradas caducadas y limita el mapa a `MAX_ENTRIES = 10000` (descarta primero las más antiguas no bloqueadas). Excepción explícita del coordinador a la lista de §9 de ficheros que no se tocan.
 - `isReauthFresh(reauthAt, nowMs, ttlMs = REAUTH_TTL_MS)`: `Number.isFinite(reauthAt) && nowMs - reauthAt <= ttlMs`.
 
 ### 5.11 `lib/audit.js`

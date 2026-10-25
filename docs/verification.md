@@ -195,6 +195,13 @@ automático. Si un requisito no se puede probar, está mal escrito.
 > **Corrección T36 (prueba manual con Claude Code 2.1.307 en Windows):** stdin para el prompt, `succeeded` con
 > denegaciones, texto de hasta 20 000 caracteres, reglas y denegaciones de `PowerShell` (escenario `denied_powershell`
 > del CLI falso) y registro vivo en `<datos>/projects.json` (tests de `prepareProjectsFile` en `registry.test.js`).
+> Además (corrección T36): la IP del límite de intentos es la real (cabeceras del proxy solo desde loopback; tests
+> `[F4-R68]` de `rate-limit.test.js` y `reauth-api.test.js`, este último desde una interfaz no loopback del equipo) y
+> el mapa del limitador está acotado. Desviaciones en tests de fase 2: `[F2-R25]` y `[F2-R14][F2-R15]` construyen la
+> petición desde `127.0.0.1` para seguir probando las cabeceras. Ningún test lee ya datos locales del humano:
+> `[F3-R33]` y `[F2-R34]` usan `panel/projects.example.json` (antes `panel/projects.json`). En Windows solo se omite
+> `[F4-R33]` (comprueba solo la muerte del árbol de procesos: R97) y `[F4-R51]` si no se encuentra Git Bash; los
+> demás tests con `[[hang]]` se ejecutan allí y solo saltan su aserción de procesos vivos.
 
 | Requisito | Test(s) que lo verifican |
 |-----------|---------------------------|
@@ -265,7 +272,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R65 | `panel/test/claude-cli.test.js` → "[F4-R65] suggestAllowedCommand", "[F4-R65] la denegación de una herramienta distinta de Bash no propone comando", "[F4-R24][F4-R65] denegación real con tool_input vacío: el detalle sale del texto "requir…", "[F4-R65] suggestAllowedCommands: comando base de cada parte, validado con ALLOWED_COMMAN…", "[F4-R24][F4-R65] corrección T36: una denegación de PowerShell se trata como la de Bash (…"; `panel/test/runs-api.test.js` → "[F4-R24][F4-R65] corrección T36: salida real (tool_input vacío) → succeeded y detalle de…", "[F4-R24][F4-R65] corrección T36: denegación real de PowerShell → succeeded con "node" co…" |
 | R66 | `panel/test/registry.test.js` → "[F4-R66] isHttpUrl y validatePatch con URLs que no son http(s)", "[F4-R66] validateNewProject rechaza appUrl/repoUrl que no son http(s) y acepta vacías o …"; `panel/test/work-api.test.js` → "[F4-R66] POST /api/projects y PATCH con appUrl/repoUrl que no son http(s) → 400 con fiel…" |
 | R67 | `panel/test/reauth-api.test.js` → "[F4-R67] reauth.js: TTL de 15 minutos, petición por el túnel y confirmación reciente", "[F4-R67] por el túnel sin confirmación reciente (16 min) → 401 reauthRequired sin proces…" |
-| R68 | `panel/test/auth.test.js` → "[F4-R68] createSessionStore: create({ reauthAt }), markReauth, persistencia y carga de r…"; `panel/test/reauth-api.test.js` → "[F4-R68] POST /api/auth/reauth correcto → 204, reauthAt en sessions.json y la acción pas…", "[F4-R68] reauth incorrecto → 401 "Contraseña incorrecta" (sin reauthRequired); al sexto …" |
+| R68 | `panel/test/auth.test.js` → "[F4-R68] createSessionStore: create({ reauthAt }), markReauth, persistencia y carga de r…"; `panel/test/rate-limit.test.js` → "[F4-R68] corrección T36: las cabeceras del proxy solo cuentan desde loopback (cloudflare…", "[F4-R68] corrección T36: el mapa del limitador está acotado (tope y limpieza de caducadas)"; `panel/test/reauth-api.test.js` → "[F4-R68] POST /api/auth/reauth correcto → 204, reauthAt en sessions.json y la acción pas…", "[F4-R68] reauth incorrecto → 401 "Contraseña incorrecta" (sin reauthRequired); al sexto …", "[F4-R68] corrección T36: desde una IP no loopback, cambiar CF-Connecting-IP en cada inte…", "[F4-R68] corrección T36: desde loopback (cloudflared) se usa CF-Connecting-IP para el lí…" |
 | R69 | `panel/test/reauth-api.test.js` → "[F4-R69] login fija reauthAt: acción por el túnel inmediata → 202; a los 16 minutos → 401", "[F4-R69] setup (crear contraseña) también fija reauthAt" |
 | R70 | `panel/test/reauth-api.test.js` → "[F4-R70] desde la red local basta la sesión: 2 horas después del login → 202" |
 | R71 | `panel/test/cf-access.test.js` → "[F4-R71] con Access configurado: estáticos y /api/auth/status por el túnel sin token o c…" |

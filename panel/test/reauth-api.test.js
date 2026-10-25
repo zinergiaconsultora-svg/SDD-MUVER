@@ -172,3 +172,36 @@ test('[F4-R74] con Access configurado y token válido no se pide confirmación (
   assert.equal(anon.status, 401);
   assert.deepEqual(anon.json, { error: 'No autenticado' });
 });
+
+// ---------- Corrección T36 (= M3 de la fase 2): el límite de intentos usa la IP real ----------
+
+const os = await import('node:os');
+const lanAddress = Object.values(os.networkInterfaces()).flat().find((i) => i && i.family === 'IPv4' && !i.internal)?.address;
+
+test('[F4-R68] corrección T36: desde una IP no loopback, cambiar CF-Connecting-IP en cada intento no evita el bloqueo (429 al sexto)', { skip: lanAddress ? false : 'sin interfaz de red no loopback' }, async () => {
+  const ctx = await setup();
+  const lanUrl = ctx.app.baseUrl.replace('127.0.0.1', lanAddress);
+  for (let i = 0; i < 5; i++) {
+    const r = await request(lanUrl, '/api/auth/login', { method: 'POST', headers: { 'CF-Connecting-IP': `203.0.113.${i + 1}` }, body: JSON.stringify({ password: 'mala-contraseña-1' }) });
+    assert.equal(r.status, 401, `intento ${i + 1}`);
+  }
+  const blocked = await request(lanUrl, '/api/auth/login', { method: 'POST', headers: { 'CF-Connecting-IP': '203.0.113.99' }, body: JSON.stringify({ password: PASSWORD }) });
+  assert.equal(blocked.status, 429);
+  // Con cabeceras de Cloudflare desde la LAN la comprobación sigue siendo MÁS estricta: se trata como túnel.
+  const local = await ctx.app.login();
+  ctx.clock.advance(16 * MIN);
+  const strict = await request(lanUrl, '/api/projects/proy/runs', { method: 'POST', cookie: local, headers: tunnelHeaders(), body: JSON.stringify({ prompt: 'hola' }) });
+  assert.equal(strict.status, 401);
+  assert.equal(strict.json.reauthRequired, true);
+});
+
+test('[F4-R68] corrección T36: desde loopback (cloudflared) se usa CF-Connecting-IP para el límite', async () => {
+  const ctx = await setup();
+  for (let i = 0; i < 5; i++) {
+    await ctx.call('/api/auth/login', { method: 'POST', headers: { 'CF-Connecting-IP': '203.0.113.50' }, body: JSON.stringify({ password: 'mala-contraseña-1' }) });
+  }
+  const sameIp = await ctx.call('/api/auth/login', { method: 'POST', headers: { 'CF-Connecting-IP': '203.0.113.50' }, body: JSON.stringify({ password: PASSWORD }) });
+  assert.equal(sameIp.status, 429);
+  const otherIp = await ctx.call('/api/auth/login', { method: 'POST', headers: { 'CF-Connecting-IP': '203.0.113.51' }, body: JSON.stringify({ password: PASSWORD }) });
+  assert.equal(otherIp.status, 200, 'otro cliente real tras el túnel no queda bloqueado');
+});
