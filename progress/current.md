@@ -5,10 +5,10 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #3 `puesto-de-mando-descubrimiento-claude` — los proyectos de Claude Code aparecen solos (fase 3)
-- **Estado:** `pending` → spec_author redactando la spec
-- **Tarea actual:** Redacción de `specs/puesto-de-mando-descubrimiento-claude/`
+- **Estado:** `spec_ready` (53 requisitos, 28 tareas; lint 0/0) — **esperando aprobación humana (puerta 1)**
+- **Tarea actual:** Revisión humana de `specs/puesto-de-mando-descubrimiento-claude/`
 - **Siguiente paso:** Humano aprueba la spec (puerta 1) → `in_progress` → implementer.
-- **Bloqueos / esperando:** —
+- **Bloqueos / esperando:** aprobación humana de la spec de la fase 3
 
 ## Decisiones tomadas con el humano
 
