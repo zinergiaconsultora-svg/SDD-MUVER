@@ -104,3 +104,22 @@
   Reviewer: APROBADO con mejoras de seguridad M1 (alta: git.exe del proyecto en Windows), M2
   (comandos autorizados demasiado amplios), M3 (hooks y core.fsmonitor), M4, M5 y notas N1–N6.
   Informe: `progress/review_puesto-de-mando-trabajar.md`.
+
+## 2026-10-25 · Feature 14: endurecimiento-ejecucion (seguridad de la ejecución)
+- **Qué se hizo:** Resolvedor de binarios de confianza (git, node, claude, bash, taskkill solo desde
+  PATH y rutas conocidas, nunca desde carpetas de proyectos; comprobación final antes de lanzar y
+  NoDefaultCurrentDirectoryInExePath en Windows); comandos amplios sin sugerir y con confirmación
+  explícita; git del panel con core.fsmonitor=false y log.showSignature=false y filtros locales
+  anulados en lecturas; avisos de hooks y de configuración del repo en Commit y push; push SSH en
+  BatchMode; diffs con --literal-pathspecs; límites de salida y de denegaciones; approve-spec
+  rechaza con un run activo; textos de ayuda en ajustes de ejecución.
+- **Ficheros cambiados:** `panel/lib/trusted-bin.js` (nuevo), git-info, git-actions, exec-utils,
+  claude-cli, runs, sdd-actions, work-api, app, registry, server.js, public/work.js y app.js, tests,
+  `docs/architecture.md` (sección Seguridad de la ejecución), `docs/verification.md`.
+- **Requisitos cubiertos:** R1–R39 (`specs/endurecimiento-ejecucion/requirements.md`).
+- **Tests añadidos:** 70 (481 en total). Prueba manual T30 superada en Windows (git.exe y claude.exe
+  falsos en un proyecto: nunca se ejecutaron).
+- **Notas / decisiones:** Reviewer aprobó dos veces (revisión y re-revisión). Pendientes no
+  bloqueantes trasladados a la feature 15: MB1 (filtros de config.worktree y submódulos en lecturas)
+  y MB2 (lista negra incompleta → confirmación para todo comando nuevo). Informe:
+  `progress/review_endurecimiento-ejecucion.md`.

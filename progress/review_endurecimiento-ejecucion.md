@@ -172,3 +172,44 @@ He comparado las líneas eliminadas de los tests antiguos con esta lista y con �
 - `taskkill` absoluto y `NoDefaultCurrentDirectoryInExePath=1` en los hijos.
 - `npm`/`npx` → `node npm-cli.js`; Git Bash sin `System32`.
 - Comprobado por el humano en T30 con `whoami.exe` como `git.exe` y `claude.exe`: no se ejecutó en ningún paso.
+
+## Re-revisión (HEAD `3f68a23`: R34–R39, design §13)
+
+**Veredicto: APROBADO.**
+
+- `bash init.sh`: **481/481** tests en verde y sdd-lint con 0 errores.
+- MA1, MA2, M3, M4, N3, N4 y N5 están corregidos y cumplen R34–R39.
+- Las dos desviaciones de §13.2 son razonables:
+  - No se usa `-c gpg.program=`, porque rompería la firma del humano, y `log.showSignature=false` ya evita que las lecturas llamen a gpg.
+  - No se usa `--attr-source`, porque `.git/info/attributes` sigue aplicándose y además pierde `text`/`eol`. Lo he comprobado.
+- Quedan dos huecos de la misma clase (requieren poder escribir en `.git/`, como antes fsmonitor) y una lista negra todavía incompleta. Son **mejoras**, no bloqueantes.
+
+### Comprobado contra la app real (temporales, CLI falso, push solo a un `--bare` local)
+
+- **MA1.** `git fetch --upload-pack=…`, `npx.cmd -y …`, `Invoke-Expression -Command …` y `git grep -O…` son ahora amplios, no se sugieren (`null`) y exigen `acknowledgeBroad`. Tampoco se cuelan:
+  - las variantes `GIT FETCH`, `git.exe fetch`, `git -C . fetch` y `git remote update`;
+  - `node.cmd`, `npm.ps1 exec`, `python3.12w -c` y `Py.exe -c`;
+  - `cmd.exe /c`, `pwsh.exe -File`, `& x` y `Start x`.
+- **MA2.** Probé con un repo que tiene `log.showSignature`, `gpg.program`, `filter.evil.clean` y `commit.gpgsign` en `.git/config`. El listado de la app, el detalle, "Trabajar" y `GET /changes` (en navegador headless) **no** ejecutan ningún script de marca. Con el runner central directamente, `status`, `diff --stat`, `diff` y `log`, con un filtro local o con `.git/info/attributes` que apunta a un filtro local, tampoco ejecutan nada. `core.pager` y `pager.log` no se usan, porque no hay TTY.
+- **M3 y M4** (Playwright, Chromium headless, contra el panel real):
+  - El diálogo de "Commit y push" muestra el aviso de hooks (`pre-commit`) y el nuevo «Atención: la configuración de este repositorio ejecutará programas al hacer commit y push: firma de commits (commit.gpgsign ejecuta gpg.program); filtros de .gitattributes (evil)…».
+  - El nombre del proyecto `<b>A</b>` sale escapado.
+  - Bajo cada campo de "Ajustes de ejecución" aparece su texto de ayuda exacto, con `aria-describedby` correcto.
+  - Ningún fichero de marca en todo el recorrido.
+
+### Hallazgos nuevos
+
+- **MB1 (alta, no bloqueante) — Los filtros se escapan de la anulación por dos vías.**
+  - Dónde: `panel/lib/git-info.js` (`GIT_LOCAL_FILTERS_ARGS` con `--local`) y `git-actions.js` (`repoConfigRisks` con `--local`). Requisitos: R35, R36. Ambas vías verificadas.
+  - (a) **`config.worktree`.** Con `extensions.worktreeConfig=true` y `git config --worktree filter.evil.clean <script>`, el script se ejecuta en `status`, `diff --stat` y diff. `git config --local` no lee `config.worktree`.
+  - (b) **Submódulos.** El `git status` del superproyecto entra en cada submódulo y aplica el filtro definido en `.git/modules/<sm>/config` (sí ejecutado). El fsmonitor del submódulo no se ejecuta, porque los `-c` se propagan.
+  - Arreglo:
+    - Consultar con `git config --show-scope --includes --get-regexp '^filter\.'` y anular los de ámbito `local` y `worktree`. Hacer lo mismo en `repoConfigRisks`.
+    - En las lecturas, `--ignore-submodules=dirty` (o `-c diff.ignoreSubmodules=dirty`): se siguen viendo los cambios de commit del submódulo sin recorrer su árbol.
+- **MB2 (media) — La lista negra (R34) sigue dejando pasar comandos que ejecutan cosas.** Pasan, y se sugieren:
+  - binarios de Windows que ejecutan (comprobado: `forfiles /c`, `conhost`, `mshta`, `wscript`, `cscript`, `rundll32`, `regsvr32`, `msiexec`, `schtasks`);
+  - herramientas con opción de ejecución (`ssh -o ProxyCommand`, `rsync -e`, `tar --to-command`, `zip -TT`, `docker run`, `go run`);
+  - instaladores (`npm install`/`npm i`/`pip install`/`cargo install`, que ejecutan scripts de instalación).
+  
+  El design §13.1 y la arquitectura ya admiten que la lista es incompleta. Recomiendo añadir al menos `forfiles`, `conhost`, `mshta`, `wscript`, `cscript`, `rundll32`, `regsvr32` y `schtasks` como envolventes, y `ssh`/`rsync`/`tar`/`zip`/`docker` cuando el siguiente argumento es una opción.
+- **Nota.** `repoConfigRisks` solo mira la configuración local. Un `commit.gpgsign` global del humano no se avisa, y es correcto: es suyo.
