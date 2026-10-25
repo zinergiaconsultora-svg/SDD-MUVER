@@ -1,0 +1,581 @@
+/* Puesto de Mando MUVER — estilos mobile-first con tema claro/oscuro automático. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f4f6f8;
+  --fg: #1c2430;
+  --muted: #5b6775;
+  --card: #ffffff;
+  --border: #d5dbe2;
+  --accent: #1f4e79;
+  --accent-fg: #ffffff;
+  --danger: #b3261e;
+  --danger-fg: #ffffff;
+  --code-bg: #eef1f4;
+  --status-atencion: #c2410c;
+  --status-en_curso: #1d4ed8;
+  --status-inactivo: #6b7280;
+  --status-ok: #15803d;
+  --status-no_encontrado: #b3261e;
+  --status-fg: #ffffff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11161d;
+    --fg: #e6eaf0;
+    --muted: #9aa6b4;
+    --card: #1a222c;
+    --border: #2d3846;
+    --accent: #7fb3e6;
+    --accent-fg: #0b1420;
+    --danger: #f28b82;
+    --danger-fg: #1a0b0a;
+    --code-bg: #0e1319;
+    --status-atencion: #fb923c;
+    --status-en_curso: #60a5fa;
+    --status-inactivo: #9ca3af;
+    --status-ok: #4ade80;
+    --status-no_encontrado: #f87171;
+    --status-fg: #0b1420;
+    --shadow: none;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+  overflow-x: hidden;
+}
+
+img,
+pre {
+  max-width: 100%;
+  overflow: auto;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+h1 {
+  font-size: 1.25rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+}
+
+h3 {
+  font-size: 1rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  font-size: 0.9em;
+  background: var(--code-bg);
+  padding: 1px 4px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Estructura ---------- */
+
+.topbar {
+  background: var(--accent);
+  color: var(--accent-fg);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.topbar-inner,
+.container,
+.footer p {
+  margin: 0 auto;
+  padding: 0 16px;
+  max-width: 1200px;
+}
+
+.topbar-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.last-updated {
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.container {
+  padding-top: 16px;
+  padding-bottom: 32px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding: 12px 0 24px;
+}
+
+/* ---------- Rejilla de tarjetas (mobile-first) ---------- */
+
+.projects {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+@media (min-width: 601px) {
+  .projects {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+  }
+}
+
+/* ---------- Tarjetas ---------- */
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 6px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.card.status-atencion { border-left-color: var(--status-atencion); }
+.card.status-en_curso { border-left-color: var(--status-en_curso); }
+.card.status-inactivo { border-left-color: var(--status-inactivo); }
+.card.status-ok { border-left-color: var(--status-ok); }
+.card.status-no_encontrado { border-left-color: var(--status-no_encontrado); }
+
+.card-header,
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.tags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tags li {
+  font-size: 0.75rem;
+  background: var(--code-bg);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+/* ---------- Semáforo ---------- */
+
+.badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  color: var(--status-fg);
+  background: var(--status-inactivo);
+  white-space: nowrap;
+}
+
+.status-atencion.badge,
+.badge.status-atencion { background: var(--status-atencion); }
+.status-en_curso.badge,
+.badge.status-en_curso,
+.badge.status-in_progress { background: var(--status-en_curso); }
+.status-inactivo.badge,
+.badge.status-inactivo,
+.badge.status-pending { background: var(--status-inactivo); }
+.status-ok.badge,
+.badge.status-ok,
+.badge.status-done { background: var(--status-ok); }
+.status-no_encontrado.badge,
+.badge.status-no_encontrado { background: var(--status-no_encontrado); }
+.badge.status-spec_ready { background: var(--status-atencion); }
+
+/* ---------- Bloques git / SDD ---------- */
+
+.git,
+.sdd {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.95rem;
+}
+
+.branch {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.commit {
+  overflow-wrap: anywhere;
+}
+
+.commit time {
+  color: var(--muted);
+}
+
+.dirty,
+.warning {
+  color: var(--status-atencion);
+  font-size: 0.9rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.missing {
+  color: var(--status-no_encontrado);
+  font-weight: 600;
+}
+
+.awaiting,
+.blocked {
+  color: var(--status-atencion);
+  font-weight: 600;
+}
+
+.counts {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 0;
+}
+
+.counts div {
+  background: var(--code-bg);
+  border-radius: 8px;
+  padding: 6px 4px;
+  text-align: center;
+  min-width: 0;
+}
+
+.counts dt {
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.counts dd {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+/* ---------- Botones (área táctil >= 44 px) ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.btn:hover {
+  border-color: var(--accent);
+}
+
+.btn:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.btn.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+  margin-left: auto;
+}
+
+.btn.link {
+  background: transparent;
+}
+
+.btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.btn[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* ---------- Formulario de alta ---------- */
+
+.add-project {
+  margin-top: 28px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.add-project h2 {
+  margin-bottom: 12px;
+}
+
+#add-project-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field label {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.field input:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.form-error,
+.load-error {
+  background: color-mix(in srgb, var(--status-no_encontrado) 12%, var(--card));
+  border: 1px solid var(--status-no_encontrado);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.load-error {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (min-width: 601px) {
+  #add-project-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 16px;
+  }
+
+  .field:nth-of-type(1),
+  .field:nth-of-type(2),
+  .form-error-slot,
+  .form-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ---------- Vista de detalle ---------- */
+
+.detail-view[hidden] {
+  display: none;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.detail-header h2 {
+  flex: 1 1 auto;
+}
+
+.detail-section {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.features,
+.commits,
+.dirty-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.feature {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.feature:last-child {
+  border-bottom: none;
+}
+
+.feature-id {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  color: var(--muted);
+}
+
+.feature-slug {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.feature-description {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.commits li {
+  overflow-wrap: anywhere;
+}
+
+.commits time {
+  color: var(--muted);
+}
+
+.progress-text {
+  margin: 0;
+  background: var(--code-bg);
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Accesibilidad ---------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .card {
+    transition: border-color 0.15s ease;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

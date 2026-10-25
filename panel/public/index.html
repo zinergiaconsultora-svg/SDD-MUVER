@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#1f4e79">
+  <title>Puesto de Mando MUVER</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1>Puesto de Mando MUVER</h1>
+      <p class="last-updated">Última actualización: <time id="last-updated">—</time></p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="list-view" aria-labelledby="projects-title">
+      <div class="section-header">
+        <h2 id="projects-title">Proyectos</h2>
+        <button type="button" class="btn" id="refresh-button">Actualizar</button>
+      </div>
+      <div id="projects" class="projects" aria-live="polite" aria-busy="true">
+        <p class="muted" id="loading-message">Cargando el estado de los proyectos…</p>
+      </div>
+
+      <section class="add-project" aria-labelledby="add-project-title">
+        <h2 id="add-project-title">Añadir proyecto</h2>
+        <form id="add-project-form" novalidate>
+          <div class="field">
+            <label for="field-name">Nombre</label>
+            <input id="field-name" name="name" type="text" required autocomplete="off" placeholder="Mi proyecto">
+          </div>
+          <div class="field">
+            <label for="field-path">Ruta local (absoluta, en el ordenador que ejecuta el panel)</label>
+            <input id="field-path" name="path" type="text" required autocomplete="off" placeholder="C:\Users\Usuario\mi-proyecto">
+          </div>
+          <div class="field">
+            <label for="field-appUrl">URL de la app (opcional)</label>
+            <input id="field-appUrl" name="appUrl" type="url" autocomplete="off" placeholder="http://localhost:3000">
+          </div>
+          <div class="field">
+            <label for="field-repoUrl">URL del repositorio (opcional)</label>
+            <input id="field-repoUrl" name="repoUrl" type="url" autocomplete="off" placeholder="https://github.com/usuario/repo">
+          </div>
+          <div class="field">
+            <label for="field-tags">Etiquetas separadas por comas (opcional)</label>
+            <input id="field-tags" name="tags" type="text" autocomplete="off" placeholder="web, crm">
+          </div>
+          <div id="form-error" class="form-error-slot"></div>
+          <div class="form-actions">
+            <button type="submit" class="btn primary" id="add-project-submit">Añadir proyecto</button>
+          </div>
+        </form>
+      </section>
+    </section>
+
+    <section id="detail" class="detail-view" hidden aria-live="polite"></section>
+  </main>
+
+  <footer class="footer">
+    <p>Panel local sin autenticación: úsalo solo en redes de confianza. Se actualiza automáticamente cada minuto.</p>
+  </footer>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

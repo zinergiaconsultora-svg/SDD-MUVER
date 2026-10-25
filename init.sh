@@ -26,12 +26,9 @@ fi
 echo "    OK: como mucho una feature in_progress ($in_progress)."
 
 # 3. Ejecutar los tests del proyecto
-#    >>> DESCOMENTA / ADAPTA la línea de tu tecnología <<<
-echo "==> [init] Ejecutando tests..."
-# npm test            # Node / JavaScript
-# pytest -q           # Python
-# go test ./...       # Go
-echo "    (Configura aquí el comando de tests de tu proyecto.)"
+echo "==> [init] Ejecutando tests del panel (panel/)..."
+(cd panel && npm test)   # Node / JavaScript — con set -e, un test fallido aborta init.sh
+echo "    OK: tests del panel en verde."
 
 # 4. Verificación de disciplina TDD
 if [ "$in_progress" -eq 1 ]; then

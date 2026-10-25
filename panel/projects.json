@@ -1,0 +1,36 @@
+{
+  "projects": [
+    {
+      "id": "app-flyder",
+      "name": "app-flyder",
+      "path": "C:\\Users\\Usuario\\app-flyder",
+      "appUrl": "",
+      "repoUrl": "",
+      "tags": []
+    },
+    {
+      "id": "appcc-real",
+      "name": "appcc-real",
+      "path": "C:\\Users\\Usuario\\appcc-real",
+      "appUrl": "",
+      "repoUrl": "",
+      "tags": []
+    },
+    {
+      "id": "crm-zinergia",
+      "name": "crm-zinergia",
+      "path": "C:\\Users\\Usuario\\crm-zinergia",
+      "appUrl": "",
+      "repoUrl": "",
+      "tags": []
+    },
+    {
+      "id": "app-finanzas-restaurante",
+      "name": "app-finanzas-restaurante",
+      "path": "C:\\Users\\Usuario\\app-finanzas-restaurante",
+      "appUrl": "",
+      "repoUrl": "",
+      "tags": []
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+// Tests de lib/git-info.js — R2, R9, R10, R12
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { GIT_COMMANDS, getGitInfo } from '../lib/git-info.js';
+import { makeProjectDir, makeTempDir, hasGit, removeDir } from './helpers.js';
+
+const gitAvailable = await hasGit();
+const skipNoGit = gitAvailable ? false : 'git no está disponible en este sistema';
+
+const ABSENT = { isRepo: false, branch: null, lastCommit: null, dirtyCount: null, recentCommits: [], dirtyFiles: [] };
+
+test('[R9] repo con 1 commit y 1 fichero sin añadir', { skip: skipNoGit }, async () => {
+  const dir = await makeProjectDir({ git: { commits: ['Primer commit'], dirtyFile: 'nuevo.txt' } });
+  const info = await getGitInfo(dir);
+  assert.equal(info.isRepo, true);
+  assert.equal(info.branch, 'main');
+  assert.match(info.lastCommit.hash, /^[0-9a-f]{40}$/);
+  assert.ok(!Number.isNaN(Date.parse(info.lastCommit.date)), 'fecha parseable');
+  assert.equal(info.lastCommit.message, 'Primer commit');
+  assert.equal(info.dirtyCount, 1);
+  await removeDir(dir);
+});
+
+test('[R2] detalle con 2 commits devuelve recentCommits y dirtyFiles', { skip: skipNoGit }, async () => {
+  const dir = await makeProjectDir({ git: { commits: ['Uno', 'Dos'], dirtyFile: 'cambio.txt' } });
+  const info = await getGitInfo(dir, { detail: true });
+  assert.equal(info.recentCommits.length, 2);
+  assert.deepEqual(info.recentCommits.map((c) => c.message), ['Dos', 'Uno']);
+  assert.equal(info.recentCommits[0].hash, info.lastCommit.hash);
+  assert.deepEqual(info.dirtyFiles, ['cambio.txt']);
+  await removeDir(dir);
+});
+
+test('[R10] repo sin commits → isRepo true y lastCommit null', { skip: skipNoGit }, async () => {
+  const dir = await makeProjectDir({ git: { commits: [] } });
+  const info = await getGitInfo(dir, { detail: true });
+  assert.equal(info.isRepo, true);
+  assert.equal(info.lastCommit, null);
+  assert.deepEqual(info.recentCommits, []);
+  assert.equal(info.dirtyCount, 0);
+  await removeDir(dir);
+});
+
+test('[R10] directorio sin .git → forma ausente', { skip: skipNoGit }, async () => {
+  const dir = await makeTempDir();
+  const info = await getGitInfo(dir, { detail: true });
+  assert.equal(info.isRepo, false);
+  assert.equal(info.branch, null);
+  assert.equal(info.lastCommit, null);
+  assert.equal(info.dirtyCount, null);
+  assert.deepEqual(info.recentCommits, []);
+  await removeDir(dir);
+});
+
+test('[R10] runner que falla con ENOENT → forma ausente sin lanzar', async () => {
+  const runner = async () => {
+    const err = new Error('spawn git ENOENT');
+    err.code = 'ENOENT';
+    throw err;
+  };
+  const info = await getGitInfo('/cualquier/dir', { runner, detail: true });
+  assert.deepEqual(info, ABSENT);
+});
+
+test('[R12] runner espía: binario git, argumentos permitidos, cwd y timeout 5000', async () => {
+  const calls = [];
+  const allowed = new Set(GIT_COMMANDS.map((args) => JSON.stringify(args)));
+  const runner = async (file, args, opts) => {
+    calls.push({ file, args, opts });
+    const key = JSON.stringify(args);
+    if (key === JSON.stringify(['rev-parse', '--is-inside-work-tree'])) return { stdout: 'true\n' };
+    if (key === JSON.stringify(['rev-parse', '--abbrev-ref', 'HEAD'])) return { stdout: 'main\n' };
+    if (args[0] === 'log') return { stdout: `${'a'.repeat(40)}\x1f2026-10-20T17:03:11+02:00\x1fMensaje\n` };
+    if (args[0] === 'status') return { stdout: ' M src/app.js\n?? nuevo.txt\n' };
+    throw new Error('argumentos inesperados');
+  };
+  const dir = '/ruta/del/proyecto';
+  const info = await getGitInfo(dir, { runner, detail: true });
+  assert.ok(calls.length >= 4);
+  for (const call of calls) {
+    assert.equal(call.file, 'git');
+    assert.ok(allowed.has(JSON.stringify(call.args)), `argumentos no permitidos: ${call.args.join(' ')}`);
+    assert.equal(call.opts.cwd, dir);
+    assert.equal(call.opts.timeout, 5000);
+  }
+  assert.equal(info.branch, 'main');
+  assert.equal(info.dirtyCount, 2);
+  assert.deepEqual(info.dirtyFiles, ['src/app.js', 'nuevo.txt']);
+  assert.equal(info.lastCommit.date, '2026-10-20T17:03:11+02:00');
+});
+
+test('[R12] GIT_COMMANDS es la lista cerrada documentada en design.md', () => {
+  assert.deepEqual(GIT_COMMANDS, [
+    ['rev-parse', '--is-inside-work-tree'],
+    ['rev-parse', '--abbrev-ref', 'HEAD'],
+    ['log', '-1', '--format=%H%x1f%cI%x1f%s'],
+    ['log', '-10', '--format=%H%x1f%cI%x1f%s'],
+    ['status', '--porcelain'],
+  ]);
+});
