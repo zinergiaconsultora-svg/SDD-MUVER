@@ -4,21 +4,22 @@
 > leader y el implementer. Si cierras la sesión y la abres mañana, esto te dice por
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
-- **Feature en curso:** #1 `puesto-de-mando-base` — Puesto de Mando MUVER, fase 1
-- **Estado:** `in_progress` — implementación terminada (83 tests en verde, `init.sh` OK); **esperando revisión humana de los tests (puerta 2)**
-- **Tarea actual:** T27 (verificación manual del humano en Windows/móvil); T1–T26 y T28–T30 hechas
-- **Siguiente paso:** El humano aprueba los tests → el leader lanza al reviewer → `done`.
-- **Bloqueos / esperando:**
-  - Aprobación humana de los tests (puerta 2) y verificación manual T27.
-  - El humano debe aportar el `muver.html` actual de `panel-muver` (se guardará en
-    `panel/legacy/muver.html`) y ajustar las rutas locales de `panel/projects.json`.
+- **Feature en curso:** #2 `puesto-de-mando-acceso-web` — acceso web seguro (fase 2)
+- **Estado:** `pending` → spec_author redactando la spec
+- **Tarea actual:** Redacción de `specs/puesto-de-mando-acceso-web/`
+- **Siguiente paso:** Humano aprueba la spec (puerta 1) → `in_progress` → implementer.
+- **Bloqueos / esperando:** —
 
-## Decisiones tomadas en esta sesión
+## Decisiones tomadas con el humano
 
 - `panel-muver` se unifica dentro de este repo, en la carpeta `panel/`.
-- El puesto de mando se divide en 3 features (fase 1 lectura + alta de proyectos +
-  móvil; fase 2 acciones de desarrollo; fase 3 visual de lo hecho y avisos).
-- Proyectos iniciales: app-flyder, appcc-real, crm-zinergia, app-finanzas-restaurante.
+- Roadmap de 5 fases (ver `feature_list.json`): 1 base (hecha), 2 acceso web seguro,
+  3 descubrimiento automático de proyectos de Claude Code, 4 trabajar desde el panel
+  (Claude Code CLI + botones SDD), 5 visual y avisos push.
+- Publicación en Internet con **Cloudflare Tunnel**; el humano tiene Claude Code CLI
+  instalado en su PC Windows.
+- Pendiente del humano: T27 de la fase 1 (prueba manual), rutas reales y `appUrl` en
+  `panel/projects.json`, aportar `muver.html` para `panel/legacy/`.
 
 ---
 
