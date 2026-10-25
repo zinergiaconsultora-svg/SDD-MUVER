@@ -1,7 +1,6 @@
 // Arranque del Puesto de Mando MUVER: escucha en 0.0.0.0:PORT (defecto 4310) e imprime las URLs de acceso,
 // el directorio de datos, si hay contraseña configurada, si se detecta Claude Code, si la ejecución desde el panel
 // está activada (fase 4), el estado de Cloudflare Access y la URL pública del túnel.
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,7 +11,6 @@ import { loadAuth } from './lib/auth.js';
 import { readPublicUrl } from './lib/public-url.js';
 import { createClaudeDiscovery } from './lib/claude-discovery.js';
 import { prepareProjectsFile } from './lib/registry.js';
-import { resolveClaudeCommand } from './lib/claude-cli.js';
 
 const PANEL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const config = readConfig(process.env, { panelDir: PANEL_DIR });
@@ -36,12 +34,10 @@ const server = createApp({
   allowExec: config.allowExec,
   maxRuns: config.maxRuns,
   runTimeoutMs: config.runTimeoutMs,
-  claudeCommand: resolveClaudeCommand(config.claudeBin, {
-    platform: process.platform,
-    env: process.env,
-    execPath: process.execPath,
-    exists: (file) => fs.existsSync(file),
-  }),
+  // Feature 14 (D5): Claude se resuelve en cada lanzamiento (cwd del run y catálogo vigente), no una vez al arrancar.
+  claudeBin: config.claudeBin,
+  panelDir: PANEL_DIR,
+  env: process.env,
   bashBin: config.bashBin,
   cfAccess: config.cfAccess,
 });

@@ -1,6 +1,8 @@
 // Tests de integración de lib/work-api.js — bloque A (F4: R50, R51, R55–R60): ejecutar tests, ver cambios y
 // "Commit y push" contra repos git temporales reales y un remoto --bare local (nunca un remoto real).
 // Bloque B (F4: R4–R6, R62–R64, R66, R78, R79): estado, permisos por proyecto y cola de atención.
+// Feature 14: F14-R16, F14-R17 y F14-R18 (comandos amplios con confirmación expresa). Ajuste de [F4-R6]: la
+// respuesta de /work incluye broadCommands (desviación declarada en docs/verification.md).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -349,6 +351,7 @@ test('[F4-R6] GET /api/projects/:id/work: con arnés, git, init.sh y allowedComm
     defaultTools: DEFAULT_TOOLS,
     activeRun: null,
     sessions: [{ id: 's-1', title: 'primera sesión', lastActivityAt: '2026-10-24T09:00:00.000Z' }],
+    broadCommands: [], // feature 14 (F14-R18)
   });
   const b = await ctx.authed('/api/projects/bare/work');
   assert.equal(b.json.hasSdd, false);
@@ -450,7 +453,8 @@ test('[F4-R64] POST /permissions: añade sin duplicar, crea la entrada de un pro
   assert.deepEqual((await readJsonFile(ctx.registryFile)).projects[0].allowedCommands, ['npm run lint']);
   const bad = await ctx.post('/api/projects/proy/permissions', { command: 'npm test; rm' });
   assert.equal(bad.status, 400);
-  assert.deepEqual(bad.json, { error: 'Comando no válido: solo letras, números, espacios y . _ : / = @ + - (máx. 200)', field: 'command' });
+  // Feature 14 (texto ampliado de design.md §4.1, desviación declarada en docs/verification.md).
+  assert.deepEqual(bad.json, { error: 'Comando no válido: solo letras, números, espacios y . _ : / = @ + - (máx. 200; no puede empezar por - ni terminar en :)', field: 'command' });
   assert.equal((await ctx.post('/api/projects/no-existe/permissions', { command: 'npm test' })).status, 404);
 
   const claudeId = slugify(path.basename(claudeOnly));
@@ -534,4 +538,87 @@ test('[F4-R78][F4-R79] GET /api/attention y POST /dismiss', async () => {
   assert.deepEqual(busy.json, { error: 'La ejecución sigue en marcha' });
   await ctx.post(`/api/runs/${live.json.runId}/cancel`);
   await wait(ctx, live.json.runId);
+});
+
+// ---------- Feature 14: comandos amplios (R16, R17, R18) ----------
+
+async function auditLines(ctx) {
+  try {
+    return (await fs.readFile(path.join(ctx.app.dataDir, 'audit.log'), 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
+}
+
+test('[F14-R16] POST /permissions con un comando amplio: 400 needsAcknowledge sin guardar; con acknowledgeBroad se guarda y se audita', async () => {
+  const ctx = await setup();
+  const before = await fs.readFile(ctx.registryFile, 'utf8');
+  const r = await ctx.post('/api/projects/proy/permissions', { command: 'node' });
+  assert.equal(r.status, 400);
+  assert.deepEqual(r.json, {
+    error: 'Comando de ejecución libre: «node». Permite a Claude ejecutar cualquier programa en este proyecto; confírmalo expresamente para autorizarlo',
+    field: 'command',
+    needsAcknowledge: true,
+    broadCommands: ['node'],
+  });
+  assert.equal(await fs.readFile(ctx.registryFile, 'utf8'), before, 'projects.json sin cambios');
+  const notTrue = await ctx.post('/api/projects/proy/permissions', { command: 'node', acknowledgeBroad: 'true' });
+  assert.equal(notTrue.status, 400, 'solo vale acknowledgeBroad === true');
+
+  const ok = await ctx.post('/api/projects/proy/permissions', { command: 'node', acknowledgeBroad: true });
+  assert.equal(ok.status, 200, ok.text);
+  assert.deepEqual(ok.json, { allowedCommands: ['node'] });
+  assert.deepEqual((await readJsonFile(ctx.registryFile)).projects[0].allowedCommands, ['node']);
+  const entries = (await auditLines(ctx)).filter((l) => l.action === 'permissions.add');
+  const accepted = entries.find((l) => l.status === 200);
+  assert.deepEqual(accepted.detail.acknowledgedBroad, ['node']);
+  assert.ok(entries.some((l) => l.status === 400 && l.result === 'rejected'));
+
+  const again = await ctx.post('/api/projects/proy/permissions', { command: 'node' });
+  assert.equal(again.status, 200, 'un comando ya guardado no pide la marca');
+  const plain = await ctx.post('/api/projects/proy/permissions', { command: 'npm test' });
+  assert.equal(plain.status, 200);
+  assert.deepEqual(plain.json, { allowedCommands: ['node', 'npm test'] });
+});
+
+test('[F14-R17] PATCH con un comando amplio nuevo: 400 sin guardar ningún campo; con la marca 200; después se conserva sin la marca', async () => {
+  const ctx = await setup();
+  const before = await fs.readFile(ctx.registryFile, 'utf8');
+  const r = await ctx.authed('/api/projects/proy', { method: 'PATCH', body: JSON.stringify({ allowedCommands: ['npm test', 'git'], testCommand: 'npm test', name: 'Otro' }) });
+  assert.equal(r.status, 400);
+  assert.deepEqual(r.json, {
+    error: 'Comando de ejecución libre: «git». Permite a Claude ejecutar cualquier programa en este proyecto; confírmalo expresamente para autorizarlo',
+    field: 'allowedCommands',
+    needsAcknowledge: true,
+    broadCommands: ['git'],
+  });
+  assert.equal(await fs.readFile(ctx.registryFile, 'utf8'), before, 'ni allowedCommands ni testCommand ni name');
+  const two = await ctx.authed('/api/projects/proy', { method: 'PATCH', body: JSON.stringify({ allowedCommands: ['node -e', 'git'] }) });
+  assert.equal(two.json.error, 'Comandos de ejecución libre: «node -e», «git». Permite a Claude ejecutar cualquier programa en este proyecto; confírmalo expresamente para autorizarlo');
+  assert.deepEqual(two.json.broadCommands, ['node -e', 'git']);
+
+  const ok = await ctx.authed('/api/projects/proy', { method: 'PATCH', body: JSON.stringify({ allowedCommands: ['npm test', 'git'], testCommand: 'npm test', acknowledgeBroad: true }) });
+  assert.equal(ok.status, 200, ok.text);
+  const saved = (await readJsonFile(ctx.registryFile)).projects[0];
+  assert.deepEqual(saved.allowedCommands, ['npm test', 'git']);
+  assert.equal(saved.testCommand, 'npm test');
+  assert.ok(!('acknowledgeBroad' in saved), 'la marca no se guarda');
+  const settings = (await auditLines(ctx)).filter((l) => l.action === 'settings.exec' && l.status === 200);
+  assert.deepEqual(settings.at(-1).detail.acknowledgedBroad, ['git']);
+
+  const keep = await ctx.authed('/api/projects/proy', { method: 'PATCH', body: JSON.stringify({ allowedCommands: ['git', 'npm run build'] }) });
+  assert.equal(keep.status, 200, 'git ya estaba guardado: no se pide la marca');
+  assert.deepEqual((await readJsonFile(ctx.registryFile)).projects[0].allowedCommands, ['git', 'npm run build']);
+});
+
+test('[F14-R18] GET /work incluye broadCommands en el orden de allowedCommands (vacía si no hay)', async () => {
+  const dir = await makeProjectDir();
+  const other = await makeProjectDir();
+  cleanup.push(other);
+  const ctx = await setup({ dir, entries: [
+    { id: 'proy', name: 'Proy', path: dir, allowedCommands: ['npm test', 'node', 'git rev-list', 'env'] },
+    { id: 'otro', name: 'Otro', path: other },
+  ] });
+  assert.deepEqual((await ctx.authed('/api/projects/proy/work')).json.broadCommands, ['node', 'env']);
+  assert.deepEqual((await ctx.authed('/api/projects/otro/work')).json.broadCommands, []);
 });

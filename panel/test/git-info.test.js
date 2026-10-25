@@ -1,8 +1,10 @@
-// Tests de lib/git-info.js — R2, R9, R10, R12; fase 4: F4-R61 (mejora M4: --no-optional-locks en status)
+// Tests de lib/git-info.js — R2, R9, R10, R12; fase 4: F4-R61 (mejora M4: --no-optional-locks en status);
+// feature 14: F14-R7, F14-R13 y F14-R21 (runner de git central con resolvedor, prefijo y entorno de Windows).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { GIT_COMMANDS, getGitInfo } from '../lib/git-info.js';
+import { GIT_COMMANDS, GIT_SAFE_PREFIX, getGitInfo, createGitRunner } from '../lib/git-info.js';
+import { createBinaryResolver, BIN_ERRORS } from '../lib/trusted-bin.js';
 import { makeProjectDir, makeTempDir, hasGit, removeDir } from './helpers.js';
 
 const gitAvailable = await hasGit();
@@ -113,4 +115,81 @@ test('[F4-R61] getGitInfo ejecuta git --no-optional-locks status --porcelain y n
   await getGitInfo('/x', { runner });
   const statusCalls = calls.filter((a) => a.includes('status'));
   assert.deepEqual(statusCalls, [['--no-optional-locks', 'status', '--porcelain']]);
+});
+
+// ---------- Feature 14: runner de git central (R7, R13, R21) ----------
+
+/** Resolvedor de prueba: git en /usr/bin (y en la carpeta del proyecto, que debe descartarse). */
+function testResolver({ platform = 'linux', files = ['/srv/p/git', '/usr/bin/git'], PATH = '/srv/p:/usr/bin' } = {}) {
+  const set = new Set(files);
+  return createBinaryResolver({ platform, env: { PATH }, homeDir: '/home/u', fsOps: { isFile: (f) => set.has(f), isExecutable: () => true, realpath: (f) => (set.has(f) ? f : null) } });
+}
+
+function spyExecFile(calls, result = { stdout: 'true\n', stderr: '' }) {
+  return (file, args, opts, callback) => {
+    calls.push({ file, args, opts });
+    setImmediate(() => callback(null, result.stdout, result.stderr));
+    return {};
+  };
+}
+
+test('[F14-R7][F14-R21] createGitRunner: ruta absoluta del resolvedor, prefijo -c core.fsmonitor=false, cwd y sin shell', async () => {
+  assert.deepEqual(GIT_SAFE_PREFIX, ['-c', 'core.fsmonitor=false']);
+  assert.ok(Object.isFrozen(GIT_SAFE_PREFIX));
+  const calls = [];
+  const runner = createGitRunner({ resolver: testResolver(), execFileImpl: spyExecFile(calls), platform: 'linux' });
+  const out = await runner('git', ['--no-optional-locks', 'status', '--porcelain'], { cwd: '/srv/p', timeout: 5000 });
+  assert.equal(out.stdout, 'true\n');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].file, '/usr/bin/git', 'nunca el git de la carpeta del proyecto');
+  assert.deepEqual(calls[0].args, ['-c', 'core.fsmonitor=false', '--no-optional-locks', 'status', '--porcelain']);
+  assert.equal(calls[0].opts.cwd, '/srv/p');
+  assert.equal(calls[0].opts.timeout, 5000);
+  assert.equal(calls[0].opts.shell, false);
+  assert.ok(!('env' in calls[0].opts) || calls[0].opts.env === undefined, 'en Linux no se añade entorno');
+  const info = await getGitInfo('/srv/p', { runner });
+  assert.equal(info.isRepo, true);
+  assert.ok(calls.every((c) => c.args[0] === '-c' && c.args[1] === 'core.fsmonitor=false'), 'todas las consultas de getGitInfo llevan el prefijo');
+});
+
+test('[F14-R7] createGitRunner rechaza cualquier programa que no sea git y los fallos de resolución, sin llamar a execFile', async () => {
+  const calls = [];
+  const runner = createGitRunner({ resolver: testResolver(), execFileImpl: spyExecFile(calls), platform: 'linux' });
+  for (const file of ['node', '/usr/bin/git', 'git.exe', 'bash']) {
+    await assert.rejects(runner(file, ['--version'], { cwd: '/srv/p' }), (err) => err.code === 'EUNTRUSTED' && err.message === BIN_ERRORS.untrusted(file.split('/').pop()), file);
+  }
+  const onlyInProject = createGitRunner({ resolver: testResolver({ files: ['/srv/p/git'] }), execFileImpl: spyExecFile(calls), platform: 'linux' });
+  await assert.rejects(onlyInProject('git', ['status'], { cwd: '/srv/p' }), (err) => err.code === 'ENOTFOUND_BIN' && err.message === BIN_ERRORS.onlyInProject('git'));
+  const notFound = createGitRunner({ resolver: testResolver({ files: [] }), execFileImpl: spyExecFile(calls), platform: 'linux' });
+  await assert.rejects(notFound('git', ['status'], { cwd: '/srv/p' }), (err) => err.message === BIN_ERRORS.notFound('git'));
+  const lying = { resolve: () => ({ ok: true, file: '/srv/p/git', prefixArgs: [] }), isTrustedPath: (f, o) => testResolver().isTrustedPath(f, o) };
+  const guarded = createGitRunner({ resolver: lying, execFileImpl: spyExecFile(calls), platform: 'linux' });
+  await assert.rejects(guarded('git', ['status'], { cwd: '/srv/p' }), (err) => err.code === 'EUNTRUSTED');
+  assert.equal(calls.length, 0, 'execFile no se llamó nunca');
+  assert.deepEqual(await getGitInfo('/srv/p', { runner: notFound, detail: true }), ABSENT, 'git no encontrado → forma ausente');
+});
+
+test('[F14-R13] createGitRunner en win32 añade NoDefaultCurrentDirectoryInExePath=1 al entorno sin cambiar el resto', async () => {
+  const calls = [];
+  const resolver = testResolver({ platform: 'win32', files: ['C:\\Git\\cmd\\git.exe'], PATH: 'C:\\Git\\cmd' });
+  const runner = createGitRunner({ resolver, execFileImpl: spyExecFile(calls), platform: 'win32' });
+  await runner('git', ['status'], { cwd: 'C:\\p', env: { A: '1', GIT_TERMINAL_PROMPT: '0' } });
+  assert.equal(calls[0].file, 'C:\\Git\\cmd\\git.exe');
+  assert.deepEqual(calls[0].opts.env, { A: '1', GIT_TERMINAL_PROMPT: '0', NoDefaultCurrentDirectoryInExePath: '1' });
+  await runner('git', ['status'], { cwd: 'C:\\p' });
+  assert.equal(calls[1].opts.env.NoDefaultCurrentDirectoryInExePath, '1');
+  assert.equal(calls[1].opts.env.PATH, process.env.PATH, 'sin env explícito se parte de process.env');
+  const linuxCalls = [];
+  await createGitRunner({ resolver: testResolver(), execFileImpl: spyExecFile(linuxCalls), platform: 'linux' })('git', ['status'], { cwd: '/srv/p', env: { A: '1' } });
+  assert.deepEqual(linuxCalls[0].opts.env, { A: '1' }, 'en Linux el entorno no cambia');
+});
+
+test('[F14-R7] createGitRunner: un fallo de execFile llega como rechazo con stdout/stderr (getGitInfo lo trata como hoy)', async () => {
+  const failing = (file, args, opts, callback) => {
+    setImmediate(() => callback(Object.assign(new Error('fallo'), { code: 128 }), '', 'fatal: not a git repository'));
+    return {};
+  };
+  const runner = createGitRunner({ resolver: testResolver(), execFileImpl: failing, platform: 'linux' });
+  await assert.rejects(runner('git', ['status'], { cwd: '/srv/p' }), (err) => err.code === 128 && err.stderr === 'fatal: not a git repository');
+  assert.deepEqual(await getGitInfo('/srv/p', { runner }), ABSENT);
 });

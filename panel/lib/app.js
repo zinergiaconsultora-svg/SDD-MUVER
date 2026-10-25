@@ -1,14 +1,17 @@
 // Servidor HTTP del panel: autenticación por contraseña, sesiones firmadas, defensa CSRF, API JSON y estáticos.
 // Fase 3: catálogo fusionado con los proyectos de Claude Code (solo lectura de ~/.claude), ajustes por PATCH.
 // Fase 4: rutas de trabajo (lib/work-api.js), Cloudflare Access, confirmación de contraseña y auditoría.
+// Feature 14: un resolvedor de ejecutables de confianza con la instantánea de carpetas del catálogo, el runner de git
+// central por defecto, la opción `env`, Claude resuelto en cada lanzamiento y el PATCH con comandos amplios.
 // Sin listen (lo hace server.js o los tests).
+import fsp from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { loadRegistry, saveRegistry, validateNewProject, removeProject, validatePatch, upsertSettings, EXEC_FIELDS } from './registry.js';
+import { loadRegistry, saveRegistry, validateNewProject, removeProject, validatePatch, upsertSettings, execSettingsOf, EXEC_FIELDS } from './registry.js';
 import { createClaudeDiscovery, DEFAULT_TTL_MS } from './claude-discovery.js';
-import { buildCatalog, findMerged, buildCatalogDetail, buildCatalogSummary } from './project-catalog.js';
+import { buildCatalog, findMerged, buildCatalogDetail, buildCatalogSummary, mergeProjects } from './project-catalog.js';
 import {
   sendJson,
   sendEmpty,
@@ -25,8 +28,9 @@ import { validatePassword, hashPassword, verifyPassword, createAuthRecord, loadA
 import { createSessionStore, SESSION_TTL_MS } from './sessions.js';
 import { createRateLimiter } from './rate-limit.js';
 import { readPublicUrl } from './public-url.js';
-import { createWorkApi } from './work-api.js';
-import { resolveClaudeCommand } from './claude-cli.js';
+import { createWorkApi, newBroadCommands, broadCommandBody } from './work-api.js';
+import { createBinaryResolver } from './trusted-bin.js';
+import { createGitRunner } from './git-info.js';
 import { isTunnelRequest } from './reauth.js';
 import { createAccessVerifier, ACCESS_HEADER } from './cf-access.js';
 import { createAuditLog } from './audit.js';
@@ -67,7 +71,11 @@ const ACCESS_ERRORS = Object.freeze({
  *           trustProxy?: boolean, secureCookies?: boolean, claudeHome?: string, claudeCacheTtlMs?: number,
  *           allowExec?: boolean, maxRuns?: number, runTimeoutMs?: number, claudeCommand?: object, bashBin?: string|null,
  *           cfAccess?: object|null, cfCertsUrl?: string, fetchImpl?: Function, platform?: string,
- *           outputLimitBytes?: number, keepRuns?: number, sseHeartbeatMs?: number, extraEnv?: object }} options
+ *           outputLimitBytes?: number, keepRuns?: number, sseHeartbeatMs?: number, extraEnv?: object,
+ *           env?: object, claudeBin?: string, panelDir?: string, binaryResolver?: object }} options
+ * Feature 14: `env` (entorno del panel, por defecto process.env), `claudeBin` (por defecto 'claude'; se resuelve en
+ * cada lanzamiento), `panelDir` (carpeta de arranque para un CLAUDE_BIN relativo) y `binaryResolver` (tests).
+ * `claudeCommand` se sigue aceptando (tests): se usa tal cual, pero pasa por la guardia en cada lanzamiento.
  */
 export function createApp({
   projectsFile,
@@ -92,6 +100,10 @@ export function createApp({
   keepRuns,
   sseHeartbeatMs = 15000,
   extraEnv = {},
+  env = process.env,
+  claudeBin = 'claude',
+  panelDir = process.cwd(),
+  binaryResolver,
 } = {}) {
   if (!projectsFile) throw new Error('createApp: falta projectsFile');
   if (!publicDir) throw new Error('createApp: falta publicDir');
@@ -108,7 +120,13 @@ export function createApp({
   let authLoading = null;
   let sessions = null;
 
-  const catalogOptions = () => (runner ? { now, runner } : { now });
+  // Feature 14: carpetas del catálogo vigente (registro + Claude Code) que el resolvedor excluye; la actualiza cada
+  // loadSources(). Incluye la ruta real de cada carpeta (enlaces y uniones).
+  let projectDirsSnapshot = [];
+  const resolver = binaryResolver ?? createBinaryResolver({ platform, env, bashBin, panelDir, getProjectDirs: () => projectDirsSnapshot });
+  const gitRunner = runner ?? createGitRunner({ resolver, platform });
+
+  const catalogOptions = () => ({ now, runner: gitRunner });
 
   const accessConfigured = Boolean(cfAccess && !cfAccess.error && cfAccess.team && cfAccess.aud);
   const accessVerifier = accessConfigured
@@ -120,9 +138,13 @@ export function createApp({
     projectsFile,
     dataDir,
     now,
-    runner,
+    runner: gitRunner,
     platform,
-    claudeCommand: claudeCommand || resolveClaudeCommand('claude', { platform }),
+    env,
+    resolver,
+    claudeBin,
+    panelDir,
+    claudeCommand,
     bashBin,
     allowExec,
     maxRuns,
@@ -308,12 +330,35 @@ export function createApp({
 
   // ---------- Rutas de proyectos (fase 1 + catálogo de la fase 3) ----------
 
-  /** Registro (capa de ajustes) y último escaneo de Claude Code (con caché y TTL). */
+  /** Carpetas (y rutas reales) de todos los proyectos del catálogo fusionado, incluidos los ocultos. */
+  async function catalogDirs(registry, scan) {
+    const dirs = [];
+    for (const m of mergeProjects(registry.projects, scan && scan.projects)) {
+      if (m.unresolved || typeof m.path !== 'string' || !m.path.trim()) continue;
+      const dir = path.resolve(m.path);
+      dirs.push(dir);
+      try {
+        const real = await fsp.realpath(dir);
+        if (real !== dir) dirs.push(real);
+      } catch {
+        // La carpeta no existe en este PC: basta con su ruta.
+      }
+    }
+    return dirs;
+  }
+
+  /** Registro (capa de ajustes) y último escaneo de Claude Code (con caché y TTL). Actualiza la instantánea. */
   async function loadSources() {
     const registry = await loadRegistry(projectsFile);
     const scan = await discovery.scan();
+    projectDirsSnapshot = await catalogDirs(registry, scan);
     return { registry, discovery: scan };
   }
+
+  // Instantánea inicial sin esperar (si falla, se reintenta en la siguiente petición).
+  loadSources().catch((err) => {
+    console.error('[panel] No se pudo leer el catálogo al arrancar:', err && err.message ? err.message : err);
+  });
 
   async function listProjects(res, { includeHidden }) {
     const sources = await loadSources();
@@ -353,6 +398,14 @@ export function createApp({
     const valid = validatePatch(body);
     if (!valid.ok) return reply(valid.status, valid.field ? { error: valid.error, field: valid.field } : { error: valid.error });
     if (merged.unresolved || !merged.path) return reply(400, { error: ERRORS.unresolvedSettings });
+    // Feature 14 (M2): un comando amplio NUEVO exige acknowledgeBroad: true; sin ella no se guarda ningún campo.
+    if (valid.changes.allowedCommands) {
+      const fresh = newBroadCommands(valid.changes.allowedCommands, execSettingsOf(merged.settingsEntry).allowedCommands);
+      if (fresh.length) {
+        if (body.acknowledgeBroad !== true) return reply(400, broadCommandBody(fresh, 'allowedCommands'));
+        if (ctx) ctx.setDetail({ acknowledgedBroad: fresh });
+      }
+    }
     const entry = merged.settingsEntry ?? {
       id: merged.id,
       name: merged.name,

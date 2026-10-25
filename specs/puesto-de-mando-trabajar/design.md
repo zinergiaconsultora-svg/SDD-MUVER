@@ -614,7 +614,7 @@ Los tests que necesitan git real usan `hasGit()` y se saltan si no hay git; los 
 
 ## 9. Ficheros que NO se tocan
 
-- `panel/lib/path-key.js`, `panel/lib/rate-limit.js`, `panel/lib/http-utils.js`, `panel/lib/project-state.js`, `panel/lib/project-catalog.js`, `panel/lib/auth.js`, `panel/lib/public-url.js`, `panel/lib/tunnel.js`, `panel/lib/network.js`, `panel/public/app-config.js`, `panel/projects.json`, `panel/scripts/`, `panel/deploy/install-service.ps1`, `panel/deploy/cloudflared-config.example.yml`, `panel/legacy/`.
+- `panel/lib/path-key.js`, `panel/lib/project-state.js`, `panel/lib/project-catalog.js`, `panel/lib/auth.js`, `panel/lib/public-url.js`, `panel/lib/tunnel.js`, `panel/lib/network.js`, `panel/public/app-config.js`, `panel/projects.json`, `panel/scripts/`, `panel/deploy/install-service.ps1`, `panel/deploy/cloudflared-config.example.yml`, `panel/legacy/`. `http-utils.js` y `rate-limit.js` se modificaron en la corrección T36 (§5.10). (corregido en la feature 14)
 - `panel/lib/claude-discovery.js` salvo la línea del título (M1). **Nada** escribe en `~/.claude` ni en `~/.claude.json` (el panel solo lanza el CLI, que es quien escribe sus propias sesiones).
 - `.claude/`, `CLAUDE.md`, `AGENTS.md`, `CHECKPOINTS.md`, `sdd-lint.js`, `init.sh`, `docs/specs.md`, `docs/constitution.md`, `docs/conventions.md`, `docs/context_map.json`, specs de las fases 1–3.
 - `docs/acceso-web.md`: solo se **añade** la sección 9 al final y filas a la tabla de variables de §5; no se reescribe lo existente.
@@ -635,7 +635,7 @@ Los tests que necesitan git real usan `hasGit()` y se saltan si no hay git; los 
 | Reescribir `feature_list.json` con `JSON.stringify(…, null, 2)` | Alteraría formatos distintos (BOM, `\r\n`, orden, escapes); la edición por rango solo toca el valor. |
 | `reauthAt` solo en memoria | Contradice la decisión del humano y obligaría a reconfirmar tras cada reinicio del panel aunque se acabe de iniciar sesión. |
 | Cola de espera cuando se alcanza `maxRuns` | Complica el modelo y el humano no vería por qué no arranca; se responde `429` y la UI lo explica. |
-| Pasar el prompt por stdin | Igual de robusto, pero el humano pidió el prompt como argumento; el riesgo de opciones se cubre con el espacio inicial (R11). |
+| Pasar el prompt como argumento posicional | Descartado tras la prueba T36: `--allowedTools` es variádica y se tragaba el prompt; el prompt va por stdin (D1, §5.2). (corregido en la feature 14) |
 
 ## 11. Riesgos y notas de implementación
 

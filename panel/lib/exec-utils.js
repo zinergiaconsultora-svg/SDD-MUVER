@@ -4,15 +4,17 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
-import { pathKey } from './path-key.js';
+import { isWindowsPath } from './path-key.js';
+import { createBinaryResolver, gitBashCandidates, taskkillPath, CMD_SCRIPT_ERROR, NO_GIT_BASH_ERROR } from './trusted-bin.js';
+
+// Feature 14: los textos de la fase 4 y taskkillPath viven en trusted-bin.js (sin dependencias); se reexportan aquí.
+export { CMD_SCRIPT_ERROR, NO_GIT_BASH_ERROR, taskkillPath };
 
 export const MAX_COMMAND_LINE_CHARS = 300;
 export const MAX_COMMAND_ARGS = 50;
 export const MAX_LINE_BYTES = 1024 * 1024;
 export const KILL_GRACE_MS = 5000;
 
-export const CMD_SCRIPT_ERROR = (name) => `"${name}" es un script .cmd/.bat y el panel no usa shell: indica la ruta de un .exe o usa node <script>.js`;
-export const NO_GIT_BASH_ERROR = 'No se encontró Git Bash: instala Git for Windows o configura el comando de tests';
 
 /**
  * Separa una línea de comando en argumentos: espacios y tabuladores separan; "…" agrupa (con \" y \\ dentro);
@@ -68,67 +70,41 @@ export function formatCommandLine(args) {
     .join(' ');
 }
 
-/** Ruta de Git Bash en Windows (o null), en el orden de design.md §5.3, sin aceptar el bash de WSL. */
+/**
+ * Ruta de Git Bash en Windows (o null), en el orden de design.md §5.3, sin aceptar el bash de WSL ni candidatos
+ * relativos (feature 14: los candidatos los da trusted-bin.js, que también los usa el resolvedor).
+ */
 export function findGitBash({ env = {}, exists = () => false, bashBin = null } = {}) {
-  const win = path.win32;
-  const candidates = [
-    bashBin,
-    env.CLAUDE_CODE_GIT_BASH_PATH,
-    env.ProgramFiles ? win.join(env.ProgramFiles, 'Git', 'bin', 'bash.exe') : null,
-    env['ProgramFiles(x86)'] ? win.join(env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe') : null,
-    env.LOCALAPPDATA ? win.join(env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe') : null,
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'string' || !candidate.trim()) continue;
-    const key = pathKey(candidate) || '';
-    if (key.includes('\\system32\\') || key.includes('\\sysnative\\')) continue;
+  for (const candidate of gitBashCandidates({ env, bashBin })) {
     if (exists(candidate)) return candidate;
   }
   return null;
 }
 
-function pathDirs(env) {
-  const raw = (env && (env.PATH ?? env.Path)) || '';
-  return String(raw).split(';').map((d) => d.trim()).filter(Boolean);
+function isAbsoluteAny(bin) {
+  return path.posix.isAbsolute(bin) || path.win32.isAbsolute(bin) || isWindowsPath(bin);
 }
 
 /**
- * Ejecutable de un comando sin shell: { file, prefixArgs } | { error } (design.md §5.3).
+ * Ejecutable de un comando sin shell: { file, prefixArgs } | { error } (design.md §5.3; feature 14 §5.3).
+ * Un .js/.mjs/.cjs se lanza con node; una ruta absoluta se usa tal cual (.cmd/.bat → error); un nombre se resuelve
+ * con el resolvedor de confianza (cwd = carpeta de la llamada). Nunca se devuelve el nombre suelto.
  */
-export function resolveExecutable(name, { platform = process.platform, env = process.env, execPath = process.execPath, exists = () => false, bashBin = null } = {}) {
+export function resolveExecutable(name, { platform = process.platform, env = process.env, execPath = process.execPath, exists, bashBin = null, resolver, cwd } = {}) {
   const bin = String(name ?? '');
-  if (platform !== 'win32') {
-    if (bin === 'bash') return { file: bashBin ?? 'bash', prefixArgs: [] };
-    if (/\.(m|c)?js$/i.test(bin)) return { file: execPath, prefixArgs: [bin] };
-    return { file: bin, prefixArgs: [] };
-  }
-  const win = path.win32;
-  const lower = bin.toLowerCase();
-  if (lower === 'node' || lower === 'node.exe') return { file: execPath, prefixArgs: [] };
-  if (lower === 'npm' || lower === 'npx') {
-    const cli = win.join(win.dirname(execPath), 'node_modules', 'npm', 'bin', `${lower}-cli.js`);
-    return exists(cli) ? { file: execPath, prefixArgs: [cli] } : { error: CMD_SCRIPT_ERROR(bin) };
-  }
-  if (lower === 'bash' || lower === 'bash.exe') {
-    const bash = findGitBash({ env, exists, bashBin });
-    return bash ? { file: bash, prefixArgs: [] } : { error: NO_GIT_BASH_ERROR };
-  }
-  if (win.isAbsolute(bin)) {
+  if (/\.(m|c)?js$/i.test(bin)) return { file: execPath, prefixArgs: [bin] };
+  if (isAbsoluteAny(bin)) {
     return /\.(cmd|bat)$/i.test(bin) ? { error: CMD_SCRIPT_ERROR(bin) } : { file: bin, prefixArgs: [] };
   }
-  const dirs = pathDirs(env);
-  const names = /\.(exe|com)$/i.test(bin) ? [bin] : [`${bin}.com`, `${bin}.exe`];
-  for (const dir of dirs) {
-    for (const candidate of names) {
-      const full = win.join(dir, candidate);
-      if (exists(full)) return { file: full, prefixArgs: [] };
-    }
-  }
-  const base = bin.replace(/\.(cmd|bat)$/i, '');
-  for (const dir of dirs) {
-    if (exists(win.join(dir, `${base}.cmd`)) || exists(win.join(dir, `${base}.bat`))) return { error: CMD_SCRIPT_ERROR(bin) };
-  }
-  return { file: bin, prefixArgs: [] };
+  const active = resolver ?? createBinaryResolver({
+    platform,
+    env,
+    execPath,
+    bashBin,
+    fsOps: { isFile: exists || (() => false), isExecutable: () => true, realpath: () => null },
+  });
+  const resolved = active.resolve(bin, { cwd });
+  return resolved.ok ? { file: resolved.file, prefixArgs: resolved.prefixArgs } : { error: resolved.error };
 }
 
 /**
@@ -137,6 +113,7 @@ export function resolveExecutable(name, { platform = process.platform, env = pro
  */
 export function killProcessTree(child, {
   platform = process.platform,
+  env = process.env,
   execFileImpl = execFile,
   killImpl = (pid, signal) => process.kill(pid, signal),
   graceMs = KILL_GRACE_MS,
@@ -144,7 +121,8 @@ export function killProcessTree(child, {
 } = {}) {
   if (!child || !Number.isInteger(child.pid)) return;
   if (platform === 'win32') {
-    execFileImpl('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+    // Feature 14 (R10): por ruta absoluta, nunca por nombre (libuv lo buscaría primero en el cwd).
+    execFileImpl(taskkillPath(env), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
     return;
   }
   let exited = child.exitCode !== null && child.exitCode !== undefined;

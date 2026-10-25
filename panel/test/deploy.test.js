@@ -1,4 +1,5 @@
 // Tests estáticos de despliegue: .gitignore, deploy/*.yml, deploy/*.ps1 y docs/acceso-web.md — F2-R7, F2-R44, F2-R45, F2-R46
+// Feature 14: F14-R30 (correcciones N1/N2), F14-R31 (sección "Seguridad de la ejecución") y F14-R32 (trazabilidad).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -203,4 +204,57 @@ test('[F4-R94] corrección T36: ningún fichero de panel/ obtiene rutas de disco
   }
   await walk(PANEL_DIR);
   assert.deepEqual(offenders, [], `en Windows .pathname da "/C:/…": usa fileURLToPath en ${offenders.join(', ')}`);
+});
+
+// ---------- Feature 14: documentación (R30, R31, R32) ----------
+
+test('[F14-R30] specs/puesto-de-mando-trabajar/design.md: correcciones N1 (fila de §10) y N2 (lista de §9)', async () => {
+  const design = await read(path.join(REPO_DIR, 'specs', 'puesto-de-mando-trabajar', 'design.md'));
+  assert.ok(design.includes('| Pasar el prompt como argumento posicional | Descartado tras la prueba T36: `--allowedTools` es variádica y se tragaba el prompt; el prompt va por stdin (D1, §5.2). (corregido en la feature 14) |'), 'fila nueva de §10');
+  assert.ok(!design.includes('| Pasar el prompt por stdin |'), 'sin la fila antigua de §10');
+  const s9 = design.slice(design.indexOf('## 9. Ficheros que NO se tocan'), design.indexOf('## 10.'));
+  const firstBullet = s9.split('\n').find((l) => l.startsWith('- '));
+  assert.ok(!firstBullet.includes('panel/lib/rate-limit.js') && !firstBullet.includes('panel/lib/http-utils.js'), 'sin rate-limit.js ni http-utils.js en la lista');
+  assert.ok(firstBullet.endsWith(' `http-utils.js` y `rate-limit.js` se modificaron en la corrección T36 (§5.10). (corregido en la feature 14)'), firstBullet);
+});
+
+test('[F14-R31] docs/architecture.md tiene la sección "Seguridad de la ejecución" con sus seis apartados', async () => {
+  const architecture = await read(path.join(REPO_DIR, 'docs', 'architecture.md'));
+  const start = architecture.indexOf('## Seguridad de la ejecución');
+  assert.ok(start >= 0, 'título de la sección');
+  assert.ok(start < architecture.indexOf('## Restricciones y decisiones de arquitectura'), 'antes de "Restricciones…"');
+  const section = architecture.slice(start, architecture.indexOf('\n## ', start + 1));
+  for (const needle of [
+    'Resolución de ejecutables', 'lib/trusted-bin.js', 'proyecto contenedor', 'NoDefaultCurrentDirectoryInExePath', 'projectScript',
+    'Comandos amplios', 'acknowledgeBroad',
+    'Configuración del repositorio', 'core.fsmonitor=false', '--no-textconv', '--literal-pathspecs',
+    'Hooks', '--no-verify',
+    'Push', 'BatchMode=yes', 'core.sshCommand',
+    'Riesgos conocidos', 'N5', 'N6', '.claude/settings', '0.0.0.0', 'clean', 'credential.helper', 'cloudflared',
+  ]) {
+    assert.ok(section.includes(needle), `la sección debe mencionar ${needle}`);
+  }
+});
+
+test('[F14-R32] docs/verification.md: sección Feature 14 con una fila por requisito y cada [F14-R<n>] no manual en panel/test/', async () => {
+  const verification = await read(path.join(REPO_DIR, 'docs', 'verification.md'));
+  const start = verification.indexOf('## Mapa de trazabilidad — Feature 14: `endurecimiento-ejecucion` (prefijo `[F14-R<n>]`)');
+  assert.ok(start >= 0, 'título de la sección');
+  const end = verification.indexOf('\n## ', start + 1);
+  const section = verification.slice(start, end < 0 ? undefined : end);
+  assert.ok(section.includes('§8.3'), 'cambios declarados en tests anteriores');
+  const testsText = [];
+  for (const entry of await fs.readdir(path.join(PANEL_DIR, 'test'))) {
+    if (entry.endsWith('.js')) testsText.push(await read(path.join(PANEL_DIR, 'test', entry)));
+  }
+  const allTests = testsText.join('\n');
+  for (let n = 1; n <= 33; n++) {
+    const row = new RegExp(`^\\| R${n} \\|(.*)$`, 'm').exec(section);
+    assert.ok(row, `fila F14 de R${n}`);
+    if (row[1].includes('MANUAL')) continue;
+    if (n === 33) continue; // R33 = ./init.sh completo
+    assert.ok(row[1].includes(`[F14-R${n}]`), `la fila de R${n} cita [F14-R${n}]`);
+    assert.ok(allTests.includes(`[F14-R${n}]`), `[F14-R${n}] aparece en panel/test/`);
+  }
+  assert.match(section, /^\| R12 \|.*MANUAL/m, 'R12 es manual');
 });

@@ -17,7 +17,7 @@ export const EXEC_FIELDS = Object.freeze(['allowedCommands', 'testCommand']);
 export const MAX_ALLOWED_COMMANDS = 30;
 
 export const EXEC_ERRORS = Object.freeze({
-  invalidCommand: 'Comando no válido: solo letras, números, espacios y . _ : / = @ + - (máx. 200)',
+  invalidCommand: 'Comando no válido: solo letras, números, espacios y . _ : / = @ + - (máx. 200; no puede empezar por - ni terminar en :)',
   tooManyCommands: 'Como mucho 30 comandos autorizados',
   invalidTestCommand: (reason) => `Comando de tests no válido: ${reason}`,
   invalidUrl: 'La URL debe empezar por http:// o https://',

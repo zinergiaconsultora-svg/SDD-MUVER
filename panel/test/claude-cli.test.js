@@ -1,4 +1,6 @@
 // Tests de lib/claude-cli.js — F4: R7–R16, R65 (unitarios) y R9 (estático del fuente).
+// Feature 14: F14-R8 (resolveClaudeCommand con el resolvedor), F14-R14, F14-R15, F14-R20 (comandos amplios) y
+// F14-R28 (tope de denegaciones). Ajustes declarados (design.md §8.3): [F4-R12] y [F4-R65].
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -21,8 +23,15 @@ import {
   TEXT_MAX_CHARS,
   BASH_RULE,
   POWERSHELL_RULE,
+  MAX_PERMISSION_DENIALS,
+  isBroadCommand,
+  WRAPPER_COMMANDS,
+  RUNNER_COMMANDS,
+  GIT_EXEC_SUBCOMMANDS,
+  PKG_EXEC_SUBCOMMANDS,
 } from '../lib/claude-cli.js';
 import { PANEL_DIR } from './helpers.js';
+import { createBinaryResolver, BIN_ERRORS } from '../lib/trusted-bin.js';
 
 const DEFAULT_TOOLS_TEXT = 'Read,Edit,Write,Glob,Grep,Bash(git status *),PowerShell(git status *),Bash(git diff *),PowerShell(git diff *),Bash(git log *),PowerShell(git log *)' // corrección T36: reglas Bash y PowerShell;
 // Corrección tras la prueba manual T36 (Claude Code 2.1.307): --allowedTools es VARIÁDICA en el CLI real y se
@@ -103,12 +112,16 @@ function existsIn(set) {
   return (file) => set.has(file);
 }
 
-test('[F4-R12] resolveClaudeCommand: .js/.mjs/.cjs → node + fichero; Linux → tal cual; ruta absoluta → tal cual', () => {
+test('[F4-R12] resolveClaudeCommand: .js/.mjs/.cjs → node + fichero; Linux → PATH (ruta absoluta); ruta absoluta → tal cual', () => {
   const exists = () => false;
-  for (const bin of ['/opt/fake/claude.js', 'tool.mjs', 'C:\\x\\cli.cjs']) {
+  for (const bin of ['/opt/fake/claude.js', 'C:\\x\\cli.cjs']) {
     assert.deepEqual(resolveClaudeCommand(bin, { platform: 'linux', env: {}, execPath: '/usr/bin/node', exists }), { file: '/usr/bin/node', prefixArgs: [bin] });
   }
-  assert.deepEqual(resolveClaudeCommand('claude', { platform: 'linux', env: { PATH: '/usr/bin' }, execPath: '/usr/bin/node', exists }), { file: 'claude', prefixArgs: [] });
+  // Feature 14 (desviación declarada): un .js relativo se hace absoluto respecto a la carpeta del panel (design.md §5.5).
+  assert.deepEqual(resolveClaudeCommand('tool.mjs', { platform: 'linux', env: {}, execPath: '/usr/bin/node', exists, panelDir: '/srv/panel' }), { file: '/usr/bin/node', prefixArgs: ['/srv/panel/tool.mjs'] });
+  // Feature 14 (ajuste declarado de [F4-R12]): claude en el PATH → ruta absoluta; nada → error notFound.
+  assert.deepEqual(resolveClaudeCommand('claude', { platform: 'linux', env: { PATH: '/usr/bin' }, execPath: '/usr/bin/node', exists: (f) => f === '/usr/bin/claude' }), { file: '/usr/bin/claude', prefixArgs: [] });
+  assert.deepEqual(resolveClaudeCommand('claude', { platform: 'linux', env: { PATH: '/usr/bin' }, execPath: '/usr/bin/node', exists }), { error: BIN_ERRORS.notFound('claude') });
   assert.deepEqual(resolveClaudeCommand('/usr/local/bin/claude', { platform: 'linux', env: {}, execPath: '/usr/bin/node', exists }), { file: '/usr/local/bin/claude', prefixArgs: [] });
   assert.deepEqual(resolveClaudeCommand('D:\\tools\\claude.exe', { platform: 'win32', env: {}, execPath: WIN_EXEC, exists }), { file: 'D:\\tools\\claude.exe', prefixArgs: [] });
 });
@@ -131,10 +144,41 @@ test('[F4-R12] resolveClaudeCommand en Windows: claude.exe en PATH, instalador n
   assert.deepEqual(onlyCmd, { error: '"claude" es un script .cmd/.bat y el panel no usa shell: indica la ruta de un .exe o usa node <script>.js' });
 
   const nothing = resolveClaudeCommand('claude', { ...base, exists: () => false });
-  assert.deepEqual(nothing, { file: 'claude', prefixArgs: [] });
+  assert.deepEqual(nothing, { error: BIN_ERRORS.notFound('claude') }, 'ajuste declarado F14: nunca el nombre suelto');
 
   const upperPath = resolveClaudeCommand('claude', { platform: 'win32', env: { PATH: 'C:\\bin' }, execPath: WIN_EXEC, exists: existsIn(new Set(['C:\\bin\\claude.exe'])) });
   assert.deepEqual(upperPath, { file: 'C:\\bin\\claude.exe', prefixArgs: [] });
+});
+
+// ---------- Feature 14: resolveClaudeCommand con el resolvedor (R8, tabla de design.md §5.5) ----------
+
+function claudeResolver({ platform = 'linux', files = [], PATH = '/srv/p:/usr/bin', env = {} } = {}) {
+  const set = new Set(files);
+  return createBinaryResolver({ platform, env: { PATH, ...env }, execPath: platform === 'win32' ? WIN_EXEC : '/opt/node/bin/node', homeDir: platform === 'win32' ? 'C:\\Users\\U' : '/home/u', fsOps: { isFile: (f) => set.has(f), isExecutable: () => true, realpath: (f) => (set.has(f) ? f : null) } });
+}
+
+test('[F14-R8] resolveClaudeCommand: CLAUDE_BIN relativo con separador → absoluto respecto a la carpeta del panel', () => {
+  const o = { platform: 'linux', env: {}, execPath: '/opt/node/bin/node', panelDir: '/srv/panel' };
+  assert.deepEqual(resolveClaudeCommand('herramientas/fake.js', o), { file: '/opt/node/bin/node', prefixArgs: ['/srv/panel/herramientas/fake.js'] });
+  assert.deepEqual(resolveClaudeCommand('bin/claude', o), { file: '/srv/panel/bin/claude', prefixArgs: [] });
+  assert.deepEqual(resolveClaudeCommand('./claude', o), { file: '/srv/panel/claude', prefixArgs: [] });
+  assert.deepEqual(resolveClaudeCommand('/opt/claude', o), { file: '/opt/claude', prefixArgs: [] });
+  const w = { platform: 'win32', env: {}, execPath: WIN_EXEC, panelDir: 'C:\\panel' };
+  assert.deepEqual(resolveClaudeCommand('herramientas\\fake.js', w), { file: WIN_EXEC, prefixArgs: ['C:\\panel\\herramientas\\fake.js'] });
+  assert.deepEqual(resolveClaudeCommand('bin\\claude.exe', w), { file: 'C:\\panel\\bin\\claude.exe', prefixArgs: [] });
+});
+
+test('[F14-R8] resolveClaudeCommand con resolvedor y cwd: PATH, ~/.local/bin, descarte del proyecto y error en vez de { file: "claude" }', () => {
+  const resolver = claudeResolver({ files: ['/srv/p/claude', '/usr/bin/claude'] });
+  assert.deepEqual(resolveClaudeCommand('claude', { platform: 'linux', resolver, cwd: '/srv/p' }), { file: '/usr/bin/claude', prefixArgs: [] });
+  assert.deepEqual(resolveClaudeCommand('claude', { platform: 'linux', resolver: claudeResolver({ files: ['/srv/p/claude'] }), cwd: '/srv/p' }), { error: BIN_ERRORS.onlyInProject('claude') });
+  assert.deepEqual(resolveClaudeCommand('claude', { platform: 'linux', resolver: claudeResolver({ files: ['/home/u/.local/bin/claude'] }), cwd: '/srv/p' }), { file: '/home/u/.local/bin/claude', prefixArgs: [] });
+  assert.deepEqual(resolveClaudeCommand(' ', { platform: 'linux', resolver: claudeResolver(), cwd: '/srv/p' }), { error: BIN_ERRORS.notFound('claude') });
+  const winCli = 'C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js';
+  const w = claudeResolver({ platform: 'win32', files: ['C:\\p\\claude.exe', 'C:\\npm\\claude.cmd', winCli], PATH: 'C:\\p;C:\\npm' });
+  assert.deepEqual(resolveClaudeCommand('claude', { platform: 'win32', resolver: w, cwd: 'C:\\p' }), { file: WIN_EXEC, prefixArgs: [winCli] }, 'el claude.exe de la carpeta del proyecto se descarta');
+  const inProjectCli = claudeResolver({ platform: 'win32', files: ['C:\\p\\claude.cmd', 'C:\\p\\node_modules\\@anthropic-ai\\claude-code\\cli.js'], PATH: 'C:\\p' });
+  assert.deepEqual(resolveClaudeCommand('claude', { platform: 'win32', resolver: inProjectCli, cwd: 'C:\\p' }), { error: BIN_ERRORS.onlyInProject('claude') }, 'cli.js dentro del proyecto tampoco');
 });
 
 // ---------- R13–R15, R24: createStreamMapper ----------
@@ -274,7 +318,7 @@ test('[F4-R65] suggestAllowedCommand', () => {
   assert.equal(suggestAllowedCommand('cargo test'), 'cargo test');
   assert.equal(suggestAllowedCommand('  npm   test  '), 'npm test');
   assert.equal(suggestAllowedCommand('pnpm run build --prod'), 'pnpm run build');
-  assert.equal(suggestAllowedCommand('yarn run -s x'), 'yarn run');
+  assert.equal(suggestAllowedCommand('yarn run -s x'), null, 'ajuste declarado F14: `yarn run` sin script es amplio');
   assert.equal(suggestAllowedCommand('npm test && rm x'), null);
   for (const bad of ['a || b', 'a; b', 'a | b', 'a > b', 'a < b', 'echo `x`', 'echo $(x)']) assert.equal(suggestAllowedCommand(bad), null, bad);
   assert.equal(suggestAllowedCommand('python3 (x)'), null, 'no cumple la regla de allowedCommands');
@@ -343,8 +387,95 @@ test('[F4-R24][F4-R65] corrección T36: una denegación de PowerShell se trata c
     line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'ps1', is_error: true, content: 'This PowerShell command contains multiple operations. The following part requires approval: node --version' }] } }),
     line({ type: 'result', is_error: false, result: 'ok', permission_denials: [{ tool_name: 'PowerShell', tool_use_id: 'ps1', tool_input: {} }] }),
   ]);
-  assert.deepEqual(events.find((e) => e.type === 'permission_denied'), { type: 'permission_denied', tool: 'PowerShell', detail: 'node --version', suggestion: 'node', suggestions: ['node'] });
+  // Feature 14 (desviación declarada): `node` es amplio y no se propone (F14-R15); el detalle no cambia.
+  assert.deepEqual(events.find((e) => e.type === 'permission_denied'), { type: 'permission_denied', tool: 'PowerShell', detail: 'node --version', suggestion: null, suggestions: [] });
   const direct = mapAll([line({ type: 'result', is_error: false, permission_denials: [{ tool_name: 'PowerShell', tool_use_id: 'x', tool_input: { command: 'npm run lint -- --fix' } }] })]).events;
   assert.equal(direct.find((e) => e.type === 'permission_denied').suggestion, 'npm run lint');
   assert.equal(summarizeToolInput('PowerShell', { command: 'node --version' }, CWD), 'node --version');
+});
+
+// ---------- Feature 14: tope de denegaciones (R28) ----------
+
+test('[F14-R28] createStreamMapper: con 60 denegaciones distintas solo registra y emite las 50 primeras y marca denialsCapped', () => {
+  assert.equal(MAX_PERMISSION_DENIALS, 50);
+  const mapper = createStreamMapper({ cwd: CWD });
+  const events = [];
+  for (let i = 0; i < 60; i++) {
+    events.push(...mapper.push(line({ type: 'system', subtype: 'permission_denied', tool_name: 'Bash', tool_use_id: `d-${i}`, tool_input: { command: `cmd-${i} x` } })));
+    if (i === 49) assert.equal(mapper.denialsCapped(), false, 'con 50 todavía no se ha descartado ninguna');
+  }
+  assert.equal(events.filter((e) => e.type === 'permission_denied').length, 50);
+  assert.equal(mapper.denials().length, 50);
+  assert.equal(mapper.denials()[49].detail, 'cmd-49 x');
+  assert.equal(mapper.denialsCapped(), true);
+  const more = mapper.push(line({ type: 'result', is_error: false, result: 'ok', permission_denials: [{ tool_name: 'Bash', tool_use_id: 'otra', tool_input: { command: 'x' } }] }));
+  assert.deepEqual(more.map((e) => e.type), ['result'], 'las del result tampoco se emiten');
+  assert.equal(mapper.denials().length, 50);
+});
+
+// ---------- Feature 14: comandos amplios (R14, R15, R20) ----------
+
+test('[F14-R14] isBroadCommand con la tabla de design.md §3.5', () => {
+  const broad = ['node', 'node.exe', '/usr/bin/python3', 'node -e', 'python -c', 'bash', 'bash -c', 'env', 'env A=1 x', 'sudo ls', 'xargs', 'find .', 'git', 'git -c', 'git config', 'npm', 'npm exec', 'npm run', 'npx', 'cmd /c', 'powershell -Command', 'make -f',
+    'NODE', 'C:/tools/Node.exe', 'pnpm dlx x', 'yarn create app', 'bun x y', 'npm run -s', 'git submodule update', 'python3 -m', 'python -m -x', 'git rebase -i', 'pwsh -File x', 'deno'];
+  const notBroad = ['npm test', 'npm run build', 'git rev-list', 'git status', 'node scripts/build.js', 'python -m pytest', 'bash init.sh', 'pwsh tools/x.ps1', 'cargo test', 'pytest', 'make test', 'npx vitest',
+    'npm run lint', 'python3 -m pytest', 'git log', 'yarn test', 'bun run build', 'head', 'tee x'];
+  for (const cmd of broad) assert.equal(isBroadCommand(cmd), true, cmd);
+  for (const cmd of notBroad) assert.equal(isBroadCommand(cmd), false, cmd);
+  assert.equal(isBroadCommand('  npm   exec  '), true, 'normalizado');
+  assert.equal(isBroadCommand(undefined), false);
+  for (const list of [WRAPPER_COMMANDS, RUNNER_COMMANDS, GIT_EXEC_SUBCOMMANDS, PKG_EXEC_SUBCOMMANDS]) assert.ok(Object.isFrozen(list));
+  assert.deepEqual(PKG_EXEC_SUBCOMMANDS, ['exec', 'x', 'dlx', 'explore', 'create', 'init']);
+  for (const w of ['env', 'sudo', 'xargs', 'find', 'exec', 'eval', 'cmd', 'wsl', 'gdb']) assert.ok(WRAPPER_COMMANDS.includes(w), w);
+  for (const r of ['node', 'python3', 'bash', 'sh', 'pwsh', 'powershell', 'git', 'npm', 'make', 'awk', 'sed']) assert.ok(RUNNER_COMMANDS.includes(r), r);
+  for (const g of ['config', 'submodule', 'bisect', 'rebase', 'filter-branch', 'difftool', 'mergetool', 'credential', 'archive']) assert.ok(GIT_EXEC_SUBCOMMANDS.includes(g), g);
+});
+
+test('[F14-R15] suggestAllowedCommand(s) nunca proponen un comando amplio y proponen el primer subcomando o argumento', () => {
+  for (const cmd of ['node -e "x"', 'git -c a=b push', 'env A=1 node x', 'xargs rm', 'bash -c x', 'npm exec foo', 'yarn run -s x', 'node --version', 'python -c x', 'sudo ls', 'npx']) {
+    assert.equal(suggestAllowedCommand(cmd), null, cmd);
+    assert.deepEqual(suggestAllowedCommands(cmd), [], cmd);
+  }
+  assert.deepEqual(suggestAllowedCommands('find . -exec rm {} ;'), []);
+  assert.equal(suggestAllowedCommand('git rev-list --count HEAD'), 'git rev-list');
+  assert.equal(suggestAllowedCommand('npm run lint -- --fix'), 'npm run lint');
+  assert.equal(suggestAllowedCommand('python3 -m pytest -x'), 'python3 -m pytest');
+  assert.equal(suggestAllowedCommand('python -m pytest'), 'python -m pytest');
+  assert.equal(suggestAllowedCommand('bun run build --watch'), 'bun run build');
+  assert.equal(suggestAllowedCommand('node build.js --prod'), 'node build.js');
+  assert.equal(suggestAllowedCommand('pytest -x'), 'pytest', 'los casos de la fase 4 que no son amplios no cambian');
+  assert.equal(suggestAllowedCommand('cargo test'), 'cargo test');
+  assert.deepEqual(suggestAllowedCommands('node -e x && npm test'), ['npm test']);
+  assert.deepEqual(suggestAllowedCommands('head; git rev-list --left-right --count main...HEAD'), ['head', 'git rev-list']);
+});
+
+test('[F14-R20] isValidAllowedCommand rechaza los que empiezan por - o terminan en :', () => {
+  for (const bad of ['-x', '--help', 'git:', 'npm run test:', ' npm run test: ', ':']) assert.equal(isValidAllowedCommand(bad), false, bad);
+  for (const ok of ['npm run test:unit', 'a:b', 'git status', 'x-y']) assert.equal(isValidAllowedCommand(ok), true, ok);
+});
+
+test('[F14-R20] buildAllowedTools con 200 comandos válidos aleatorios: ninguna regla contiene * ? ( ) , en el comando ni el sufijo :*', () => {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ._:/=@+-';
+  let seed = 14;
+  const random = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const commands = [];
+  while (commands.length < 200) {
+    const length = 1 + Math.floor(random() * 30);
+    let cmd = '';
+    for (let i = 0; i < length; i++) cmd += alphabet[Math.floor(random() * alphabet.length)];
+    if (isValidAllowedCommand(cmd)) commands.push(cmd);
+  }
+  const rules = buildAllowedTools(commands).split(/,(?=(?:Bash|PowerShell|Read|Edit|Write|Glob|Grep)\b)/);
+  assert.ok(rules.length > 11);
+  for (const rule of rules.slice(DEFAULT_ALLOWED_TOOLS.length)) {
+    const match = /^(Bash|PowerShell)\((.*) \*\)$/.exec(rule);
+    assert.ok(match, rule);
+    assert.ok(!/[*?(),]/.test(match[2]), rule);
+    assert.ok(!match[2].endsWith(':'), rule);
+    assert.ok(!rule.includes(':*'), rule);
+    assert.ok(!match[2].startsWith('-'), rule);
+  }
 });

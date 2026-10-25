@@ -5,9 +5,15 @@
 //  queued ─────────────▶ running ─────────────▶ succeeded | failed | needs_permission
 //    │  spawn 'error'       │ cancel()  ─────▶ cancelled
 //    └────────▶ failed      │ timeout   ─────▶ timeout
+// Feature 14: guardia al lanzar (guardedSpawn: solo rutas de confianza, salvo el script de tests del proyecto),
+// NoDefaultCurrentDirectoryInExePath=1 en Windows, límite de salida para todos los eventos salvo state/end y tope de
+// 50 denegaciones con un aviso.
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 
 import { buildClaudeArgs, createStreamMapper } from './claude-cli.js';
+import { defaultResolver, BIN_ERRORS } from './trusted-bin.js';
+import { pathKey, lastSegment, isWindowsPath } from './path-key.js';
 import { killProcessTree, KILL_GRACE_MS, MAX_LINE_BYTES } from './exec-utils.js';
 import { runSteps, waitForChild, pipeOutput, outputEvent } from './command-runner.js';
 import { newRunId } from './run-store.js';
@@ -16,7 +22,8 @@ export const ACTIVE_STATES = Object.freeze(['queued', 'running']);
 export const FINAL_STATES = Object.freeze(['succeeded', 'failed', 'cancelled', 'timeout', 'needs_permission']);
 export const DEFAULT_OUTPUT_LIMIT_BYTES = 5 * 1024 * 1024;
 export const PROMPT_PREVIEW_CHARS = 120;
-const LIMITED_TYPES = new Set(['text', 'output', 'tool', 'tool_error']);
+// Feature 14 (M5): todo evento cuenta para el límite de salida salvo estos (y los avisos internos esenciales).
+const UNLIMITED_TYPES = new Set(['state', 'end']);
 
 export const RUN_ERRORS = Object.freeze({
   runActive: 'Ya hay una ejecución en marcha en este proyecto',
@@ -27,7 +34,20 @@ export const NOTICES = Object.freeze({
   truncated: (mb) => `Salida truncada: se alcanzó el límite de ${mb} MB`,
   lineDiscarded: 'Línea de salida descartada por superar 1 MB',
   timeout: (min) => `Tiempo máximo alcanzado (${min} min): se detiene la ejecución`,
+  denialsCapped: 'Se han alcanzado 50 denegaciones de permiso: no se registran más en esta ejecución',
 });
+
+/** true si `file` es absoluta y está dentro (estrictamente) de la carpeta `dir`. */
+function isInsideDir(file, dir) {
+  if (typeof file !== 'string' || typeof dir !== 'string') return false;
+  const absolute = isWindowsPath(file) || path.posix.isAbsolute(file);
+  if (!absolute) return false;
+  const fileKey = pathKey(file);
+  const dirKey = pathKey(dir);
+  if (!fileKey || !dirKey || fileKey === dirKey) return false;
+  const sep = isWindowsPath(dir) ? '\\' : '/';
+  return fileKey.startsWith(dirKey.endsWith(sep) ? dirKey : dirKey + sep);
+}
 
 /** Número con un decimal si no es entero (5 → "5"; 0.0095 → "0.0"). */
 function formatAmount(value) {
@@ -57,6 +77,7 @@ export function createRunManager({
   extraEnv = {},
   graceMs = KILL_GRACE_MS,
   maxLineBytes = MAX_LINE_BYTES,
+  resolver = defaultResolver,
 } = {}) {
   if (!store) throw new Error('createRunManager: falta store');
   const records = new Map(); // runId → registro de los runs activos (o terminando)
@@ -137,15 +158,18 @@ export function createRunManager({
     };
   }
 
-  /** Añade un evento (seq, at), lo guarda y lo entrega a los suscriptores. Aplica el límite de salida. */
-  function emit(rec, partial, { deliver = true, internal = false } = {}) {
+  /**
+   * Añade un evento (seq, at), lo guarda y lo entrega a los suscriptores. Aplica el límite de salida a todo evento
+   * salvo state/end y los avisos internos esenciales (truncado y tiempo máximo).
+   */
+  function emit(rec, partial, { deliver = true, internal = false, essential = false } = {}) {
     if (rec.finishing && !internal) return null;
-    if (LIMITED_TYPES.has(partial.type)) {
+    if (!essential && !UNLIMITED_TYPES.has(partial.type)) {
       if (rec.meta.truncated) return null;
       const size = Buffer.byteLength(JSON.stringify(partial));
       if (rec.meta.outputBytes + size > outputLimitBytes) {
         rec.meta.truncated = true;
-        emit(rec, { type: 'notice', message: NOTICES.truncated(formatAmount(outputLimitBytes / (1024 * 1024))) });
+        emit(rec, { type: 'notice', message: NOTICES.truncated(formatAmount(outputLimitBytes / (1024 * 1024))) }, { essential: true });
         return null;
       }
       rec.meta.outputBytes += size;
@@ -168,7 +192,7 @@ export function createRunManager({
     rec.timer = setTimeout(() => {
       if (rec.finishing) return;
       rec.timedOut = true;
-      emit(rec, { type: 'notice', message: NOTICES.timeout(formatAmount(runTimeoutMs / 60000)) });
+      emit(rec, { type: 'notice', message: NOTICES.timeout(formatAmount(runTimeoutMs / 60000)) }, { essential: true });
       stopProcess(rec);
     }, runTimeoutMs);
     if (typeof rec.timer.unref === 'function') rec.timer.unref();
@@ -176,7 +200,7 @@ export function createRunManager({
 
   function stopProcess(rec) {
     if (rec.child && Number.isInteger(rec.child.pid) && rec.child.exitCode === null && rec.child.signalCode === null) {
-      killTree(rec.child, { platform });
+      killTree(rec.child, { platform, env });
     }
     if (!rec.cancelTimer) {
       // Si el proceso no llega a salir (o no llegó a lanzarse), se cierra el run igualmente.
@@ -186,14 +210,27 @@ export function createRunManager({
   }
 
   function spawnOptions(cwd, extra = {}, { stdin = 'ignore' } = {}) {
+    const childEnv = { ...env, ...extraEnv, ...extra };
+    // Feature 14 (R13): defensa extra para los nietos que lancen programas por nombre con la API de Windows o cmd.exe.
+    if (platform === 'win32') childEnv.NoDefaultCurrentDirectoryInExePath = '1';
     return {
       cwd,
-      env: { ...env, ...extraEnv, ...extra },
+      env: childEnv,
       stdio: [stdin, 'pipe', 'pipe'],
       windowsHide: true,
       detached: platform !== 'win32',
       shell: false,
     };
+  }
+
+  /**
+   * Guardia final (design.md §5.6, D3): solo se lanza una ruta de confianza (absoluta, fuera del cwd y del catálogo)
+   * o, con `projectScript`, un script absoluto dentro del cwd del run. Si no, lanza EUNTRUSTED sin crear el proceso.
+   */
+  function guardedSpawn(file, args, opts, { projectScript = false } = {}) {
+    const allowed = projectScript ? isInsideDir(file, opts.cwd) : resolver.isTrustedPath(file, { cwd: opts.cwd });
+    if (!allowed) throw Object.assign(new Error(BIN_ERRORS.untrusted(lastSegment(file))), { code: 'EUNTRUSTED' });
+    return spawnImpl(file, args, opts);
   }
 
   function computeState(rec) {
@@ -295,9 +332,9 @@ export function createRunManager({
     let child;
     try {
       // stdin en 'pipe' solo para Claude: el prompt va por ahí (nunca en argv). Los comandos siguen con 'ignore'.
-      child = spawnImpl(file, [...prefixArgs, ...args], spawnOptions(rec.cwd, {}, { stdin: 'pipe' }));
+      child = guardedSpawn(file, [...prefixArgs, ...args], spawnOptions(rec.cwd, {}, { stdin: 'pipe' }));
     } catch (err) {
-      rec.launchError = `No se pudo ejecutar Claude Code: ${err && (err.code || err.message)}`;
+      rec.launchError = err && err.code === 'EUNTRUSTED' ? err.message : `No se pudo ejecutar Claude Code: ${err && (err.code || err.message)}`;
       emit(rec, { type: 'error', message: rec.launchError });
       finalize(rec);
       return;
@@ -317,7 +354,13 @@ export function createRunManager({
       onDiscard: () => emit(rec, { type: 'notice', message: NOTICES.lineDiscarded }),
       onLine: (stream, line) => {
         if (stream === 'stderr') emit(rec, outputEvent('stderr', line));
-        else for (const ev of mapper.push(line)) handleClaudeEvent(rec, ev);
+        else {
+          for (const ev of mapper.push(line)) handleClaudeEvent(rec, ev);
+          if (!rec.denialsNoticed && mapper.denialsCapped()) {
+            rec.denialsNoticed = true;
+            emit(rec, { type: 'notice', message: NOTICES.denialsCapped });
+          }
+        }
       },
     });
     done.then(({ code, error }) => {
@@ -371,14 +414,20 @@ export function createRunManager({
       onDiscard: () => emit(rec, { type: 'notice', message: NOTICES.lineDiscarded }),
       isStopped: () => rec.cancelRequested || rec.timedOut,
       spawnStep: (step) => {
-        const child = spawnImpl(step.file, [...(step.prefixArgs || []), ...step.args], spawnOptions(rec.cwd, step.env || {}));
-        rec.child = child;
-        return child;
+        try {
+          const child = guardedSpawn(step.file, [...(step.prefixArgs || []), ...step.args], spawnOptions(rec.cwd, step.env || {}), { projectScript: step.projectScript === true });
+          rec.child = child;
+          return child;
+        } catch (err) {
+          if (err && err.code === 'EUNTRUSTED') rec.untrustedError = err.message;
+          throw err;
+        }
       },
     }).then(({ exitCode, error }) => {
       if (error) {
-        rec.launchError = error;
-        emit(rec, { type: 'error', message: error });
+        // Para EUNTRUSTED el texto del evento es directamente BIN_ERRORS.untrusted(...).
+        rec.launchError = rec.untrustedError || error;
+        emit(rec, { type: 'error', message: rec.launchError });
       }
       rec.exitCode = exitCode;
       return finalize(rec);

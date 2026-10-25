@@ -6,7 +6,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import { parseCommandLine, formatCommandLine, resolveExecutable } from './exec-utils.js';
+import { parseCommandLine, formatCommandLine, resolveExecutable, CMD_SCRIPT_ERROR } from './exec-utils.js';
+import { pathKey, isWindowsPath } from './path-key.js';
 
 export const FEATURE_LIST_FILE = 'feature_list.json';
 
@@ -235,19 +236,62 @@ export function approveSpec(projectDir, featureId) {
   });
 }
 
+function hasSeparator(token) {
+  return token.includes('/') || token.includes('\\');
+}
+
+function isAbsoluteAny(token) {
+  return path.posix.isAbsolute(token) || path.win32.isAbsolute(token) || isWindowsPath(token);
+}
+
+/** true si `file` está dentro (estrictamente) de la carpeta `dir` (comparación con pathKey). */
+function isInside(file, dir) {
+  const fileKey = pathKey(file);
+  const dirKey = pathKey(dir);
+  if (!fileKey || !dirKey || fileKey === dirKey) return false;
+  const sep = isWindowsPath(dir) ? '\\' : '/';
+  return fileKey.startsWith(dirKey.endsWith(sep) ? dirKey : dirKey + sep);
+}
+
+/**
+ * Primer token del comando de tests → { file, prefixArgs, projectScript? } | { status, error } (design.md §3.6):
+ * .js/.mjs/.cjs → node; ruta absoluta → tal cual si es de confianza; relativa con separador → script del proyecto
+ * (ruta absoluta dentro de la carpeta del proyecto); nombre → resolvedor con cwd = carpeta del proyecto.
+ */
+function resolveFirstToken(t0, { projectDir, platform, options }) {
+  if (/\.(m|c)?js$/i.test(t0)) return resolveExecutable(t0, options);
+  if (isAbsoluteAny(t0)) {
+    if (/\.(cmd|bat)$/i.test(t0)) return { status: 409, error: CMD_SCRIPT_ERROR(t0) };
+    const trusted = options.resolver ? options.resolver.isTrustedPath(t0, { cwd: projectDir }) : !(projectDir && (isInside(t0, projectDir)));
+    if (!trusted) return { status: 400, error: SDD_ERRORS.invalidTestCommand('ruta absoluta dentro de un proyecto: escríbela relativa a la carpeta del proyecto (./…)') };
+    return { file: t0, prefixArgs: [] };
+  }
+  if (hasSeparator(t0)) {
+    const p = platform === 'win32' ? path.win32 : path.posix;
+    const file = projectDir ? p.resolve(projectDir, t0) : null;
+    if (!file || !isInside(file, projectDir)) return { status: 400, error: SDD_ERRORS.invalidTestCommand('ruta fuera del proyecto') };
+    if (platform === 'win32' && /\.(cmd|bat)$/i.test(file)) return { status: 409, error: CMD_SCRIPT_ERROR(t0) };
+    return { file, prefixArgs: [], projectScript: true };
+  }
+  return resolveExecutable(t0, options);
+}
+
 /**
  * Comando de tests de un proyecto: `testCommand` si está configurado; si no, `bash init.sh` si existe init.sh.
- * → { ok: true, steps: [{ file, prefixArgs, args, display }] } | { ok: false, status, error }.
+ * → { ok: true, steps: [{ file, prefixArgs, args, display, projectScript? }] } | { ok: false, status, error }.
+ * Feature 14: los ejecutables se resuelven con el resolvedor de confianza (nunca el nombre suelto).
  */
-export function resolveTestCommand({ testCommand, projectDir, platform = process.platform, env = process.env, execPath = process.execPath, exists = () => false, bashBin = null } = {}) {
-  const options = { platform, env, execPath, exists, bashBin };
+export function resolveTestCommand({ testCommand, projectDir, platform = process.platform, env = process.env, execPath = process.execPath, exists = () => false, bashBin = null, resolver } = {}) {
+  const options = { platform, env, execPath, exists, bashBin, resolver, cwd: projectDir };
   const configured = typeof testCommand === 'string' ? testCommand.trim() : '';
   if (configured) {
     const parsed = parseCommandLine(configured);
     if (!parsed.ok) return { ok: false, status: 400, error: SDD_ERRORS.invalidTestCommand(parsed.error) };
-    const resolved = resolveExecutable(parsed.args[0], options);
-    if (resolved.error) return { ok: false, status: 409, error: resolved.error };
-    return { ok: true, steps: [{ file: resolved.file, prefixArgs: resolved.prefixArgs, args: parsed.args.slice(1), display: formatCommandLine(parsed.args) }] };
+    const resolved = resolveFirstToken(parsed.args[0], { projectDir, platform, options });
+    if (resolved.error) return { ok: false, status: resolved.status ?? 409, error: resolved.error };
+    const step = { file: resolved.file, prefixArgs: resolved.prefixArgs, args: parsed.args.slice(1), display: formatCommandLine(parsed.args) };
+    if (resolved.projectScript) step.projectScript = true;
+    return { ok: true, steps: [step] };
   }
   if (projectDir && exists(path.join(projectDir, 'init.sh'))) {
     const bash = resolveExecutable('bash', options);

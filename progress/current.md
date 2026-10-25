@@ -5,8 +5,8 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #14 `endurecimiento-ejecucion` — seguridad de la ejecución (hallazgos del reviewer de la fase 4)
-- **Estado:** `in_progress` (spec aprobada por el humano; implementer trabajando)
-- **Tarea actual:** Implementación TDD de `specs/endurecimiento-ejecucion/tasks.md` (T1→T31)
+- **Estado:** `in_progress` — implementación terminada (470 tests en verde, `init.sh` OK); **esperando revisión humana (puerta 2) y prueba manual T30 en Windows**
+- **Tarea actual:** T30 (prueba manual en Windows: git.exe/claude.exe falsos en un proyecto); T1–T29 y T31 hechas
 - **Siguiente paso:** Humano aprueba la spec → implementer → tests → reviewer → done; después la feature 13 (vista compacta, ya en `spec_ready`).
 - **Bloqueos / esperando:** —
 

@@ -185,9 +185,37 @@ export function describeAction(action, ctx = {}) {
       return `Se autorizará «${escapeHtml(ctx.command)}» en ${name} para Claude y se reintentará la ejecución.`;
     case 'exec-settings':
       return `Se guardarán los comandos autorizados (${Number(ctx.count) || 0}) y el comando de tests de ${name}.`;
+    case 'allow-broad':
+      return BROAD_TEXTS.broadConfirm(ctx.broadCommands, ctx.projectName);
     default:
       return '';
   }
+}
+
+// ---------- Feature 14: avisos de comandos amplios y de hooks (design.md §6) ----------
+
+/** «a», «b» con cada comando escapado. */
+function quotedList(cmds) {
+  return (Array.isArray(cmds) ? cmds : []).map((c) => `«${escapeHtml(c)}»`).join(', ');
+}
+
+export const BROAD_TEXTS = Object.freeze({
+  broadConfirm: (cmds, name) => `Esto permite a Claude ejecutar cualquier programa en este proyecto: ${quotedList(cmds)}. Equivale a darle una terminal libre en ${escapeHtml(name)}. ¿Quieres autorizarlo de todos modos?`,
+  broadSaved: (cmds) => `Atención: ${quotedList(cmds)} permite${Array.isArray(cmds) && cmds.length > 1 ? 'n' : ''} a Claude ejecutar cualquier programa en este proyecto.`,
+});
+
+/** Aviso de "Ajustes de ejecución" mientras haya comandos amplios guardados ('' si no hay). */
+export function renderBroadWarning(cmds) {
+  if (!Array.isArray(cmds) || cmds.length === 0) return '';
+  return `<p class="warning" role="status">${BROAD_TEXTS.broadSaved(cmds)}</p>`;
+}
+
+/** Aviso del diálogo de "Commit y push" si el repo tiene hooks activos ('' si no hay). */
+export function renderHooksWarning({ hooks, hooksPathCustom } = {}) {
+  if (!Array.isArray(hooks) || hooks.length === 0) return '';
+  const names = hooks.map((h) => escapeHtml(h)).join(', ');
+  const custom = hooksPathCustom ? ' La carpeta de hooks está configurada con core.hooksPath.' : '';
+  return `<p class="warning" role="status">Atención: este repositorio tiene hooks de git activos (${names}) que se ejecutarán al hacer commit y push y pueden ejecutar cualquier programa. Revísalos si no los has creado tú.${custom}</p>`;
 }
 
 /** Cuerpo del diálogo de confirmación (el texto ya viene escapado por describeAction). */

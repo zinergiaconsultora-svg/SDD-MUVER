@@ -1,10 +1,12 @@
 // Tests de lib/sdd-actions.js y de los botones SDD — F4: R44–R49 (R47/R49 unitarios + integración).
+// Feature 14: F14-R9 (resolveTestCommand con el resolvedor de confianza, tabla de design.md §3.6).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { locateFeatureStatus, setFeatureStatus } from '../lib/sdd-actions.js';
+import { locateFeatureStatus, setFeatureStatus, resolveTestCommand } from '../lib/sdd-actions.js';
+import { createBinaryResolver, BIN_ERRORS } from '../lib/trusted-bin.js';
 import { makeProjectDir, makeTempDir, writeRegistry, startApp, request, removeDir } from './helpers.js';
 import { waitForRun, readFakeLog, fileExists } from './work-helpers.js';
 
@@ -191,4 +193,48 @@ test('[F4-R48] approve-spec: featureId ausente o de tipo no válido → 400; no 
     assert.equal(r.json.error, error, JSON.stringify(body));
   }
   assert.deepEqual(await fs.readFile(ctx.featureFile), before);
+});
+
+// ---------- Feature 14: resolveTestCommand con el resolvedor (R9, design.md §3.6) ----------
+
+function r9Resolver(files, PATH = '/srv/p:/usr/bin') {
+  const set = new Set(files);
+  return createBinaryResolver({ platform: 'linux', env: { PATH }, execPath: '/opt/node/bin/node', homeDir: '/home/u', fsOps: { isFile: (f) => set.has(f), isExecutable: () => true, realpath: (f) => (set.has(f) ? f : null) } });
+}
+
+const R9_BASE = { projectDir: '/srv/p', platform: 'linux', execPath: '/opt/node/bin/node' };
+
+test('[F14-R9] resolveTestCommand: nombre → resolvedor con cwd del proyecto; .js → node; absoluta tal cual', () => {
+  const resolver = r9Resolver(['/usr/bin/fake-command', '/usr/bin/git', '/srv/p/git']);
+  assert.deepEqual(resolveTestCommand({ ...R9_BASE, testCommand: 'fake-command ok', resolver }), { ok: true, steps: [{ file: '/usr/bin/fake-command', prefixArgs: [], args: ['ok'], display: 'fake-command ok' }] });
+  assert.deepEqual(resolveTestCommand({ ...R9_BASE, testCommand: 'git --version', resolver }), { ok: true, steps: [{ file: '/usr/bin/git', prefixArgs: [], args: ['--version'], display: 'git --version' }] }, 'nunca el git del proyecto');
+  assert.deepEqual(resolveTestCommand({ ...R9_BASE, testCommand: 'node scripts/t.js', resolver }).steps[0].file, '/opt/node/bin/node');
+  assert.deepEqual(resolveTestCommand({ ...R9_BASE, testCommand: 'scripts/t.mjs --x', resolver }).steps[0], { file: '/opt/node/bin/node', prefixArgs: ['scripts/t.mjs'], args: ['--x'], display: 'scripts/t.mjs --x' });
+  assert.deepEqual(resolveTestCommand({ ...R9_BASE, testCommand: '/usr/bin/env A=1 x', resolver }).steps[0], { file: '/usr/bin/env', prefixArgs: [], args: ['A=1', 'x'], display: '/usr/bin/env A=1 x' });
+});
+
+test('[F14-R9] resolveTestCommand: relativa con separador → ruta absoluta dentro del proyecto con projectScript; fuera → 400', () => {
+  const resolver = r9Resolver([]);
+  assert.deepEqual(resolveTestCommand({ ...R9_BASE, testCommand: './scripts/test.sh -v', resolver }), { ok: true, steps: [{ file: '/srv/p/scripts/test.sh', prefixArgs: [], args: ['-v'], display: './scripts/test.sh -v', projectScript: true }] });
+  assert.equal(resolveTestCommand({ ...R9_BASE, testCommand: 'scripts/test.exe', resolver }).steps[0].file, '/srv/p/scripts/test.exe');
+  for (const outside of ['../fuera.sh', 'scripts/../../x.sh']) {
+    assert.deepEqual(resolveTestCommand({ ...R9_BASE, testCommand: outside, resolver }), { ok: false, status: 400, error: 'Comando de tests no válido: ruta fuera del proyecto' }, outside);
+  }
+  const win = resolveTestCommand({ testCommand: '.\\run.exe', projectDir: 'C:\\p', platform: 'win32', execPath: 'C:\\node.exe', resolver: createBinaryResolver({ platform: 'win32', env: {}, fsOps: { isFile: () => false, isExecutable: () => true, realpath: () => null } }) });
+  assert.deepEqual(win.steps[0], { file: 'C:\\p\\run.exe', prefixArgs: [], args: [], display: '.\\run.exe', projectScript: true }, 'path.win32 en Windows');
+  const absInside = resolveTestCommand({ ...R9_BASE, testCommand: '/srv/p/test.sh', resolver });
+  assert.equal(absInside.ok, false, 'absoluta dentro del proyecto: se pide la forma relativa');
+  assert.equal(absInside.status, 400);
+});
+
+test('[F14-R9] resolveTestCommand: git solo en la carpeta del proyecto → 409 onlyInProject; bash init.sh con el bash de confianza', async () => {
+  const onlyProject = r9Resolver(['/srv/p/git']);
+  assert.deepEqual(resolveTestCommand({ ...R9_BASE, testCommand: 'git --version', resolver: onlyProject }), { ok: false, status: 409, error: BIN_ERRORS.onlyInProject('git') });
+  assert.deepEqual(resolveTestCommand({ ...R9_BASE, testCommand: 'pytest', resolver: r9Resolver([]) }), { ok: false, status: 409, error: BIN_ERRORS.notFound('pytest') });
+  const dir = await makeTempDir('muver-r9-');
+  cleanup.push(dir);
+  await fs.writeFile(path.join(dir, 'init.sh'), 'echo listo\n');
+  await fs.writeFile(path.join(dir, 'bash'), '#!/bin/sh\n', { mode: 0o755 });
+  const resolver = r9Resolver([path.join(dir, 'bash'), '/usr/bin/bash'], `${dir}:/usr/bin`);
+  assert.deepEqual(resolveTestCommand({ projectDir: dir, platform: 'linux', resolver, exists: (f) => f === path.join(dir, 'init.sh') }), { ok: true, steps: [{ file: '/usr/bin/bash', prefixArgs: [], args: ['init.sh'], display: 'bash init.sh' }] });
 });

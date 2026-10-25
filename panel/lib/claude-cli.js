@@ -4,6 +4,7 @@
 import path from 'node:path';
 
 import { pathKey, isWindowsPath } from './path-key.js';
+import { createBinaryResolver } from './trusted-bin.js';
 
 export const CLI_FLAGS = Object.freeze({
   print: '-p',
@@ -33,8 +34,60 @@ export const FORBIDDEN_ARGS = Object.freeze(['--dangerously-skip-permissions', '
 export const SDD_PROMPTS = Object.freeze({ implement: 'implementa la siguiente tarea pendiente', approveTests: 'tests aprobados, lanza al reviewer' });
 export const MAX_PROMPT_CHARS = 20000;
 
-/** Regla de los comandos autorizados por proyecto (design.md §3.1). */
-export const ALLOWED_COMMAND_RE = /^[A-Za-z0-9._:/=@+-][A-Za-z0-9 ._:/=@+-]{0,199}$/;
+/**
+ * Regla de los comandos autorizados por proyecto (design.md §3.1; feature 14 §4.1): no puede empezar por "-" y,
+ * además, no puede terminar en ":" (así ninguna regla generada acaba en el sufijo antiguo ":*").
+ */
+export const ALLOWED_COMMAND_RE = /^(?![-])[A-Za-z0-9 ._:/=@+-]{1,200}$/;
+
+// ---------- Comandos amplios (feature 14, design.md §3.5) ----------
+
+/** Su argumento es otro comando: SIEMPRE amplios. */
+export const WRAPPER_COMMANDS = Object.freeze([
+  'env', 'sudo', 'doas', 'su', 'runas', 'xargs', 'find', 'nohup', 'time', 'timeout', 'nice', 'ionice', 'stdbuf',
+  'setsid', 'chroot', 'flock', 'watch', 'parallel', 'exec', 'eval', 'command', 'builtin', 'start', 'cmd', 'script',
+  'busybox', 'wsl', 'strace', 'ltrace', 'gdb',
+]);
+/** Amplios a secas o seguidos de una opción (- o /). */
+export const RUNNER_COMMANDS = Object.freeze([
+  'node', 'nodejs', 'deno', 'bun', 'bunx', 'npx', 'pnpx', 'python', 'python2', 'python3', 'py', 'pythonw', 'pypy',
+  'pypy3', 'uv', 'uvx', 'pipx', 'ruby', 'irb', 'perl', 'php', 'lua', 'luajit', 'java', 'jshell', 'rscript',
+  'osascript', 'awk', 'gawk', 'mawk', 'nawk', 'sed', 'tclsh', 'wish', 'bash', 'sh', 'dash', 'zsh', 'ksh', 'fish',
+  'csh', 'tcsh', 'pwsh', 'powershell', 'git', 'npm', 'pnpm', 'yarn', 'make',
+]);
+/** git <sub> que ejecuta programas o cambia la configuración. */
+export const GIT_EXEC_SUBCOMMANDS = Object.freeze([
+  'config', 'submodule', 'bisect', 'rebase', 'filter-branch', 'difftool', 'mergetool', 'daemon', 'instaweb',
+  'web--browse', 'credential', 'upload-pack', 'receive-pack', 'archive',
+]);
+/** npm/pnpm/yarn/bun <sub> que ejecuta paquetes arbitrarios. */
+export const PKG_EXEC_SUBCOMMANDS = Object.freeze(['exec', 'x', 'dlx', 'explore', 'create', 'init']);
+const PYTHON_FAMILY = new Set(['python', 'python2', 'python3', 'py', 'pythonw', 'pypy', 'pypy3']);
+const PKG_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+
+/** Nombre base del primer token: último segmento tras /, en minúsculas y sin .exe. */
+function commandBase(token) {
+  return String(token).split('/').pop().toLowerCase().replace(/\.exe$/, '');
+}
+
+/** true si el comando autorizado permitiría a Claude ejecutar cualquier programa (design.md §3.5). */
+export function isBroadCommand(cmd) {
+  const tokens = normalizeCommand(cmd).split(' ').filter(Boolean);
+  if (!tokens.length) return false;
+  const [t0, t1, t2] = tokens;
+  const base = commandBase(t0);
+  if (WRAPPER_COMMANDS.includes(base)) return true;
+  if (RUNNER_COMMANDS.includes(base) && (t1 === undefined || t1.startsWith('-') || t1.startsWith('/'))) {
+    const pythonModule = PYTHON_FAMILY.has(base) && t1 === '-m' && t2 !== undefined && !t2.startsWith('-');
+    if (!pythonModule) return true;
+  }
+  if (base === 'git' && GIT_EXEC_SUBCOMMANDS.includes(t1)) return true;
+  if (PKG_MANAGERS.has(base)) {
+    if (PKG_EXEC_SUBCOMMANDS.includes(t1)) return true;
+    if (t1 === 'run' && (t2 === undefined || t2.startsWith('-'))) return true;
+  }
+  return false;
+}
 export const SUMMARY_MAX_CHARS = 120;
 // Corrección T36: el texto del asistente y del result llega hasta 20000 caracteres por evento (antes 2000 cortaba
 // resúmenes normales); el tope total sigue siendo el límite de salida del run (5 MB).
@@ -43,18 +96,19 @@ export const OUTPUT_LINE_MAX_CHARS = 2000;
 export const TRUNCATED_SUFFIX = '… (texto recortado)';
 export const TOOL_ERROR_MAX_CHARS = 300;
 export const DENIAL_DETAIL_MAX_CHARS = 200;
-
-const CMD_SCRIPT_ERROR = (name) => `"${name}" es un script .cmd/.bat y el panel no usa shell: indica la ruta de un .exe o usa node <script>.js`;
+/** Feature 14 (M5): como mucho 50 denegaciones por run (memoria, RunMeta e index.json). */
+export const MAX_PERMISSION_DENIALS = 50;
 
 /** Recorta espacios y colapsa los interiores a uno. */
 export function normalizeCommand(value) {
   return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
 }
 
-/** true si `c` es un comando autorizable (cadena que, normalizada, cumple ALLOWED_COMMAND_RE). */
+/** true si `c` es un comando autorizable (normalizado: cumple ALLOWED_COMMAND_RE y no termina en ":"). */
 export function isValidAllowedCommand(c) {
   if (typeof c !== 'string') return false;
-  return ALLOWED_COMMAND_RE.test(normalizeCommand(c));
+  const normalized = normalizeCommand(c);
+  return ALLOWED_COMMAND_RE.test(normalized) && !normalized.endsWith(':');
 }
 
 /** Valor único de --allowedTools: reglas por defecto + Bash(<cmd> *) y PowerShell(<cmd> *) por comando válido, sin duplicados. */
@@ -92,41 +146,33 @@ export function buildClaudeArgs({ session, allowedCommands } = {}) {
   return args;
 }
 
-function pathDirs(env) {
-  const raw = (env && (env.PATH ?? env.Path)) || '';
-  return String(raw).split(';').map((d) => d.trim()).filter(Boolean);
+function isAbsoluteAny(bin) {
+  return path.posix.isAbsolute(bin) || path.win32.isAbsolute(bin) || isWindowsPath(bin);
 }
 
 /**
- * Ejecutable de Claude (design.md §5.2): { file, prefixArgs } o { error }. Las rutas Windows se componen con
+ * Ejecutable de Claude (design.md §5.2; feature 14 §5.5): { file, prefixArgs } o { error }. Nunca el nombre suelto:
+ * un nombre se resuelve con el resolvedor de confianza (PATH filtrado, %USERPROFILE%\.local\bin o ~/.local/bin y el
+ * cli.js junto a un claude.cmd) excluyendo el cwd del run y las carpetas del catálogo; una ruta relativa (con
+ * separador, o un .js) se hace absoluta respecto a la carpeta de arranque del panel. Las rutas Windows se componen con
  * path.win32 para que los tests en Linux funcionen.
  */
-export function resolveClaudeCommand(claudeBin, { platform = process.platform, env = process.env, execPath = process.execPath, exists = () => false } = {}) {
+export function resolveClaudeCommand(claudeBin, { platform = process.platform, env = process.env, execPath = process.execPath, exists, resolver, cwd, panelDir = process.cwd() } = {}) {
   const bin = typeof claudeBin === 'string' && claudeBin.trim() ? claudeBin.trim() : 'claude';
-  if (/\.(m|c)?js$/i.test(bin)) return { file: execPath, prefixArgs: [bin] };
-  if (path.isAbsolute(bin) || path.win32.isAbsolute(bin) || isWindowsPath(bin)) return { file: bin, prefixArgs: [] };
-  if (platform !== 'win32') return { file: bin, prefixArgs: [] };
-
-  const win = path.win32;
-  const dirs = pathDirs(env);
-  const exeName = /\.exe$/i.test(bin) ? bin : `${bin}.exe`;
-  for (const dir of dirs) {
-    const candidate = win.join(dir, exeName);
-    if (exists(candidate)) return { file: candidate, prefixArgs: [] };
-  }
-  if (env && env.USERPROFILE) {
-    const native = win.join(env.USERPROFILE, '.local', 'bin', exeName);
-    if (exists(native)) return { file: native, prefixArgs: [] };
-  }
-  const base = bin.replace(/\.exe$/i, '');
-  for (const dir of dirs) {
-    const cli = win.join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
-    if (exists(win.join(dir, `${base}.cmd`)) && exists(cli)) return { file: execPath, prefixArgs: [cli] };
-  }
-  for (const dir of dirs) {
-    if (exists(win.join(dir, `${base}.cmd`)) || exists(win.join(dir, `${base}.bat`))) return { error: CMD_SCRIPT_ERROR(bin) };
-  }
-  return { file: bin, prefixArgs: [] };
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const absolute = (file) => (isAbsoluteAny(file) ? file : p.resolve(panelDir, file));
+  if (/\.(m|c)?js$/i.test(bin)) return { file: execPath, prefixArgs: [absolute(bin)] };
+  if (isAbsoluteAny(bin)) return { file: bin, prefixArgs: [] };
+  if (bin.includes('/') || bin.includes('\\')) return { file: absolute(bin), prefixArgs: [] };
+  const active = resolver ?? createBinaryResolver({
+    platform,
+    env,
+    execPath,
+    panelDir,
+    fsOps: { isFile: exists || (() => false), isExecutable: () => true, realpath: () => null },
+  });
+  const resolved = active.resolve(bin, { cwd });
+  return resolved.ok ? { file: resolved.file, prefixArgs: resolved.prefixArgs } : { error: resolved.error };
 }
 
 /** Recorta a `max` puntos de código (los últimos `…` cuentan dentro del máximo). */
@@ -175,7 +221,10 @@ function clipText(text) {
   return value.length > TEXT_MAX_CHARS ? value.slice(0, TEXT_MAX_CHARS) + TRUNCATED_SUFFIX : value;
 }
 
-/** Comando que se propone autorizar tras una denegación de Bash (o null). */
+/**
+ * Comando que se propone autorizar tras una denegación de Bash (o null). Feature 14: nunca un comando amplio
+ * (isBroadCommand); añade `python -m <módulo>` y `bun run <script>`.
+ */
 export function suggestAllowedCommand(command) {
   if (typeof command !== 'string') return null;
   if (['&&', '||', ';', '|', '>', '<', '`', '$('].some((s) => command.includes(s))) return null;
@@ -185,10 +234,12 @@ export function suggestAllowedCommand(command) {
   const parts = [t0];
   if (t1 !== undefined && !t1.startsWith('-')) {
     parts.push(t1);
-    if (['npm', 'pnpm', 'yarn'].includes(t0) && t1 === 'run' && t2 !== undefined && !t2.startsWith('-')) parts.push(t2);
+    if (['npm', 'pnpm', 'yarn', 'bun'].includes(t0) && t1 === 'run' && t2 !== undefined && !t2.startsWith('-')) parts.push(t2);
+  } else if (PYTHON_FAMILY.has(commandBase(t0)) && t1 === '-m' && t2 !== undefined && !t2.startsWith('-')) {
+    parts.push(t1, t2);
   }
   const suggestion = parts.join(' ');
-  return isValidAllowedCommand(suggestion) ? suggestion : null;
+  return isValidAllowedCommand(suggestion) && !isBroadCommand(suggestion) ? suggestion : null;
 }
 
 /**
@@ -236,6 +287,7 @@ export function createStreamMapper({ cwd } = {}) {
   const approvals = new Map(); // tool_use_id → parte del comando que pide aprobación (texto del error real)
   const toolInputs = new Map(); // tool_use_id → input del tool_use (respaldo si la denegación llega sin input)
   const denialById = new Map(); // tool_use_id → denegación registrada (se completa si el texto llega después)
+  let capped = false; // true en cuanto se descarta una denegación por el tope
 
   function shellSuggestions(approval, command) {
     if (approval) return suggestAllowedCommands(approval);
@@ -256,6 +308,10 @@ export function createStreamMapper({ cwd } = {}) {
     if (toolUseId !== undefined && toolUseId !== null) {
       if (seenDenials.has(toolUseId)) return null;
       seenDenials.add(toolUseId);
+    }
+    if (denials.length >= MAX_PERMISSION_DENIALS) {
+      capped = true;
+      return null;
     }
     const tool = typeof toolName === 'string' && toolName ? toolName : 'desconocida';
     const data = input && typeof input === 'object' ? input : {};
@@ -343,5 +399,5 @@ export function createStreamMapper({ cwd } = {}) {
     return [];
   }
 
-  return { push, denials: () => denials.slice() };
+  return { push, denials: () => denials.slice(), denialsCapped: () => capped };
 }

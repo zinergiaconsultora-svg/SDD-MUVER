@@ -1,4 +1,5 @@
-// Tests de lib/exec-utils.js — F4: R28, R31, R52, R53, R54.
+// Tests de lib/exec-utils.js — F4: R28, R31, R52, R53, R54. Feature 14: F14-R1, F14-R4 y F14-R10 (resolución sin
+// recurrir al nombre suelto y taskkill por ruta absoluta). Ajustes declarados (design.md §8.3): [F4-R54] y [F4-R28].
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -8,9 +9,11 @@ import {
   resolveExecutable,
   findGitBash,
   killProcessTree,
+  taskkillPath,
   createLineSplitter,
   stripAnsi,
 } from '../lib/exec-utils.js';
+import { createBinaryResolver, BIN_ERRORS } from '../lib/trusted-bin.js';
 
 // ---------- R53: parseCommandLine ----------
 
@@ -78,7 +81,8 @@ test('[F4-R54] resolveExecutable en Windows: node, npm, npx, bash, git (.exe) y 
   assert.deepEqual(resolveExecutable('yarn', o), { error: '"yarn" es un script .cmd/.bat y el panel no usa shell: indica la ruta de un .exe o usa node <script>.js' });
   assert.deepEqual(resolveExecutable('C:\\x\\run.bat', o), { error: '"C:\\x\\run.bat" es un script .cmd/.bat y el panel no usa shell: indica la ruta de un .exe o usa node <script>.js' });
   assert.deepEqual(resolveExecutable('C:\\x\\tool.exe', o), { file: 'C:\\x\\tool.exe', prefixArgs: [] });
-  assert.deepEqual(resolveExecutable('pytest', o), { file: 'pytest', prefixArgs: [] }, 'no encontrado: tal cual (fallará con ENOENT)');
+  // Feature 14 (ajuste declarado de [F4-R54]): no encontrado → error, nunca el nombre suelto.
+  assert.deepEqual(resolveExecutable('pytest', o), { error: BIN_ERRORS.notFound('pytest') });
 });
 
 test('[F4-R54] resolveExecutable en Windows: .com antes que .exe, npm sin npm-cli.js y bash sin Git Bash', () => {
@@ -90,13 +94,30 @@ test('[F4-R54] resolveExecutable en Windows: .com antes que .exe, npm sin npm-cl
   assert.deepEqual(withPathKey, { file: 'D:\\git\\bin\\git.exe', prefixArgs: [] });
 });
 
-test('[F4-R54] resolveExecutable fuera de Windows: bash → bashBin o bash, .js → node, resto tal cual', () => {
-  const o = { platform: 'linux', env: {}, execPath: '/usr/bin/node', exists: () => false, bashBin: null };
-  assert.deepEqual(resolveExecutable('bash', o), { file: 'bash', prefixArgs: [] });
+test('[F4-R54] resolveExecutable fuera de Windows: bash → bashBin o PATH, .js → node, resto por el PATH (ruta absoluta o error)', () => {
+  // Feature 14 (ajuste declarado de [F4-R54]): rutas absolutas encontradas con `exists` inyectado, o el error.
+  const files = new Set(['/usr/bin/bash', '/opt/bash', '/usr/bin/npm']);
+  const o = { platform: 'linux', env: { PATH: '/usr/bin' }, execPath: '/usr/bin/node', exists: (f) => files.has(f), bashBin: null };
+  assert.deepEqual(resolveExecutable('bash', o), { file: '/usr/bin/bash', prefixArgs: [] });
   assert.deepEqual(resolveExecutable('bash', { ...o, bashBin: '/opt/bash' }), { file: '/opt/bash', prefixArgs: [] });
   assert.deepEqual(resolveExecutable('scripts/x.mjs', o), { file: '/usr/bin/node', prefixArgs: ['scripts/x.mjs'] });
-  assert.deepEqual(resolveExecutable('npm', o), { file: 'npm', prefixArgs: [] });
-  assert.deepEqual(resolveExecutable('node', o), { file: 'node', prefixArgs: [] });
+  assert.deepEqual(resolveExecutable('npm', o), { file: '/usr/bin/npm', prefixArgs: [] });
+  assert.deepEqual(resolveExecutable('node', o), { file: '/usr/bin/node', prefixArgs: [] });
+  assert.deepEqual(resolveExecutable('bash', { ...o, env: {} }), { error: BIN_ERRORS.notFound('bash') });
+  assert.deepEqual(resolveExecutable('/opt/tool', o), { file: '/opt/tool', prefixArgs: [] }, 'ruta absoluta tal cual');
+});
+
+test('[F14-R1][F14-R4] resolveExecutable delega en el resolvedor indicado con el cwd de la llamada; nunca devuelve el nombre suelto', () => {
+  const set = new Set(['/srv/p/git', '/srv/p/pytest', '/usr/bin/git']);
+  const resolver = createBinaryResolver({ platform: 'linux', env: { PATH: '/srv/p:/usr/bin' }, homeDir: '/home/u', fsOps: { isFile: (f) => set.has(f), isExecutable: () => true, realpath: (f) => f } });
+  assert.deepEqual(resolveExecutable('git', { platform: 'linux', resolver, cwd: '/srv/p' }), { file: '/usr/bin/git', prefixArgs: [] });
+  assert.deepEqual(resolveExecutable('pytest', { platform: 'linux', resolver, cwd: '/srv/p' }), { error: BIN_ERRORS.onlyInProject('pytest') });
+  assert.deepEqual(resolveExecutable('nada', { platform: 'linux', resolver, cwd: '/srv/p' }), { error: BIN_ERRORS.notFound('nada') });
+  for (const name of ['git', 'pytest', 'nada', 'bash', 'npm']) {
+    const r = resolveExecutable(name, { platform: 'linux', env: {}, exists: () => false });
+    assert.ok(r.error || r.file.startsWith('/'), `${name}: ${JSON.stringify(r)}`);
+    assert.notEqual(r.file, name);
+  }
 });
 
 // ---------- R52: findGitBash ----------
@@ -127,10 +148,26 @@ test('[F4-R28] killProcessTree en Windows: taskkill /PID <pid> /T /F sin shell',
   const calls = [];
   killProcessTree({ pid: 4321 }, { platform: 'win32', execFileImpl: (file, args, opts) => calls.push({ file, args, opts }) });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].file, 'taskkill');
+  // Feature 14 (ajuste declarado de [F4-R28]): taskkill por ruta absoluta (F14-R10); mismos argumentos.
+  assert.equal(calls[0].file, 'C:\\Windows\\System32\\taskkill.exe');
   assert.deepEqual(calls[0].args, ['/PID', '4321', '/T', '/F']);
   assert.equal(calls[0].opts.windowsHide, true);
   assert.ok(!calls[0].opts.shell);
+});
+
+test('[F14-R10] taskkillPath y killProcessTree en win32: %SystemRoot%\\System32\\taskkill.exe (C:\\Windows si falta), mismos argumentos', () => {
+  assert.equal(taskkillPath({ SystemRoot: 'D:\\WINNT' }), 'D:\\WINNT\\System32\\taskkill.exe');
+  assert.equal(taskkillPath({ SYSTEMROOT: 'E:\\Win' }), 'E:\\Win\\System32\\taskkill.exe');
+  assert.equal(taskkillPath({}), 'C:\\Windows\\System32\\taskkill.exe');
+  for (const [env, expected] of [[{ SystemRoot: 'D:\\WINNT' }, 'D:\\WINNT\\System32\\taskkill.exe'], [{}, 'C:\\Windows\\System32\\taskkill.exe']]) {
+    const calls = [];
+    killProcessTree({ pid: 99 }, { platform: 'win32', env, execFileImpl: (file, args, opts) => calls.push({ file, args, opts }) });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].file, expected);
+    assert.deepEqual(calls[0].args, ['/PID', '99', '/T', '/F']);
+    assert.equal(calls[0].opts.windowsHide, true);
+    assert.ok(!calls[0].opts.shell);
+  }
 });
 
 test('[F4-R28] killProcessTree en Linux: SIGTERM al grupo y SIGKILL a los 5 s si sigue vivo', () => {

@@ -76,6 +76,8 @@
     (cambios, diff y commit/push con argumentos fijos y `--no-optional-locks`, nunca forzado),
     `lib/reauth.js` (confirmación de la contraseña por el túnel), `lib/cf-access.js` (verificación del JWT de
     Cloudflare Access con `node:crypto`) y `lib/audit.js` (registro de auditoría).
+  - Feature 14: `lib/trusted-bin.js` (resolvedor de ejecutables de confianza; ver "Seguridad de la ejecución").
+    "Aprobar spec" responde `409` si hay un run activo en el proyecto.
 - **Interfaz / frontend:** `panel/public/` (index.html, styles.css, app.js, render.js, api-client.js,
   app-config.js) en vanilla JS, mobile-first (usable a 360 px), tema claro/oscuro automático
   (`prefers-color-scheme`), `manifest.webmanifest` para "añadir a pantalla de inicio". Pantallas de
@@ -177,6 +179,48 @@
                                       fase 4: spawn sin shell, cwd = carpeta del catálogo --> claude -p … / tests / git
                                                     (stream-json → eventos → runs/*.jsonl + SSE al navegador; audit.log)
 ```
+
+## Seguridad de la ejecución
+
+> Feature 14 (`endurecimiento-ejecucion`, hallazgos M1–M5 y N1–N6 del reviewer de la fase 4). Regla de oro: el panel
+> nunca lanza un proceso con un nombre suelto ni con una ruta que esté en la carpeta de un proyecto del catálogo.
+
+1. **Resolución de ejecutables** (`lib/trusted-bin.js`: `createBinaryResolver`, `resolveTrustedBinary`,
+   `isTrustedPath`). `git`, `node`, `npm`, `npx`, `claude`, `bash`, `taskkill` y el primer token del comando de tests se
+   resuelven a una ruta absoluta buscando solo en las entradas absolutas del `PATH` (se descartan vacías, `.`,
+   relativas y con `%`) y en rutas conocidas (`node` = el propio Node del panel, `taskkill` =
+   `%SystemRoot%\System32\taskkill.exe`, Git for Windows, `%USERPROFILE%\.local\bin\claude.exe`…); en Windows solo
+   `.com`/`.exe`. Se descartan los candidatos (por ruta y por ruta real) del `cwd` de la llamada y de las carpetas del
+   catálogo (registro + Claude Code); de un **proyecto contenedor** (raíz, carpeta personal o un ancestro suyo) solo se
+   excluye su raíz. La lista de candidatos se guarda en caché (un `PATH` nuevo se ve al reiniciar el panel); la
+   exclusión se recalcula en cada llamada. Guardia final: `runs.js` (`guardedSpawn`), el runner de git
+   (`createGitRunner`) y `taskkill` solo lanzan rutas de confianza, y en Windows los hijos reciben
+   `NoDefaultCurrentDirectoryInExePath=1`. Única excepción: un comando de tests escrito con ruta relativa
+   (`./test.sh`, `projectScript`) ejecuta código del proyecto, igual que `bash init.sh`.
+2. **Comandos amplios** (`isBroadCommand` en `lib/claude-cli.js`): intérpretes, shells y envolventes a secas o con
+   una opción (`node`, `node -e`, `bash -c`, `env`, `xargs`, `find`…), `git` con subcomandos de ejecución
+   (`git -c`, `git config`…) y `npm`/`pnpm`/`yarn`/`bun` con `exec`, `dlx`, `run` sin script… equivalen a una terminal
+   libre. Nunca se proponen tras una denegación; si el humano los añade a mano, la API exige `acknowledgeBroad: true`
+   (la interfaz muestra un aviso y el botón "Autorizar de todos modos"), queda `acknowledgedBroad` en `audit.log` y
+   "Ajustes de ejecución" avisa mientras estén guardados.
+3. **Configuración del repositorio**: toda llamada git del panel lleva `-c core.fsmonitor=false` (lecturas por el
+   runner central y pasos de "Commit y push"); el diff usa `--literal-pathspecs` (un fichero llamado `*` es solo ese
+   fichero) y `--no-ext-diff --no-textconv` (no ejecuta drivers de diff del repo).
+4. **Hooks**: se ejecutan en "Commit y push" (sin `--no-verify` ni `core.hooksPath` vacío), porque suelen ser del
+   humano (lint, tests) y desactivarlos cambiaría el resultado respecto a la terminal; `GET /changes` devuelve
+   `hooks` y `hooksPathCustom` y el diálogo de confirmación avisa con sus nombres.
+5. **Push**: el paso de push lleva `GIT_SSH_COMMAND=ssh -o BatchMode=yes` (una clave con frase o un host desconocido
+   fallan al momento) salvo que el entorno del panel ya defina `GIT_SSH_COMMAND` o `GIT_SSH`. Consecuencia: un
+   `core.sshCommand` de la configuración de git se ignora en el push del panel; para usar otro ssh, definir
+   `GIT_SSH_COMMAND` en el entorno del panel.
+6. **Riesgos conocidos**: (N5) el CLI de Claude aplica también `~/.claude/settings.json` y los
+   `.claude/settings*.json` del proyecto, que pueden ampliar los permisos de `--allowedTools`; (N6) desde la red local
+   basta la sesión y el panel escucha en `0.0.0.0`: una cookie robada en la LAN da ejecución sin reconfirmar; los
+   filtros `clean`/`smudge` de `.gitattributes` + `.git/config` pueden ejecutarse en `git status`/`git add`, y los
+   `credential.helper` y hooks en el push (requieren que alguien escriba en `.git/`, que Claude Code protege);
+   `cloudflared` se arranca por nombre desde `scripts/` (fuera de la feature 14); los nietos que lance Claude por
+   nombre siguen sus propias reglas de búsqueda. Además, el run tiene un límite de salida de 5 MB que cuenta todos los
+   eventos (salvo `state`/`end`) y guarda como mucho 50 denegaciones de permiso.
 
 ## Restricciones y decisiones de arquitectura
 > Cosas que condicionan: "debe funcionar en móvil", "un solo usuario admin", "tiene que integrarse con X"…

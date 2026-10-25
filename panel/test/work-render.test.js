@@ -1,5 +1,5 @@
 // Tests de public/work.js (funciones puras de la vista "Trabajar") y del cambio de public/api-client.js —
-// F4: R80–R89.
+// F4: R80–R89. Feature 14: F14-R19 y F14-R25 (avisos de comandos amplios y de hooks).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -22,6 +22,9 @@ import {
   buildExecSettingsPayload,
   isReauthError,
   withReauth,
+  BROAD_TEXTS,
+  renderBroadWarning,
+  renderHooksWarning,
 } from '../public/work.js';
 import { createApiClient } from '../public/api-client.js';
 
@@ -386,4 +389,45 @@ test('[F4-R84] corrección T36: una denegación de PowerShell ofrece "Permitir e
   const html = renderPermissionPrompt({ state: 'succeeded', permissionDenials: [{ tool: 'PowerShell', detail: 'node --version', suggestion: 'node', suggestions: ['node'] }] });
   assert.ok(html.includes('Comando denegado: PowerShell: node --version'));
   assert.ok(html.includes('data-action="allow-command"') && html.includes('data-command="node"'));
+});
+
+// ---------- Feature 14: avisos (R19, R25) ----------
+
+test('[F14-R19] BROAD_TEXTS y describeAction("allow-broad"): textos exactos con escapado', () => {
+  assert.equal(
+    BROAD_TEXTS.broadConfirm(['node'], 'App Flyder'),
+    'Esto permite a Claude ejecutar cualquier programa en este proyecto: «node». Equivale a darle una terminal libre en App Flyder. ¿Quieres autorizarlo de todos modos?',
+  );
+  assert.equal(
+    describeAction('allow-broad', { broadCommands: ['node', 'git'], projectName: '<b>x</b>' }),
+    'Esto permite a Claude ejecutar cualquier programa en este proyecto: «node», «git». Equivale a darle una terminal libre en &lt;b&gt;x&lt;/b&gt;. ¿Quieres autorizarlo de todos modos?',
+  );
+  assert.equal(BROAD_TEXTS.broadSaved(['node']), 'Atención: «node» permite a Claude ejecutar cualquier programa en este proyecto.');
+  assert.equal(BROAD_TEXTS.broadSaved(['node', 'env']), 'Atención: «node», «env» permiten a Claude ejecutar cualquier programa en este proyecto.');
+  const xss = describeAction('allow-broad', { broadCommands: ['<script>alert(1)</script>'], projectName: 'P' });
+  assert.ok(!xss.includes('<script>') && xss.includes('&lt;script&gt;'));
+});
+
+test('[F14-R19] renderBroadWarning: aviso con los comandos guardados; lista vacía → cadena vacía', () => {
+  assert.equal(renderBroadWarning(['node', 'env']), '<p class="warning" role="status">Atención: «node», «env» permiten a Claude ejecutar cualquier programa en este proyecto.</p>');
+  assert.equal(renderBroadWarning([]), '');
+  assert.equal(renderBroadWarning(undefined), '');
+  const html = renderBroadWarning(['<script>x</script>']);
+  assert.ok(!html.includes('<script>') && html.includes('&lt;script&gt;x&lt;/script&gt;'));
+});
+
+test('[F14-R25] renderHooksWarning: texto exacto, variante core.hooksPath, escapado y lista vacía', () => {
+  assert.equal(
+    renderHooksWarning({ hooks: ['pre-commit', 'pre-push'], hooksPathCustom: false }),
+    '<p class="warning" role="status">Atención: este repositorio tiene hooks de git activos (pre-commit, pre-push) que se ejecutarán al hacer commit y push y pueden ejecutar cualquier programa. Revísalos si no los has creado tú.</p>',
+  );
+  assert.equal(
+    renderHooksWarning({ hooks: ['post-commit'], hooksPathCustom: true }),
+    '<p class="warning" role="status">Atención: este repositorio tiene hooks de git activos (post-commit) que se ejecutarán al hacer commit y push y pueden ejecutar cualquier programa. Revísalos si no los has creado tú. La carpeta de hooks está configurada con core.hooksPath.</p>',
+  );
+  assert.equal(renderHooksWarning({ hooks: [], hooksPathCustom: true }), '');
+  assert.equal(renderHooksWarning({}), '');
+  assert.equal(renderHooksWarning(undefined), '');
+  const html = renderHooksWarning({ hooks: ['<script>'] });
+  assert.ok(!html.includes('<script>') && html.includes('&lt;script&gt;'));
 });

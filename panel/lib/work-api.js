@@ -1,5 +1,8 @@
 // Rutas de la fase 4 (design.md §4 y §5.13): runs de Claude, botones SDD, tests, cambios, commit y push, permisos,
 // historial, salida en vivo (SSE) y cola de atención. Toda acción de ejecución pasa por gateExec (D10).
+// Feature 14: resolvedor de confianza en todos los lanzamientos (Claude se resuelve en cada run con el cwd del
+// proyecto y el catálogo vigente), comandos amplios con confirmación expresa (acknowledgeBroad), hooks en
+// GET /changes y "Aprobar spec" rechazado con un run activo.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -9,13 +12,14 @@ import { findMerged } from './project-catalog.js';
 import { createRunStore, RUN_ID_RE } from './run-store.js';
 import { createRunManager } from './runs.js';
 import { openSse } from './sse.js';
-import { MAX_PROMPT_CHARS, SDD_PROMPTS, DEFAULT_ALLOWED_TOOLS, isValidAllowedCommand, normalizeCommand } from './claude-cli.js';
+import { MAX_PROMPT_CHARS, SDD_PROMPTS, DEFAULT_ALLOWED_TOOLS, isValidAllowedCommand, normalizeCommand, isBroadCommand, resolveClaudeCommand } from './claude-cli.js';
 import { execSettingsOf, loadRegistry, saveRegistry, upsertSettings, EXEC_FIELDS, MAX_ALLOWED_COMMANDS } from './registry.js';
 import { readFeatureList } from './project-state.js';
 import { approveSpec, readHarness, resolveTestCommand } from './sdd-actions.js';
 import { getChanges, getFileDiff, planCommitPush, isGitRepo } from './git-actions.js';
 import { resolveExecutable } from './exec-utils.js';
 import { defaultRunner } from './git-info.js';
+import { defaultResolver } from './trusted-bin.js';
 import { isTunnelRequest, isReauthFresh } from './reauth.js';
 import { clipPrompt } from './audit.js';
 
@@ -49,7 +53,8 @@ export const WORK_ERRORS = Object.freeze({
   runNotFound: 'Ejecución no encontrada',
   runFinished: 'La ejecución ya ha terminado',
   runStillActive: 'La ejecución sigue en marcha',
-  invalidCommand: 'Comando no válido: solo letras, números, espacios y . _ : / = @ + - (máx. 200)',
+  invalidCommand: 'Comando no válido: solo letras, números, espacios y . _ : / = @ + - (máx. 200; no puede empezar por - ni terminar en :)',
+  broadCommand: (list) => `${list.length > 1 ? 'Comandos' : 'Comando'} de ejecución libre: ${list.map((c) => `«${c}»`).join(', ')}. Permite a Claude ejecutar cualquier programa en este proyecto; confírmalo expresamente para autorizarlo`,
   tooManyCommands: 'Como mucho 30 comandos autorizados',
   notFound: 'Ruta no encontrada',
 });
@@ -78,6 +83,22 @@ async function isDirectory(dir) {
   }
 }
 
+/** Comandos amplios de `next` que no están ya en `current` (feature 14, §4.2), en el orden de `next`. */
+export function newBroadCommands(next, current) {
+  const saved = new Set((Array.isArray(current) ? current : []).map((c) => normalizeCommand(c)));
+  return (Array.isArray(next) ? next : []).map((c) => normalizeCommand(c)).filter((c) => isBroadCommand(c) && !saved.has(c));
+}
+
+/** Comandos amplios guardados de un proyecto, en el orden de allowedCommands. */
+export function broadCommandsOf(allowedCommands) {
+  return (Array.isArray(allowedCommands) ? allowedCommands : []).filter((c) => isBroadCommand(c));
+}
+
+/** Cuerpo del 400 que pide la confirmación expresa de comandos amplios. */
+export function broadCommandBody(list, field) {
+  return { error: WORK_ERRORS.broadCommand(list), field, needsAcknowledge: true, broadCommands: [...list] };
+}
+
 /** Respuesta de error de un resultado { ok: false, status, error, field?, runId? }. */
 function errorBody(result) {
   const body = { error: result.error };
@@ -97,6 +118,9 @@ export function createWorkApi({
   execPath = process.execPath,
   exists = (file) => fs.existsSync(file),
   claudeCommand,
+  claudeBin = 'claude',
+  resolver = defaultResolver,
+  panelDir = process.cwd(),
   bashBin = null,
   allowExec = true,
   maxRuns = 2,
@@ -124,6 +148,7 @@ export function createWorkApi({
     platform,
     env,
     extraEnv,
+    resolver,
     ...(outputLimitBytes ? { outputLimitBytes } : {}),
   });
   const ready = store.recoverOrphans().catch((err) => {
@@ -227,8 +252,10 @@ export function createWorkApi({
 
   /** Lanza un run de Claude ya validado el proyecto; responde por `ctx`. */
   async function launchClaudeRun(res, ctx, { merged, dir, prompt, session, action, label }) {
-    if (!claudeCommand || claudeCommand.error) {
-      return ctx.respond(res, 409, { error: claudeCommand && claudeCommand.error ? claudeCommand.error : 'No se pudo ejecutar Claude Code: sin ejecutable' });
+    // Feature 14 (D5): Claude se resuelve en cada lanzamiento con el cwd del run y el catálogo vigente (con caché).
+    const command = claudeCommand ?? resolveClaudeCommand(claudeBin, { platform, env, execPath, resolver, cwd: dir, panelDir });
+    if (!command || command.error) {
+      return ctx.respond(res, 409, { error: command && command.error ? command.error : 'No se pudo ejecutar Claude Code: sin ejecutable' });
     }
     const { allowedCommands } = execSettingsOf(merged.settingsEntry);
     const started = await runs.startClaude({
@@ -238,7 +265,7 @@ export function createWorkApi({
       action,
       label,
       allowedCommands,
-      claudeCommand,
+      claudeCommand: command,
       auditContext: ctx.auditContext,
     });
     if (!started.ok) return ctx.respond(res, started.status, errorBody(started));
@@ -304,6 +331,9 @@ export function createWorkApi({
     if (!dir) return ctx.respond(res, 409, { error: WORK_ERRORS.noDir });
     if (!(await readHarness(dir)).ok) return ctx.respond(res, 409, { error: WORK_ERRORS.noSdd });
     if (!isValidFeatureId(body.featureId)) return ctx.respond(res, 400, { error: WORK_ERRORS.featureIdRequired, field: 'featureId' });
+    // Feature 14 (N4): con un run activo en el proyecto, Claude podría estar escribiendo feature_list.json.
+    const active = runs.activeFor(merged.id);
+    if (active) return ctx.respond(res, 409, { error: WORK_ERRORS.runActive, runId: active.runId });
     const result = await approveSpec(dir, body.featureId);
     if (!result.ok) return ctx.respond(res, result.status, { error: result.error });
     return ctx.respond(res, 200, { feature: result.feature });
@@ -313,7 +343,7 @@ export function createWorkApi({
 
   function testCommandFor(merged, dir) {
     const { testCommand } = execSettingsOf(merged.settingsEntry);
-    return resolveTestCommand({ testCommand, projectDir: dir, platform, env, execPath, exists, bashBin });
+    return resolveTestCommand({ testCommand, projectDir: dir, platform, env, execPath, exists, bashBin, resolver });
   }
 
   async function postTests(req, res, session, id) {
@@ -350,7 +380,14 @@ export function createWorkApi({
     if (!dir) return sendJson(res, 409, { error: WORK_ERRORS.noDir });
     const changes = await getChanges(dir, { runner });
     if (!changes.ok) return sendJson(res, changes.status, { error: changes.error });
-    return sendJson(res, 200, { branch: changes.branch, files: changes.files, stat: changes.stat, truncated: changes.truncated });
+    return sendJson(res, 200, {
+      branch: changes.branch,
+      files: changes.files,
+      stat: changes.stat,
+      truncated: changes.truncated,
+      hooks: changes.hooks || [],
+      hooksPathCustom: changes.hooksPathCustom === true,
+    });
   }
 
   async function getProjectDiff(res, id, url) {
@@ -363,11 +400,11 @@ export function createWorkApi({
     return sendJson(res, 200, { file: diff.file, diff: diff.diff, untracked: diff.untracked, truncated: diff.truncated });
   }
 
-  /** Pasos con el ejecutable resuelto (en Windows, git.exe del PATH). */
-  function resolveSteps(steps) {
+  /** Pasos con el ejecutable resuelto por el resolvedor de confianza (cwd = carpeta del proyecto). */
+  function resolveSteps(steps, dir) {
     const out = [];
     for (const step of steps) {
-      const resolved = resolveExecutable(step.file, { platform, env, execPath, exists, bashBin });
+      const resolved = resolveExecutable(step.file, { platform, env, execPath, exists, bashBin, resolver, cwd: dir });
       if (resolved.error) return { ok: false, status: 409, error: resolved.error };
       out.push({ ...step, file: resolved.file, prefixArgs: [...resolved.prefixArgs, ...(step.prefixArgs || [])] });
     }
@@ -384,9 +421,9 @@ export function createWorkApi({
     if (!merged) return ctx.respond(res, 404, { error: WORK_ERRORS.projectNotFound });
     const dir = await projectDir(merged);
     if (!dir) return ctx.respond(res, 409, { error: WORK_ERRORS.noDir });
-    const plan = await planCommitPush(dir, body.message, { runner });
+    const plan = await planCommitPush(dir, body.message, { runner, env });
     if (!plan.ok) return ctx.respond(res, plan.status, errorBody(plan));
-    const resolved = resolveSteps(plan.steps);
+    const resolved = resolveSteps(plan.steps, dir);
     if (!resolved.ok) return ctx.respond(res, resolved.status, { error: resolved.error });
     const started = await runs.startCommand({
       project: { id: merged.id, dir },
@@ -438,6 +475,7 @@ export function createWorkApi({
       defaultTools: [...DEFAULT_ALLOWED_TOOLS],
       activeRun: runs.activeFor(merged.id),
       sessions,
+      broadCommands: broadCommandsOf(allowedCommands),
     };
     if (!dir) return sendJson(res, 200, base);
     const [sdd, repo] = await Promise.all([readFeatureList(dir), isGitRepo(dir, { runner })]);
@@ -475,6 +513,11 @@ export function createWorkApi({
     const entry = settingsEntryFor(merged);
     const current = execSettingsOf(entry).allowedCommands;
     if (current.includes(command)) return ctx.respond(res, 200, { allowedCommands: current });
+    // Feature 14 (M2): un comando de ejecución libre exige la confirmación expresa del humano.
+    if (isBroadCommand(command)) {
+      if (body.acknowledgeBroad !== true) return ctx.respond(res, 400, broadCommandBody([command], 'command'));
+      ctx.setDetail({ acknowledgedBroad: [command] });
+    }
     if (current.length >= MAX_ALLOWED_COMMANDS) return ctx.respond(res, 400, { error: WORK_ERRORS.tooManyCommands, field: 'allowedCommands' });
     const allowedCommands = [...current, command];
     const registry = upsertSettings(sources.registry, { ...entry, allowedCommands });

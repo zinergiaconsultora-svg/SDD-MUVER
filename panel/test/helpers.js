@@ -86,11 +86,13 @@ export async function writeRegistry(file, projects) {
  * Fase 3: `claudeHome` (por defecto un directorio temporal VACÍO, para que ningún test vea el ~/.claude real
  * de la máquina → Claude no disponible) y `claudeCacheTtlMs` (por defecto 0: cada GET refleja los fixtures).
  * Fase 4: por defecto `claudeCommand` es el CLI falso y `extraEnv.FAKE_CLAUDE_LOG` un fichero temporal (`fakeLog`).
+ * Feature 14: `env` (entorno del panel: PATH de prueba aislado) y `claudeBin` (sin `claudeCommand` por defecto) se
+ * pasan a createApp.
  * Devuelve { server, baseUrl, dataDir, claudeHome, fakeLog, close, login(password?) → cabecera Cookie }.
  */
 export async function startApp(options = {}) {
   const { createApp } = await import('../lib/app.js');
-  const { password, dataDir: givenDataDir, claudeHome: givenClaudeHome, claudeCacheTtlMs = 0, extraEnv: givenExtraEnv, ...rest } = options;
+  const { password, dataDir: givenDataDir, claudeHome: givenClaudeHome, claudeCacheTtlMs = 0, extraEnv: givenExtraEnv, env, claudeBin, ...rest } = options;
   const dataDir = givenDataDir || (await makeTempDir('muver-data-'));
   const claudeHome = givenClaudeHome || (await makeTempDir('muver-claude-vacio-'));
   if (password !== undefined) {
@@ -105,7 +107,9 @@ export async function startApp(options = {}) {
     dataDir,
     claudeHome,
     claudeCacheTtlMs,
-    claudeCommand: { file: process.execPath, prefixArgs: [FAKE_CLAUDE] },
+    // Feature 14: con `claudeBin` (sin `claudeCommand`) la app resuelve Claude en cada lanzamiento con su resolvedor.
+    ...(claudeBin === undefined ? { claudeCommand: { file: process.execPath, prefixArgs: [FAKE_CLAUDE] } } : { claudeBin }),
+    ...(env === undefined ? {} : { env }),
     extraEnv,
     ...rest,
   });

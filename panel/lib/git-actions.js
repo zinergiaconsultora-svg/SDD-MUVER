@@ -1,7 +1,13 @@
 // "Ver cambios" y "Commit y push" (design.md §5.8). Todos los comandos git usan `git` con la opción global
 // --no-optional-locks y argumentos de una lista fija; del cliente solo entran, como argumentos sueltos, la ruta ya
 // validada contra la lista de cambios o el mensaje del commit. El push nunca se fuerza.
-import { defaultRunner } from './git-info.js';
+// Feature 14: las consultas pasan por el runner central (prefijo -c core.fsmonitor=false y git de confianza); los
+// pasos de "Commit y push" llevan el prefijo explícito; el diff usa pathspec literal y no ejecuta drivers externos ni
+// textconv; los hooks se ejecutan (decisión D8) pero GET /changes los lista para avisar; el push usa ssh en BatchMode.
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { defaultRunner, GIT_SAFE_PREFIX } from './git-info.js';
 
 export const GIT_ACTION_ARGS = Object.freeze({
   isRepo: Object.freeze(['--no-optional-locks', 'rev-parse', '--is-inside-work-tree']),
@@ -10,10 +16,13 @@ export const GIT_ACTION_ARGS = Object.freeze({
   branch: Object.freeze(['--no-optional-locks', 'rev-parse', '--abbrev-ref', 'HEAD']),
   symbolicBranch: Object.freeze(['--no-optional-locks', 'symbolic-ref', '--short', '-q', 'HEAD']),
   upstream: Object.freeze(['--no-optional-locks', 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']),
-  statHead: Object.freeze(['--no-optional-locks', 'diff', 'HEAD', '--stat']),
-  statCached: Object.freeze(['--no-optional-locks', 'diff', '--cached', '--stat']),
-  diffHead: Object.freeze(['--no-optional-locks', 'diff', 'HEAD', '--']), // + ruta validada
-  diffWorktree: Object.freeze(['--no-optional-locks', 'diff', '--']), // + ruta validada (repo sin commits)
+  statHead: Object.freeze(['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--stat']),
+  statCached: Object.freeze(['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--cached', '--stat']),
+  // + ruta validada; --literal-pathspecs: un fichero llamado "*" o ":(glob)…" es solo ese fichero (N3).
+  diffHead: Object.freeze(['--no-optional-locks', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--']),
+  diffWorktree: Object.freeze(['--no-optional-locks', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--']), // repo sin commits
+  hooksDir: Object.freeze(['--no-optional-locks', 'rev-parse', '--git-path', 'hooks']),
+  hooksPathConfig: Object.freeze(['--no-optional-locks', 'config', '--get', 'core.hooksPath']),
   add: Object.freeze(['--no-optional-locks', 'add', '-A']),
   commit: Object.freeze(['--no-optional-locks', 'commit', '-m']), // + mensaje
   push: Object.freeze(['--no-optional-locks', 'push']),
@@ -26,6 +35,9 @@ export const MAX_STAT_BYTES = 20 * 1024;
 export const MAX_DIFF_BYTES = 200 * 1024;
 export const MAX_COMMIT_MESSAGE_CHARS = 2000;
 export const GIT_STEP_ENV = Object.freeze({ GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' });
+export const PUSH_SSH_COMMAND = 'ssh -o BatchMode=yes';
+export const MAX_LISTED_HOOKS = 20;
+const HOOK_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const BRANCH_RE = /^[A-Za-z0-9._/-]+$/;
 const MAX_BUFFER = 10 * 1024 * 1024;
 
@@ -96,6 +108,28 @@ async function hasHead(dir, options) {
   return (await tryGit(dir, GIT_ACTION_ARGS.hasHead, options)).ok;
 }
 
+/**
+ * Hooks activos del repo (feature 14, design.md §5.4): ficheros (o enlaces) de la carpeta de hooks efectiva que no
+ * terminan en .sample y tienen un nombre seguro, en orden alfabético y como mucho 20. Cualquier error → lista vacía.
+ */
+export async function listActiveHooks(dir, { runner, readdir = fs.promises.readdir } = {}) {
+  const options = { runner };
+  try {
+    const hooksDir = await tryGit(dir, GIT_ACTION_ARGS.hooksDir, options);
+    if (!hooksDir.ok || !hooksDir.stdout.trim()) return { hooks: [], hooksPathCustom: false };
+    const entries = await readdir(path.resolve(dir, hooksDir.stdout.trim()), { withFileTypes: true });
+    const hooks = entries
+      .filter((e) => e && (e.isFile() || e.isSymbolicLink()) && !e.name.endsWith('.sample') && HOOK_NAME_RE.test(e.name))
+      .map((e) => e.name)
+      .sort()
+      .slice(0, MAX_LISTED_HOOKS);
+    const custom = await tryGit(dir, GIT_ACTION_ARGS.hooksPathConfig, options);
+    return { hooks, hooksPathCustom: custom.ok && custom.stdout.trim() !== '' };
+  } catch {
+    return { hooks: [], hooksPathCustom: false };
+  }
+}
+
 /** Lista de cambios (contrato §4.3) o { ok: false, status: 409, error } si no es un repo. */
 export async function getChanges(dir, { runner } = {}) {
   const options = { runner };
@@ -112,6 +146,7 @@ export async function getChanges(dir, { runner } = {}) {
     stat: clipBytes(stat.stdout, MAX_STAT_BYTES).text,
     truncated: all.length > MAX_CHANGED_FILES,
     hasHead: head,
+    ...(await listActiveHooks(dir, options)),
   };
 }
 
@@ -138,7 +173,16 @@ function messagePreview(message) {
  * Plan de "Commit y push": valida el mensaje, que haya cambios y que haya rama; elige push o push -u origin <rama>.
  * → { ok: true, steps, display, branch } | { ok: false, status, error, field? }.
  */
-export async function planCommitPush(dir, message, { runner } = {}) {
+function nonEmpty(value) {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+/** Entorno extra del push: ssh sin preguntas salvo que el humano ya haya configurado GIT_SSH_COMMAND o GIT_SSH. */
+function sshEnv(env) {
+  return nonEmpty(env && env.GIT_SSH_COMMAND) || nonEmpty(env && env.GIT_SSH) ? {} : { GIT_SSH_COMMAND: PUSH_SSH_COMMAND };
+}
+
+export async function planCommitPush(dir, message, { runner, env: panelEnv = process.env } = {}) {
   const options = { runner };
   const text = typeof message === 'string' ? message.trim() : '';
   if (!text || text.includes('\0')) return { ok: false, status: 400, error: GIT_ERRORS.messageRequired, field: 'message' };
@@ -155,10 +199,11 @@ export async function planCommitPush(dir, message, { runner } = {}) {
   const pushDisplay = upstream.ok ? 'git push' : `git push -u origin ${branch}`;
   const commitDisplay = `git commit -m "${messagePreview(text)}"`;
   const env = { ...GIT_STEP_ENV };
+  const pushEnv = { ...GIT_STEP_ENV, ...sshEnv(panelEnv) };
   const steps = [
-    { file: 'git', prefixArgs: [], args: [...GIT_ACTION_ARGS.add], display: 'git add -A', env },
-    { file: 'git', prefixArgs: [], args: [...GIT_ACTION_ARGS.commit, text], display: commitDisplay, env },
-    { file: 'git', prefixArgs: [], args: pushArgs, display: pushDisplay, env },
+    { file: 'git', prefixArgs: [], args: [...GIT_SAFE_PREFIX, ...GIT_ACTION_ARGS.add], display: 'git add -A', env },
+    { file: 'git', prefixArgs: [], args: [...GIT_SAFE_PREFIX, ...GIT_ACTION_ARGS.commit, text], display: commitDisplay, env: { ...env } },
+    { file: 'git', prefixArgs: [], args: [...GIT_SAFE_PREFIX, ...pushArgs], display: pushDisplay, env: pushEnv },
   ];
   return { ok: true, steps, display: steps.map((s) => s.display).join(' → '), branch, message: text };
 }

@@ -216,7 +216,8 @@ test('[F4-R62] validatePatch: allowedCommands válidos (recorte, colapso de espa
 });
 
 test('[F4-R62] validatePatch: allowedCommands y testCommand inválidos con field y texto de design.md §4.4', () => {
-  const invalidCommand = 'Comando no válido: solo letras, números, espacios y . _ : / = @ + - (máx. 200)';
+  // Feature 14 (texto ampliado de design.md §4.1, desviación declarada en docs/verification.md).
+  const invalidCommand = 'Comando no válido: solo letras, números, espacios y . _ : / = @ + - (máx. 200; no puede empezar por - ni terminar en :)';
   const cases = [
     [{ allowedCommands: ['npm test && rm'] }, invalidCommand, 'allowedCommands'],
     [{ allowedCommands: ['a(b)'] }, invalidCommand, 'allowedCommands'],

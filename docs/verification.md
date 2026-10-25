@@ -308,6 +308,71 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | T36 | **MANUAL — Windows + móvil — pendiente del humano** (R95–R98): anotar `claude --version`; chat desde el móvil por la red local y por el túnel (texto y herramientas en vivo, `Terminada` con coste y duración, reabrir desde el historial, "Continuar la última sesión" recuerda el mensaje anterior); pedir un comando no autorizado (p. ej. `npm run lint`) → "Necesita permiso" → "Permitir en este proyecto y reintentar" lo ejecuta (anotar el texto exacto de la denegación del CLI real); cancelar un run largo (`testCommand` que espera 120 s) y comprobar en el Administrador de tareas que no quedan `claude.exe`/`node.exe`/`bash.exe` hijos; "Ejecutar tests" con `init.sh` (anotar la ruta de Git Bash detectada) y "Commit y push" real sin quedarse esperando credenciales. Resultado (2026-10-25, PC local): superado salvo el uso desde el móvil y el «Commit y push» real, pendientes. La prueba destapó 7 fallos, corregidos antes de la aprobación (notas «corrección T36»). |
 | T37 | **MANUAL — Internet — pendiente del humano** (R99): por la URL temporal, una acción pasados 15 minutos pide la contraseña; con dominio propio y Access según `docs/acceso-web.md` §9: código de un solo uso, contraseña del panel y acciones sin reconfirmar. Resultado: _(anotar fecha y resultado)_ |
 
+## Mapa de trazabilidad — Feature 14: `endurecimiento-ejecucion` (prefijo `[F14-R<n>]`)
+
+> Tests en `panel/test/` (`node --test`, sin dependencias). `hardening.test.js` usa repos git temporales, ejecutables
+> falsos que solo escriben ficheros de marca en temporales, un `PATH` de prueba aislado (`proyecto:.:bin` con enlaces a
+> los `git` y `sh` reales; nunca el `PATH` del sistema, así que nunca se alcanza un `claude` real), un `HOME` temporal y
+> un remoto `--bare` local; se salta en Windows (scripts `#!/bin/sh` y enlaces: allí se cubre con la comprobación manual
+> de R12) y sin git. Ningún test lee ni escribe `panel/projects.json` ni `~/.claude`.
+>
+> **Cambios declarados en tests anteriores (design.md §8.3):** `exec-utils.test.js` `[F4-R54]` (`pytest` no encontrado →
+> `{ error: notFound }`; Linux con rutas absolutas encontradas con `exists` inyectado); `claude-cli.test.js` `[F4-R12]`
+> (Linux `claude` → `/usr/bin/claude`; "nada" → `{ error: notFound }`) y `[F4-R65]` (`yarn run -s x` → `null`);
+> `git-actions.test.js` `[F4-R60]`/`[F4-R58]` (pasos con `-c core.fsmonitor=false`; el push lleva `GIT_SSH_COMMAND`);
+> `runs-api.test.js` `[F4-R30]`; `helpers.js` (`startApp` acepta `env` y `claudeBin`).
+>
+> **Desviaciones del implementer (cambios en tests anteriores no listados en §8.3, todos consecuencia directa de un
+> requisito o texto de esta feature):**
+> - `runs-api.test.js` `[F4-R30]`: no fijaba `outputBytes`, pero exigía que el evento `result` siguiera en la salida
+>   tras el truncado; con R27 (solo `state`/`end` y los avisos esenciales esquivan el límite) el `result` se descarta.
+>   Ahora comprueba que no está y que el run conserva `succeeded` y el coste (que salen de `rec.result`).
+> - `claude-cli.test.js` y `runs-api.test.js` `[F4-R24][F4-R65]` (escenario `denied_powershell`): la denegación de
+>   `node --version` ya no propone `node` (es amplio, R15): `suggestion: null`, `suggestions: []`.
+> - `claude-cli.test.js` `[F4-R12]`: un `CLAUDE_BIN` `.js` relativo sin separador (`tool.mjs`) también se hace absoluto
+>   respecto a la carpeta del panel (design.md §5.5 dice "si es relativo"; si no, Node lo resolvería contra el `cwd` del
+>   run, que es la carpeta del proyecto).
+> - `exec-utils.test.js` `[F4-R28]`: `taskkill` se lanza por `C:\Windows\System32\taskkill.exe` (R10), mismos argumentos.
+> - `registry.test.js` `[F4-R62]` y `work-api.test.js` `[F4-R64]`: texto ampliado de `invalidCommand` (design.md §4.1).
+> - `work-api.test.js` `[F4-R6]`: la respuesta de `GET /work` incluye `broadCommands: []` (R18).
+
+| Requisito | Test(s) que lo verifican |
+|-----------|--------------------------|
+| R1 | `panel/test/trusted-bin.test.js` → "[F14-R1] linux: primera carpeta del PATH…", "[F14-R1] linux: node → execPath siempre…", "[F14-R1] win32: .com antes que .exe…", "[F14-R1] win32: rutas conocidas de §3.2…", "[F14-R1] win32: claude en PATH…", "[F14-R1][F14-R4] resolveTrustedBinary e isTrustedPath…"; `panel/test/exec-utils.test.js` → "[F14-R1][F14-R4] resolveExecutable delega en el resolvedor…" |
+| R2 | `panel/test/trusted-bin.test.js` → "[F14-R2] parsePathEntries descarta vacías…", "[F14-R2] el resolvedor solo consulta las entradas absolutas del PATH (linux y win32)" |
+| R3 | `panel/test/trusted-bin.test.js` → "[F14-R3] linux: se descartan el git del cwd, el de otro proyecto…", "[F14-R3] win32: sin distinguir mayúsculas…", "[F14-R3] proyecto contenedor (HOME, ancestro o raíz)…", "[F14-R3][F14-R5] el catálogo se lee en cada llamada" |
+| R4 | `panel/test/trusted-bin.test.js` → "[F14-R4] sin candidatos → notFound; solo dentro de un proyecto → onlyInProject…", "[F14-R4][F14-R6] isTrustedPath…"; `panel/test/hardening.test.js` → "[F14-R4] claudeBin "claude" sin Claude en el PATH del panel: POST /runs → 409 notFound…", "[F14-R11][F14-R4] con git, claude, node, npm y bash falsos…" |
+| R5 | `panel/test/trusted-bin.test.js` → "[F14-R5] caché: la segunda resolución no consulta el disco…", "[F14-R5] caché: una búsqueda sin candidatos no se guarda…" |
+| R6 | `panel/test/runs-api.test.js` → "[F14-R6] guardedSpawn: git suelto, bin/git o un fichero dentro del cwd…", "[F14-R6] guardedSpawn: un projectScript dentro del cwd se acepta…"; `panel/test/trusted-bin.test.js` → "[F14-R4][F14-R6] isTrustedPath…"; `panel/test/git-info.test.js` → "[F14-R7] createGitRunner rechaza…" |
+| R7 | `panel/test/git-info.test.js` → "[F14-R7][F14-R21] createGitRunner: ruta absoluta del resolvedor…", "[F14-R7] createGitRunner rechaza cualquier programa que no sea git…", "[F14-R7] createGitRunner: un fallo de execFile…"; `panel/test/hardening.test.js` → "[F14-R11][F14-R4] …" |
+| R8 | `panel/test/claude-cli.test.js` → "[F14-R8] resolveClaudeCommand: CLAUDE_BIN relativo con separador…", "[F14-R8] resolveClaudeCommand con resolvedor y cwd…" (y `[F4-R12]` ajustado) |
+| R9 | `panel/test/sdd-actions.test.js` → "[F14-R9] resolveTestCommand: nombre → resolvedor…", "[F14-R9] resolveTestCommand: relativa con separador → … projectScript…", "[F14-R9] resolveTestCommand: git solo en la carpeta del proyecto → 409 onlyInProject…" |
+| R10 | `panel/test/exec-utils.test.js` → "[F14-R10] taskkillPath y killProcessTree en win32…" |
+| R11 | `panel/test/hardening.test.js` → "[F14-R11] preparación: ejecutables falsos y PATH de prueba aislado", "[F14-R11][F14-R4] con git, claude, node, npm y bash falsos en el proyecto y PATH = proyecto:.:bin, el panel no ejecuta ninguno" |
+| R12 | **MANUAL — Windows — pendiente del humano** (T30, design.md §8.4): `whoami.exe` copiado como `git.exe` y `claude.exe` en un proyecto de prueba; anotar fecha, `node -v`, `git --version`, `claude --version` y resultado |
+| R13 | `panel/test/runs-api.test.js` → "[F14-R13] en win32 los hijos reciben NoDefaultCurrentDirectoryInExePath=1…"; `panel/test/git-info.test.js` → "[F14-R13] createGitRunner en win32 añade NoDefaultCurrentDirectoryInExePath=1…" |
+| R14 | `panel/test/claude-cli.test.js` → "[F14-R14] isBroadCommand con la tabla de design.md §3.5" |
+| R15 | `panel/test/claude-cli.test.js` → "[F14-R15] suggestAllowedCommand(s) nunca proponen un comando amplio…" |
+| R16 | `panel/test/work-api.test.js` → "[F14-R16] POST /permissions con un comando amplio…" |
+| R17 | `panel/test/work-api.test.js` → "[F14-R17] PATCH con un comando amplio nuevo…" |
+| R18 | `panel/test/work-api.test.js` → "[F14-R18] GET /work incluye broadCommands…" |
+| R19 | `panel/test/work-render.test.js` → "[F14-R19] BROAD_TEXTS y describeAction("allow-broad")…", "[F14-R19] renderBroadWarning…"; cableado del diálogo: comprobación manual (T30) |
+| R20 | `panel/test/claude-cli.test.js` → "[F14-R20] isValidAllowedCommand rechaza los que empiezan por - o terminan en :", "[F14-R20] buildAllowedTools con 200 comandos válidos aleatorios…" |
+| R21 | `panel/test/git-info.test.js` → "[F14-R7][F14-R21] createGitRunner…"; `panel/test/git-actions.test.js` → "[F14-R21][F14-R26] planCommitPush: los tres pasos con prefijo…" |
+| R22 | `panel/test/hardening.test.js` → "[F14-R22] core.fsmonitor con un script de marca no se ejecuta…" |
+| R23 | `panel/test/hardening.test.js` → "[F14-R23] un fichero llamado "*" devuelve solo su diff…"; `panel/test/git-actions.test.js` → "[F14-R23] GIT_ACTION_ARGS…", "[F14-R23] getFileDiff de un fichero llamado "*"…" |
+| R24 | `panel/test/hardening.test.js` → "[F14-R24] GET /changes informa de los hooks activos…"; `panel/test/git-actions.test.js` → "[F14-R24] listActiveHooks…" |
+| R25 | `panel/test/work-render.test.js` → "[F14-R25] renderHooksWarning…"; `panel/test/git-actions.test.js` → "[F14-R25] estático: git-actions.js no desactiva los hooks…"; cableado del diálogo: comprobación manual (T30) |
+| R26 | `panel/test/git-actions.test.js` → "[F14-R21][F14-R26] planCommitPush…", "[F14-R26] planCommitPush respeta GIT_SSH_COMMAND o GIT_SSH…" |
+| R27 | `panel/test/runs-api.test.js` → "[F14-R27] escenario flood con límite pequeño…" (y `[F4-R30]` ajustado) |
+| R28 | `panel/test/claude-cli.test.js` → "[F14-R28] createStreamMapper: con 60 denegaciones distintas…"; `panel/test/runs-api.test.js` → "[F14-R28] escenario flood con el límite normal…" |
+| R29 | `panel/test/hardening.test.js` → "[F14-R29] approve-spec con un run activo → 409…" |
+| R30 | `panel/test/deploy.test.js` → "[F14-R30] specs/puesto-de-mando-trabajar/design.md: correcciones N1 y N2" |
+| R31 | `panel/test/deploy.test.js` → "[F14-R31] docs/architecture.md tiene la sección "Seguridad de la ejecución"…" |
+| R32 | `panel/test/deploy.test.js` → "[F14-R32] docs/verification.md: sección Feature 14…" |
+| R33 | `./init.sh` completo en verde (fases 1–4 y feature 14) y `node sdd-lint.js` con 0 errores (T31) |
+| T30 | **MANUAL — Windows — pendiente del humano** (R12, R19, R25; design.md §8.4). Resultado: _(anotar fecha, versiones y resultado)_ |
+
 ## Qué NO se considera verificado
 
 - "Yo lo he probado a mano una vez" no cuenta como test.

@@ -1,5 +1,7 @@
 // Tests de integración de los runs de Claude, cancelación, historial y SSE (lib/runs.js, lib/run-store.js,
 // lib/sse.js, lib/work-api.js) — F4: R17–R27, R29, R30, R32–R43. Siempre con el CLI falso, nunca el `claude` real.
+// Feature 14: F14-R6 (guardia al lanzar), F14-R13 (entorno de Windows), F14-R27 (límite para todos los eventos) y
+// F14-R28 (tope de 50 denegaciones). Ajustes de tests de la fase 4: [F4-R30] y [F4-R24][F4-R65] (ver verification.md).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -9,7 +11,11 @@ import { makeProjectDir, makeTempDir, writeRegistry, startApp, request, removeDi
 import { makeClaudeHome, sessionLine, encodeForFixture, VIEJO_FOLDER } from './claude-fixtures.js';
 import { waitForRun, readSse, readFakeLog, fileExists, waitFor, isAlive } from './work-helpers.js';
 import { slugify } from '../lib/registry.js';
-import { RUN_ID_RE } from '../lib/run-store.js';
+import { RUN_ID_RE, createRunStore } from '../lib/run-store.js';
+import { createRunManager, NOTICES } from '../lib/runs.js';
+import { createBinaryResolver, BIN_ERRORS } from '../lib/trusted-bin.js';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 const PASSWORD = 'contraseña-de-la-fase-4';
 const IS_WINDOWS = process.platform === 'win32';
@@ -330,13 +336,14 @@ test('[F4-R24][F4-R65] corrección T36: salida real (tool_input vacío) → succ
   assert.ok(!JSON.stringify(done.events).includes('"detail":"{}"'));
 });
 
-test('[F4-R24][F4-R65] corrección T36: denegación real de PowerShell → succeeded con "node" como comando propuesto; con node autorizado la regla PowerShell va en --allowedTools', async () => {
+test('[F4-R24][F4-R65] corrección T36: denegación real de PowerShell → succeeded sin proponer "node" (amplio, F14-R15); con node autorizado la regla PowerShell va en --allowedTools', async () => {
   const dir = await makeProjectDir();
   const ctx = await setup({ projectDir: dir, entries: [{ id: 'proy', name: 'Proy', path: dir, allowedCommands: ['node'] }] });
   const r = await ctx.post('/api/projects/proy/runs', { prompt: '[[denied_powershell]] Ejecuta node --version' });
   const done = await wait(ctx, r.json.runId);
   assert.equal(done.run.state, 'succeeded');
-  assert.deepEqual(done.run.permissionDenials, [{ tool: 'PowerShell', detail: 'node --version', suggestion: 'node', suggestions: ['node'] }]);
+  // Feature 14 (desviación declarada): `node` es un comando amplio y ya no se propone (F14-R15).
+  assert.deepEqual(done.run.permissionDenials, [{ tool: 'PowerShell', detail: 'node --version', suggestion: null, suggestions: [] }]);
   assert.ok(done.events.some((e) => e.type === 'tool' && e.name === 'PowerShell' && e.summary === 'node --version'));
   const [entry] = await readFakeLog(ctx.app.fakeLog);
   assert.ok(entry.allowedTools[0].split(',').includes('PowerShell(node *)'), entry.allowedTools[0]);
@@ -403,7 +410,10 @@ test('[F4-R30] outputLimitBytes 10000 con big: un único aviso, .jsonl acotado, 
   assert.ok(done.run.outputBytes <= 10000);
   const stat = await fs.stat(path.join(ctx.app.dataDir, 'runs', 'proy', `${r.json.runId}.jsonl`));
   assert.ok(stat.size < 10000 + 4096, `tamaño ${stat.size}`);
-  assert.ok(done.events.some((e) => e.type === 'result'));
+  // Feature 14 (desviación declarada, F14-R27): tras el truncado el evento result también se descarta, pero el
+  // run conserva su resultado (estado succeeded y coste, arriba).
+  assert.ok(!done.events.some((e) => e.type === 'result'));
+  assert.deepEqual(done.events.slice(-2).map((e) => e.type), ['state', 'end']);
 });
 
 // ---------- R32, R33 ----------
@@ -527,4 +537,138 @@ test('[F4-R42] SSE sin sesión → 401 y con id inexistente → 404 JSON', async
   assert.deepEqual(missing.json, { error: 'Ejecución no encontrada' });
   const badId = await ctx.authed('/api/runs/..%2Fx/events');
   assert.equal(badId.status, 404);
+});
+
+// ---------- Feature 14: guardia al lanzar, entorno de Windows y límites (R6, R13, R27, R28) ----------
+
+/** Proceso falso para el spawnImpl espía: arranca y termina con código 0 sin salida. */
+function fakeChild() {
+  const child = new EventEmitter();
+  child.pid = 424242;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdin = new PassThrough();
+  setImmediate(() => {
+    child.emit('spawn');
+    child.stdout.end();
+    child.stderr.end();
+    child.exitCode = 0;
+    child.emit('exit', 0, null);
+    child.emit('close', 0, null);
+  });
+  return child;
+}
+
+async function managerFixture({ platform = 'linux', files = ['/usr/bin/git'], PATH = '/usr/bin', cwd = '/srv/p' } = {}) {
+  const dataDir = await tempDir('muver-f14-runs-');
+  const store = createRunStore({ dataDir });
+  const set = new Set(files);
+  const resolver = createBinaryResolver({ platform, env: { PATH }, homeDir: '/home/u', fsOps: { isFile: (f) => set.has(f), isExecutable: () => true, realpath: (f) => (set.has(f) ? f : null) } });
+  const calls = [];
+  const spawnImpl = (file, args, opts) => {
+    calls.push({ file, args, opts });
+    return fakeChild();
+  };
+  const runs = createRunManager({ store, platform, resolver, spawnImpl, env: { PATH: '/usr/bin', HOME: '/home/u' }, killTree: () => {} });
+  async function finalMeta(runId) {
+    await waitFor(async () => {
+      const found = await store.find(runId);
+      return Boolean(found && ['succeeded', 'failed', 'cancelled', 'timeout', 'needs_permission'].includes(found.meta.state)) && runs.get(runId) === null;
+    }, { message: `run ${runId} terminado` });
+    const found = await store.find(runId);
+    return { meta: found.meta, events: await store.readEvents(found.projectId, runId) };
+  }
+  return { runs, calls, finalMeta, project: { id: 'proy', dir: cwd } };
+}
+
+test('[F14-R6] guardedSpawn: git suelto, bin/git o un fichero dentro del cwd → failed con el texto untrusted sin llamar a spawn', async () => {
+  for (const file of ['git', 'bin/git', '/srv/p/git', '/srv/p/sub/git']) {
+    const fx = await managerFixture();
+    const started = await fx.runs.startCommand({ project: fx.project, steps: [{ file, prefixArgs: [], args: ['--version'], display: 'git --version' }], action: 'tests', label: 'Ejecutar tests', commandLabel: 'git --version' });
+    assert.equal(started.ok, true);
+    const { meta, events } = await fx.finalMeta(started.meta.runId);
+    assert.equal(meta.state, 'failed', file);
+    assert.equal(meta.error, BIN_ERRORS.untrusted('git'), file);
+    assert.ok(events.some((e) => e.type === 'error' && e.message === BIN_ERRORS.untrusted('git')), file);
+    assert.equal(fx.calls.length, 0, `spawn no se llamó con ${file}`);
+  }
+  const ok = await managerFixture();
+  const started = await ok.runs.startCommand({ project: ok.project, steps: [{ file: '/usr/bin/git', prefixArgs: [], args: ['--version'], display: 'git --version' }], action: 'tests', label: 'Ejecutar tests', commandLabel: 'git --version' });
+  assert.equal((await ok.finalMeta(started.meta.runId)).meta.state, 'succeeded');
+  assert.equal(ok.calls.length, 1);
+  assert.equal(ok.calls[0].file, '/usr/bin/git');
+  assert.equal(ok.calls[0].opts.shell, false);
+});
+
+test('[F14-R6] guardedSpawn: un projectScript dentro del cwd se acepta; fuera del cwd o relativo, no; Claude con nombre suelto, no', async () => {
+  const fx = await managerFixture();
+  const script = await fx.runs.startCommand({ project: fx.project, steps: [{ file: '/srv/p/scripts/test.sh', prefixArgs: [], args: [], display: './scripts/test.sh', projectScript: true }], action: 'tests', label: 'Ejecutar tests', commandLabel: './scripts/test.sh' });
+  assert.equal((await fx.finalMeta(script.meta.runId)).meta.state, 'succeeded');
+  assert.deepEqual(fx.calls.map((c) => c.file), ['/srv/p/scripts/test.sh']);
+  for (const file of ['/srv/otro/test.sh', 'scripts/test.sh']) {
+    const bad = await managerFixture();
+    const r = await bad.runs.startCommand({ project: bad.project, steps: [{ file, prefixArgs: [], args: [], display: file, projectScript: true }], action: 'tests', label: 'Ejecutar tests', commandLabel: file });
+    assert.equal((await bad.finalMeta(r.meta.runId)).meta.error, BIN_ERRORS.untrusted('test.sh'), file);
+    assert.equal(bad.calls.length, 0);
+  }
+  const claude = await managerFixture();
+  const run = await claude.runs.startClaude({ project: claude.project, prompt: 'hola', session: { mode: 'new' }, claudeCommand: { file: 'claude', prefixArgs: [] } });
+  const done = await claude.finalMeta(run.meta.runId);
+  assert.equal(done.meta.state, 'failed');
+  assert.equal(done.meta.error, BIN_ERRORS.untrusted('claude'));
+  assert.equal(claude.calls.length, 0);
+  const inProject = await managerFixture();
+  const run2 = await inProject.runs.startClaude({ project: inProject.project, prompt: 'hola', session: { mode: 'new' }, claudeCommand: { file: '/srv/p/claude', prefixArgs: [] } });
+  assert.equal((await inProject.finalMeta(run2.meta.runId)).meta.error, BIN_ERRORS.untrusted('claude'));
+  assert.equal(inProject.calls.length, 0);
+});
+
+test('[F14-R13] en win32 los hijos reciben NoDefaultCurrentDirectoryInExePath=1 (y en Linux no), sin cambiar el resto del entorno', async () => {
+  const win = await managerFixture({ platform: 'win32', files: ['C:\\Git\\cmd\\git.exe'], PATH: 'C:\\Git\\cmd', cwd: 'C:\\p' });
+  const r = await win.runs.startCommand({ project: win.project, steps: [{ file: 'C:\\Git\\cmd\\git.exe', prefixArgs: [], args: ['status'], display: 'git status', env: { GIT_TERMINAL_PROMPT: '0' } }], action: 'tests', label: 'Ejecutar tests', commandLabel: 'git status' });
+  await win.finalMeta(r.meta.runId);
+  assert.equal(win.calls[0].opts.env.NoDefaultCurrentDirectoryInExePath, '1');
+  assert.equal(win.calls[0].opts.env.GIT_TERMINAL_PROMPT, '0');
+  assert.equal(win.calls[0].opts.env.PATH, '/usr/bin');
+  const winClaude = await managerFixture({ platform: 'win32', files: [], PATH: 'C:\\x', cwd: 'C:\\p' });
+  const c = await winClaude.runs.startClaude({ project: winClaude.project, prompt: 'hola', session: { mode: 'new' }, claudeCommand: { file: 'C:\\Users\\U\\.local\\bin\\claude.exe', prefixArgs: [] } });
+  await winClaude.finalMeta(c.meta.runId);
+  assert.equal(winClaude.calls[0].opts.env.NoDefaultCurrentDirectoryInExePath, '1');
+  const lin = await managerFixture();
+  const l = await lin.runs.startCommand({ project: lin.project, steps: [{ file: '/usr/bin/git', prefixArgs: [], args: ['status'], display: 'git status' }], action: 'tests', label: 'Ejecutar tests', commandLabel: 'git status' });
+  await lin.finalMeta(l.meta.runId);
+  assert.ok(!('NoDefaultCurrentDirectoryInExePath' in lin.calls[0].opts.env));
+});
+
+test('[F14-R27] escenario flood con límite pequeño: todos los eventos cuentan, un solo aviso de truncado y state/end al final', async () => {
+  const limit = 20000;
+  const ctx = await setup({ outputLimitBytes: limit });
+  const r = await ctx.post('/api/projects/proy/runs', { prompt: '[[flood]]' });
+  assert.equal(r.status, 202, r.text);
+  const done = await wait(ctx, r.json.runId, { timeoutMs: 20000 });
+  assert.equal(done.run.truncated, true);
+  assert.ok(done.run.outputBytes <= limit, `outputBytes ${done.run.outputBytes}`);
+  assert.ok(done.run.outputBytes > limit - 2000, 'los eventos session/notice/permission_denied cuentan');
+  assert.equal(done.events.filter((e) => e.type === 'notice' && e.message.startsWith('Salida truncada')).length, 1);
+  assert.deepEqual(done.events.slice(-2).map((e) => e.type), ['state', 'end']);
+  assert.ok(done.events.length < 200, `eventos guardados: ${done.events.length}`);
+  const stat = await fs.stat(path.join(ctx.app.dataDir, 'runs', 'proy', `${r.json.runId}.jsonl`));
+  assert.ok(stat.size < limit + 4096, `tamaño ${stat.size}`);
+});
+
+test('[F14-R28] escenario flood con el límite normal: 50 denegaciones en index.json y un solo aviso denialsCapped en el .jsonl', async () => {
+  const ctx = await setup();
+  const r = await ctx.post('/api/projects/proy/runs', { prompt: '[[flood]]' });
+  const done = await wait(ctx, r.json.runId, { timeoutMs: 30000 });
+  assert.equal(done.run.state, 'succeeded');
+  assert.equal(done.run.permissionDenials.length, 50);
+  assert.equal(NOTICES.denialsCapped, 'Se han alcanzado 50 denegaciones de permiso: no se registran más en esta ejecución');
+  const runDir = path.join(ctx.app.dataDir, 'runs', 'proy');
+  const index = JSON.parse(await fs.readFile(path.join(runDir, 'index.json'), 'utf8'));
+  assert.equal(index.runs[0].permissionDenials.length, 50);
+  const lines = (await fs.readFile(path.join(runDir, `${r.json.runId}.jsonl`), 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.equal(lines.filter((e) => e.type === 'permission_denied').length, 50);
+  assert.equal(lines.filter((e) => e.type === 'notice' && e.message === NOTICES.denialsCapped).length, 1);
 });

@@ -188,6 +188,18 @@ switch (scenario) {
     result();
     process.exitCode = 0;
     break;
+  case 'flood': {
+    // Feature 14 (design.md §8.1): solo eventos que en la fase 4 no contaban para el límite de salida.
+    for (let i = 0; i < 60; i++) {
+      out({ type: 'system', subtype: 'permission_denied', tool_name: 'Bash', tool_use_id: `flood-${i}`, tool_input: { command: `comando-${i} x` } });
+    }
+    const model = 'm'.repeat(1024);
+    for (let i = 0; i < 2000; i++) out({ type: 'system', subtype: 'init', session_id: SESSION_ID, model });
+    for (let i = 0; i < 2000; i++) out({ type: 'system', subtype: 'api_retry', attempt: i + 1 });
+    result();
+    process.exitCode = 0;
+    break;
+  }
   case 'garbage':
     out('Invalid API key');
     out('{ roto');

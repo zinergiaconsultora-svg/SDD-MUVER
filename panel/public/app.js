@@ -45,6 +45,8 @@ import {
   buildRunPayload,
   buildExecSettingsPayload,
   withReauth,
+  renderBroadWarning,
+  renderHooksWarning,
   STATE_LABELS,
   ACTIVE_STATES,
   MAX_LOG_EVENTS,
@@ -504,8 +506,11 @@ function openDialog(dialog) {
   });
 }
 
-/** Diálogo de confirmación con el texto de describeAction (ya escapado) y un HTML extra opcional. */
-async function confirmAction(text, { extraHtml = '' } = {}) {
+/**
+ * Diálogo de confirmación con el texto de describeAction (ya escapado) y un HTML extra opcional. Feature 14:
+ * `confirmLabel` cambia el texto del botón de confirmar mientras el diálogo está abierto (por defecto "Confirmar").
+ */
+async function confirmAction(text, { extraHtml = '', confirmLabel = null } = {}) {
   if (!confirmDialog || typeof confirmDialog.showModal !== 'function') {
     const plain = document.createElement('div');
     plain.innerHTML = text;
@@ -513,7 +518,11 @@ async function confirmAction(text, { extraHtml = '' } = {}) {
   }
   confirmBody.innerHTML = renderConfirmDialogBody(text);
   confirmExtra.innerHTML = extraHtml;
+  const okButton = document.getElementById('confirm-dialog-ok');
+  const originalLabel = okButton ? okButton.textContent : null;
+  if (okButton && confirmLabel) okButton.textContent = confirmLabel;
   const result = await openDialog(confirmDialog);
+  if (okButton && originalLabel !== null) okButton.textContent = originalLabel;
   const values = {};
   for (const field of confirmExtra.querySelectorAll('[name]')) values[field.name] = field.value;
   confirmExtra.innerHTML = '';
@@ -571,6 +580,9 @@ async function openWork({ runId = null } = {}) {
     const [work, runs] = await Promise.all([request(projectUrl('/work')), request(projectUrl('/runs'))]);
     currentWork = work;
     container.innerHTML = renderWorkView(work, { runs, now: Date.now() });
+    // Feature 14 (R19): aviso mientras haya comandos de ejecución libre guardados, encima de la lista.
+    const settingsForm = container.querySelector('#exec-settings-form');
+    if (settingsForm) settingsForm.insertAdjacentHTML('afterbegin', renderBroadWarning(work.broadCommands));
     const target = runId || (work.activeRun && work.activeRun.runId);
     if (target) await openRun(target);
   } catch (err) {
@@ -680,6 +692,31 @@ function runContext(extra = {}) {
   return { projectName: currentDetail.name, allowedCommands: currentWork ? currentWork.allowedCommands : [], ...extra };
 }
 
+/** Feature 14: la API pide la confirmación expresa de comandos de ejecución libre (400 con needsAcknowledge). */
+function isBroadRejection(err) {
+  return Boolean(err && err.status === 400 && err.payload && err.payload.needsAcknowledge === true);
+}
+
+/** Diálogo de aviso de comando amplio: true solo si el humano pulsa "Autorizar de todos modos". */
+async function confirmBroad(broadCommands) {
+  const { confirmed } = await confirmAction(describeAction('allow-broad', runContext({ broadCommands })), { confirmLabel: 'Autorizar de todos modos' });
+  return confirmed;
+}
+
+/**
+ * Petición de ejecución que, si la API responde needsAcknowledge, muestra el aviso y solo la repite con
+ * acknowledgeBroad: true si el humano lo confirma (null si no).
+ */
+async function execRequestWithBroad(url, method, payload) {
+  try {
+    return await execRequest(url, { method, body: JSON.stringify(payload) });
+  } catch (err) {
+    if (!isBroadRejection(err)) throw err;
+    if (!(await confirmBroad(err.payload.broadCommands || []))) return null;
+    return execRequest(url, { method, body: JSON.stringify({ ...payload, acknowledgeBroad: true }) });
+  }
+}
+
 /** Lanza una acción que crea un run (POST que responde 202 con RunMeta) y conecta su salida. */
 async function startRun(url, body) {
   const meta = await execRequest(url, { method: 'POST', body: JSON.stringify(body || {}) });
@@ -773,14 +810,17 @@ async function showDiff(file) {
 
 async function commitPushAction() {
   let branch = '';
+  let changes = {};
   try {
-    branch = (await request(projectUrl('/changes'))).branch || '';
+    changes = (await request(projectUrl('/changes'))) || {};
+    branch = changes.branch || '';
   } catch (err) {
     showActionError(err, 'No se pudieron leer los cambios');
     return;
   }
   const message = suggestCommitMessage(currentWork);
-  const extraHtml = `<div class="field"><label for="commit-message">Mensaje del commit (puedes editarlo)</label><textarea id="commit-message" name="message" maxlength="2000" rows="3">${escapeHtml(message)}</textarea></div>`;
+  // Feature 14 (R25): aviso de hooks activos (se ejecutan con el commit y el push).
+  const extraHtml = `${renderHooksWarning(changes)}<div class="field"><label for="commit-message">Mensaje del commit (puedes editarlo)</label><textarea id="commit-message" name="message" maxlength="2000" rows="3">${escapeHtml(message)}</textarea></div>`;
   const { confirmed, values } = await confirmAction(describeAction('commit-push', runContext({ message, branch })), { extraHtml });
   if (!confirmed) return;
   try {
@@ -808,7 +848,7 @@ async function allowCommandAction(command) {
   const { confirmed } = await confirmAction(describeAction('allow-command', runContext({ command })));
   if (!confirmed) return;
   try {
-    const added = await execRequest(projectUrl('/permissions'), { method: 'POST', body: JSON.stringify({ command }) });
+    const added = await execRequestWithBroad(projectUrl('/permissions'), 'POST', { command });
     if (!added) return;
     if (currentWork) currentWork.allowedCommands = added.allowedCommands;
     if (run && promptEvent) await startRun(projectUrl('/runs'), buildRetryPayload(run, promptEvent.text));
@@ -826,7 +866,7 @@ async function submitExecSettings(event) {
   const { confirmed } = await confirmAction(describeAction('exec-settings', runContext({ count: payload.allowedCommands.length })));
   if (!confirmed) return;
   try {
-    const saved = await execRequest(projectUrl(), { method: 'PATCH', body: JSON.stringify(payload) });
+    const saved = await execRequestWithBroad(projectUrl(), 'PATCH', payload);
     if (!saved) return;
     await openWork();
     const newSlot = workEl('#exec-settings-error');
