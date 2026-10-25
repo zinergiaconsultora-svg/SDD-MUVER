@@ -104,3 +104,23 @@
   Reviewer: APROBADO con mejoras de seguridad M1 (alta: git.exe del proyecto en Windows), M2
   (comandos autorizados demasiado amplios), M3 (hooks y core.fsmonitor), M4, M5 y notas N1–N6.
   Informe: `progress/review_puesto-de-mando-trabajar.md`.
+
+## 2026-10-25 · Feature 14: endurecimiento-ejecucion (seguridad de la ejecución)
+- **Qué se hizo:** Resolución de `git`, `node`, `npm`, `npx`, `claude`, `bash` y `taskkill` por ruta
+  absoluta solo desde `PATH` y rutas conocidas, excluyendo la carpeta del proyecto y las del catálogo,
+  con comprobación final antes de lanzar cualquier proceso y `NoDefaultCurrentDirectoryInExePath=1` en
+  Windows (M1: `git.exe` en la carpeta del proyecto); sin vuelta al nombre suelto en `exec-utils` y
+  `claude-cli`; comandos amplios no sugeridos y con confirmación con aviso (M2); git con
+  `core.fsmonitor=false`, aviso de hooks en Commit y push, push SSH en BatchMode y diffs con
+  `--literal-pathspecs` (M3, M4, N3); límite de salida para todos los eventos (M5); «Aprobar spec»
+  rechazada con un run activo (N4).
+- **Ficheros cambiados:** `panel/lib/trusted-bin.js` (nuevo), `app`, `claude-cli`, `exec-utils`,
+  `git-actions`, `git-info`, `registry`, `runs`, `sdd-actions`, `work-api`, `public/{app,work}.js`,
+  `server.js`, tests y docs.
+- **Requisitos cubiertos:** R1–R33 (`specs/endurecimiento-ejecucion/requirements.md`); R12 manual.
+- **Tests añadidos:** 59 (470 en total); suite en verde en Linux.
+- **Notas / decisiones:** Puerta 2 aprobada por el humano. El humano decidió cerrar con T30 (prueba
+  manual en Windows con `whoami.exe` como `git.exe`/`claude.exe`) pendiente y no bloqueante; se hará
+  junto con la de la feature 15. Reviewer: APROBADO con mejoras M1 (lista de comandos amplios de
+  git/npm incompleta), M2 (`taskkill` sin guardia final) y M3 (ruta real del `cwd`), que pasan a la
+  feature 15. Informe: `progress/review_endurecimiento-ejecucion.md`.

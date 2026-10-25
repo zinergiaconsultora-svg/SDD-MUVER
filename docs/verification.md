@@ -371,7 +371,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R31 | `panel/test/deploy.test.js` → "[F14-R31] docs/architecture.md tiene la sección "Seguridad de la ejecución"…" |
 | R32 | `panel/test/deploy.test.js` → "[F14-R32] docs/verification.md: sección Feature 14…" |
 | R33 | `./init.sh` completo en verde (fases 1–4 y feature 14) y `node sdd-lint.js` con 0 errores (T31) |
-| T30 | **MANUAL — Windows — pendiente del humano** (R12, R19, R25; design.md §8.4). Resultado: _(anotar fecha, versiones y resultado)_ |
+| T30 | **MANUAL — Windows — pendiente del humano, no bloqueante** (R12, R19, R25; design.md §8.4). El humano decidió el 2026-10-25 cerrar la feature 14 con esta prueba pendiente; se hará junto con la de la feature 15 (cancelar un run en Windows). Resultado: _(anotar fecha, versiones y resultado)_ |
 
 ## Qué NO se considera verificado
 

@@ -4,14 +4,15 @@
 > leader y el implementer. Si cierras la sesión y la abres mañana, esto te dice por
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
-- **Feature en curso:** #14 `endurecimiento-ejecucion` — seguridad de la ejecución (hallazgos del reviewer de la fase 4)
-- **Estado:** `in_progress` — puerta 2 aprobada por el humano (2026-10-25); **reviewer: APROBADO** (`progress/review_endurecimiento-ejecucion.md`, sin bloqueantes); falta T30 manual en Windows para cerrar
-- **Tarea actual:** T30 (prueba manual en Windows: `whoami.exe` como `git.exe`/`claude.exe`), pendiente del humano.
-- **Siguiente paso:** humano hace T30 → leader anota el resultado en `docs/verification.md` y `progress/history.md` → done. **Spec de la feature 15 aprobada por el humano (2026-10-25)**: pasa a `in_progress` en cuanto la 14 quede en `done` (una sola feature en curso). Después: 16, 17, 18 (riesgos de la 15) y la 13.
-- **Bloqueos / esperando:** T30 manual en Windows (necesaria para cerrar la feature como `done`)
+- **Feature en curso:** #15 `comandos-amplios-git-npm` — comandos amplios de git y npm, `taskkill` con guardia final y ruta real del `cwd` (mejoras del reviewer de la feature 14)
+- **Estado:** `in_progress` — spec aprobada por el humano (2026-10-25); implementer trabajando
+- **Tarea actual:** T1 en adelante de `specs/comandos-amplios-git-npm/tasks.md`
+- **Siguiente paso:** implementer → humano revisa tests (puerta 2) → reviewer → done. Después: 16, 17, 18 (riesgos de la 15) y la 13.
+- **Bloqueos / esperando:** — (pendiente del humano, no bloqueante: T30 de la feature 14 en Windows, junto con la de la 15)
 
 ## Decisiones tomadas con el humano
 
+- Feature 14 cerrada como `done` con T30 (prueba manual en Windows) pendiente y no bloqueante, por decisión del humano (2026-10-25).
 - `panel-muver` se unifica dentro de este repo, en la carpeta `panel/`.
 - Roadmap de 5 fases (ver `feature_list.json`): 1 base (hecha), 2 acceso web seguro,
   3 descubrimiento automático de proyectos de Claude Code, 4 trabajar desde el panel

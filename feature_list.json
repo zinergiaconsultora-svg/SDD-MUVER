@@ -33,14 +33,14 @@
       "id": 14,
       "slug": "endurecimiento-ejecucion",
       "description": "Endurecimiento de seguridad de la ejecución (hallazgos del reviewer de la fase 4): M1 resolver git/node/claude/bash por ruta absoluta desde PATH y nunca desde la carpeta del proyecto (Windows busca primero en el cwd del hijo), en git-info, git-actions, exec-utils y claude-cli; M2 no sugerir ni aceptar sin aviso comandos autorizados que equivalen a ejecución libre (intérpretes, shells, env, git a secas) y exigir subcomando; M3 llamadas git del panel con -c core.fsmonitor=false y decisión documentada sobre hooks en commit; M4 push por SSH en modo no interactivo (BatchMode); M5 límite de salida y de permissionDenials para todos los eventos; N3 --literal-pathspecs en diffs; N4 approve-spec rechaza si hay un run activo en el proyecto; N1/N2 corregir design.md de la fase 4.",
-      "status": "in_progress",
+      "status": "done",
       "sdd": true
     },
     {
       "id": 15,
       "slug": "comandos-amplios-git-npm",
       "description": "Endurecimiento de seguridad, segunda parte (mejoras del reviewer de la feature 14, progress/review_endurecimiento-ejecucion.md): M1 ampliar la lista de comandos amplios con los subcomandos de git y npm que ejecutan programas mediante opciones o configuración (git fetch --upload-pack, git push --receive-pack/--exec, git ls-remote --upload-pack, git clone -u/--upload-pack/-c, git grep -O/--open-files-in-pager, git hook run, npm run-script y alias de npm run) para que no se sugieran nunca y añadirlos a mano exija la confirmación con aviso; M2 que killProcessTree pase por isTrustedPath y añada NoDefaultCurrentDirectoryInExePath (o corregir docs/architecture.md si se decide no hacerlo); M3 que el resolvedor por defecto resuelva la ruta real del cwd al excluir carpetas.",
-      "status": "spec_ready",
+      "status": "in_progress",
       "sdd": true
     },
     {
