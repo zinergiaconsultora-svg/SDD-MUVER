@@ -46,14 +46,14 @@
     {
       "id": 8,
       "slug": "memoria-del-estudio",
-      "description": "Memoria del estudio compartida entre todos los proyectos: lecciones aprendidas generadas automáticamente de cada rechazo del reviewer (~/.claude/estudio/lecciones.md) que spec_author e implementer leen antes de empezar; biblioteca de skills de Claude Code con recetas probadas (login con contraseña de la fase 2, pagos, subida de ficheros, despliegue, PWA); ADN de marca (sistema de diseño, tipografía, componentes, tono). En el panel: sección Estudio con lecciones, recetas y uso.",
+      "description": "Memoria del estudio compartida entre todos los proyectos, construida sobre el estándar abierto Agent Skills (SKILL.md, agentskills.io; legible también por Codex, Cursor y Gemini CLI): lecciones aprendidas generadas automáticamente de cada rechazo del reviewer (~/.claude/estudio/lecciones.md) que spec_author e implementer leen antes de empezar; biblioteca de skills con recetas probadas (login con contraseña de la fase 2, pagos, subida de ficheros, despliegue, PWA); ADN de marca (sistema de diseño, tipografía, componentes, tono); todo empaquetado como plugin de Claude Code «muver-estudio» instalable en cualquier proyecto con un comando, y cada skill con su evaluación (skill-creator / claude plugin eval). En el panel: sección Estudio con lecciones, recetas, nota de cada skill y uso.",
       "status": "pending",
       "sdd": true
     },
     {
       "id": 9,
       "slug": "equipo-y-fabrica",
-      "description": "Equipo de agentes especialistas y fábrica de proyectos: agentes ux-ui, backend-datos, qa-tests, seguridad, devops y producto que el leader elige según la tarea, con reparto en paralelo en worktrees aislados y verificación de conjunto por el reviewer; botón Nuevo proyecto con plantillas (app web, PWA, landing, API, panel interno) que crea repo con arnés SDD y agentes instalados y lanza la entrevista de descubrimiento; prototipos clicables (2-3 estilos) para elegir en el móvil antes de programar; vista Equipo en el panel (qué agente trabaja en qué proyecto, fase, tiempo y qué espera del humano).",
+      "description": "Equipo de agentes especialistas y fábrica de proyectos: skill /nuevo-agente que entrevista al humano y genera agentes bien configurados (tools/disallowedTools, model, permissionMode, skills de referencia), usada también desde el panel; agentes ux-ui, backend-datos, qa-tests, seguridad, devops y producto que el leader elige según la tarea, con reparto en paralelo en worktrees aislados y verificación de conjunto por el reviewer; el flujo SDD expuesto como skills (/spec, /implementar, /revisar, /aprobar; las que tienen efectos con disable-model-invocation y contexto en vivo con !`git diff`); botón Nuevo proyecto con plantillas (app web, PWA, landing, API, panel interno) que crea el repo, instala el plugin muver-estudio y lanza la entrevista de descubrimiento; prototipos clicables (2-3 estilos) para elegir en el móvil antes de programar; vista Equipo en el panel; opcional: multimotor con Codex CLI como segunda opinión o modo arena (requiere suscripción de OpenAI).",
       "status": "pending",
       "sdd": true
     },
