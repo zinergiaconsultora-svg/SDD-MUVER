@@ -376,18 +376,39 @@ automático. Si un requisito no se puede probar, está mal escrito.
 ## Mapa de trazabilidad — Feature 15: `comandos-amplios-git-npm` (prefijo `[F15-R<n>]`)
 
 > Tests en `panel/test/` (`node --test`, sin dependencias). Entorno de los tests de integración (design.md §6.1):
-> `hardening.test.js` `[F15-R6]` usa un repo git temporal real con un commit y un script `marca.sh` que solo crea un
-> fichero de marca en un temporal; lanza el git del sistema con `execFile` (`shell: false`, `timeout` de 10 s,
-> `GIT_CONFIG_NOSYSTEM=1`) contra el propio repo (`.`) y un clon en un temporal, nunca un remoto real; primero
-> comprueba que el git real crea la marca y después que el comando es amplio. `[F15-R14]` de integración crea un enlace
+> `hardening.test.js` `[F15-R6]` usa un repo git temporal real y un script `marca.sh` que solo crea un fichero de
+> marca en un temporal; lanza el git del sistema con `execFile` (`shell: false`, `timeout` de 10 s) contra el propio
+> repo (`.`) y un clon en un temporal, nunca un remoto real; primero comprueba que el programa real crea la marca y
+> después que el comando es amplio. Desde la Enmienda 1 el repo tiene dos ramas que divergen (`f15-otra` sale del
+> commit anterior a `HEAD`) y el test añade `git merge -s <nombre del PATH>` (script `git-merge-f15path` en una carpeta
+> temporal puesta delante del `PATH`), `git cherry-pick --strategy=<ruta relativa>` (script `git-merge-f15/marca`
+> dentro del repo), los dos con la ruta de su marca fija dentro y con `--abort` + `reset --hard` al commit de partida
+> después de cada uno, y `npm view git+file://<repo> --git=<programa> --offline` desde una carpeta temporal vacía
+> (`timeout` de 30 s; ese caso se salta si no hay `npm` en el `PATH`). Todos los casos usan un entorno aislado (mejora
+> M2): sin las variables `GIT_*` ni `npm_config_*` heredadas, con `HOME` y `XDG_CONFIG_HOME` temporales,
+> `GIT_CONFIG_NOSYSTEM=1` y `GIT_TERMINAL_PROMPT=0`. `[F15-R14]` de integración crea un enlace
 > simbólico real a una carpeta temporal con un `git` falso y usa el `defaultFsOps`. Ambos se saltan en Windows (y
 > `[F15-R6]` también sin git). `[F15-R12]` lanza el CLI falso (`fixtures/fake-claude.js`, `[[hang]]`), nunca el
 > `claude` real. Ningún test lee ni escribe `panel/projects.json` ni `~/.claude`.
 >
-> **Cambios declarados en tests anteriores (design.md §6.3): ninguno.** Los ficheros de test anteriores solo reciben
-> tests nuevos `[F15-R<n>]` al final, líneas nuevas en el comentario de cabecera y nuevos nombres importados; ningún
-> test existente se modifica, se salta ni se debilita. Las tablas `[F14-R14]`/`[F14-R15]`, los tests `[F4-R28]`/
-> `[F14-R10]` de `killProcessTree` y `[F14-R31]`/`[F14-R32]` de `deploy.test.js` pasan sin cambios.
+> **Cambios declarados en tests anteriores (design.md §6.3).** Ningún test de fases o features anteriores se
+> modifica, se salta ni se debilita: los ficheros de test anteriores solo reciben tests nuevos `[F15-R<n>]` al final,
+> líneas nuevas en el comentario de cabecera y nuevos nombres importados. Las tablas `[F14-R14]`/`[F14-R15]`, los
+> tests `[F4-R28]`/`[F14-R10]` de `killProcessTree` y `[F14-R31]`/`[F14-R32]` de `deploy.test.js` pasan sin cambios.
+> **Enmienda 1:** cambian tests de esta misma feature (implementados en `347bd6d`):
+> - `[F15-R1]` y `[F15-R2]` (`claude-cli.test.js`): `git merge`, `git cherry-pick`, `git revert`, `npm view`,
+>   `npm info`, `npm show` y `npm v` pasan a la tabla de amplios; `npm view` sale de la de no amplios.
+> - `[F15-R5]`: el `deepEqual` de `GIT_EXEC_SUBCOMMANDS` y `NPM_EXEC_SUBCOMMANDS` (design.md §3.4) y la lista mínima
+>   (`merge`, `cherry-pick`, `revert`, `view`, `info`, `show`, `v`).
+> - `[F15-R6]` (`hardening.test.js`): casos de `merge -s`, `cherry-pick --strategy` y `npm view --git`, entorno
+>   aislado y nombre nuevo del test.
+> - `[F15-R7]`: casos `git cherry-pick --strategy=x otra`, `git merge -s x otra`, `git revert HEAD` y
+>   `npm view x --git=y` → `null`.
+> - `[F15-R16]` (`deploy.test.js`): cadenas `--strategy` y `--git` en el apartado 2 y comprobación de la nota N1 (sin
+>   el inciso `(por ruta y por ruta real) (también`). Desviación declarada: además comprueba que ninguna línea del
+>   apartado 1 pasa de 120 columnas (T21 lo pide para el texto; el test lo fija). Al reajustar el texto también se ha
+>   reajustado a 120 columnas el apartado 2 completo, que ya tenía líneas de 122–123; solo cambian los saltos de línea
+>   del texto de la feature 14, no sus palabras (`[F14-R31]` pasa).
 
 | Requisito | Test(s) que lo verifican |
 |-----------|--------------------------|
@@ -396,14 +417,14 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R3 | `panel/test/claude-cli.test.js` → "[F15-R3] isBroadCommand: pnpm, yarn y bun siguen las reglas de la feature 14" (y "[F14-R14] …" sin modificar) |
 | R4 | `panel/test/claude-cli.test.js` → "[F15-R4] isBroadCommand: el nombre base ignora .exe, .cmd, .bat, .com y .ps1…" |
 | R5 | `panel/test/claude-cli.test.js` → "[F15-R5] GIT_EXEC_SUBCOMMANDS y NPM_EXEC_SUBCOMMANDS: congeladas, exactas, todas amplias y disjuntas de las permitidas" |
-| R6 | `panel/test/hardening.test.js` → "[F15-R6] el git real ejecuta el programa de --upload-pack, --receive-pack, --exec, -u y -O, y esos comandos son amplios" |
+| R6 | `panel/test/hardening.test.js` → "[F15-R6] el git y el npm reales ejecutan el programa de --upload-pack, --receive-pack, --exec, -u, -O, -s, --strategy y --git, y esos comandos son amplios" |
 | R7 | `panel/test/claude-cli.test.js` → "[F15-R7] suggestAllowedCommand(s) no proponen git/npm amplios y conservan el alias de run con el script" (y "[F14-R15] …" sin modificar) |
 | R8 | `panel/test/work-api.test.js` → "[F15-R8] POST /permissions y PATCH con git fetch, npm run-script o npm install piden acknowledgeBroad…" |
 | R9 | `panel/test/work-api.test.js` → "[F15-R9] comandos ya guardados que pasan a ser amplios: aparecen en broadCommands…" |
 | R10 | `panel/test/exec-utils.test.js` → "[F15-R10] killProcessTree en win32 con ruta de confianza: una llamada, mismos argumentos, sin shell y NoDefaultCurrentDirectoryInExePath=1" |
 | R11 | `panel/test/exec-utils.test.js` → "[F15-R11] killProcessTree en win32 con taskkill dentro del cwd: no lanza nada, child.kill() y error taskkillUntrusted" |
 | R12 | `panel/test/runs-api.test.js` → "[F15-R12] cancelar un run [[hang]] o detenerlo por tiempo máximo llama a killTree con platform, env, el mismo resolvedor y cwd…" |
-| R13 | **MANUAL — Windows, pendiente del humano** (T16, design.md §6.4, junto con la T30 de la feature 14): cancelar un run de Claude o de tests (`[[hang]]`) y comprobar con `Get-Process claude,node,bash` que no quedan procesos del run ni aparece `No se lanza taskkill` en la consola; añadir `git push` en "Ajustes de ejecución" y ver el diálogo "Autorizar de todos modos". Resultado: _(anotar fecha, versión de Windows, `node -v`, `git --version` y resultado)_ |
+| R13 | **MANUAL — Windows, pendiente del humano** (T16, design.md §6.4, junto con la T30 de la feature 14): cancelar un run de Claude o de tests (`[[hang]]`) y comprobar con `Get-Process claude,node,bash` que no quedan procesos del run ni aparece `No se lanza taskkill` en la consola; añadir `git push` en "Ajustes de ejecución" y ver el diálogo "Autorizar de todos modos"; (Enmienda 1, pasos 3 y 4 de §6.4) añadir `git merge`, `git cherry-pick` y `npm view` y ver en los tres el diálogo "Autorizar de todos modos" (cancelando sin guardar), y repetir con el git del PC (2.52.0.windows.1, Git Bash, carpeta temporal fuera de los proyectos, dos ramas que divergen) `git merge -s evilx otra` con `git-merge-evilx` delante del `PATH` y `git cherry-pick --strategy=p/ev otra` con `git-merge-p/ev` en el repo, anotando si aparecen las marcas `MARCA-merge` y `MARCA-cp`. Resultado: _(anotar fecha, versión de Windows, `node -v`, `git --version` y resultado)_ |
 | R14 | `panel/test/trusted-bin.test.js` → "[F15-R14] linux: el resolvedor excluye la ruta real del cwd (enlace simbólico)…", "[F15-R14] win32: el resolvedor excluye la ruta real del cwd (unión…)"; `panel/test/hardening.test.js` → "[F15-R14] integración: con el cwd en un enlace simbólico al proyecto…" |
 | R15 | `panel/test/trusted-bin.test.js` → "[F15-R15] realpath del cwd null, que lanza o relativo: solo se excluye el cwd…" |
 | R16 | `panel/test/deploy.test.js` → "[F15-R16] docs/architecture.md, "Seguridad de la ejecución": guardia de taskkill, ruta real del cwd, listas permitidas y riesgos nuevos" (y "[F14-R31] …" sin modificar) |

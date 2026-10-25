@@ -2,7 +2,8 @@
 // carpeta del proyecto con un PATH de prueba aislado, core.fsmonitor y textconv con marca, diff literal de un fichero
 // "*", hooks en GET /changes y "Aprobar spec" con un run activo. Nunca se lanza el `claude` real (el PATH de prueba
 // no reutiliza el del sistema) ni se hace push a un remoto real (remoto --bare temporal).
-// Feature 15: [F15-R6] (evidencia con el git real de que fetch/ls-remote/push/clone/grep ejecutan programas) y
+// Feature 15: [F15-R6] (evidencia con el git y el npm reales de que fetch/ls-remote/push/clone/grep, merge -s,
+// cherry-pick --strategy y npm view --git ejecutan programas) y
 // [F15-R14] de integración (ruta real del cwd con un enlace simbólico real).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -286,12 +287,50 @@ test('[F14-R29] approve-spec con un run activo → 409 con runId y feature_list.
 
 // ---------- Feature 15, R6: evidencia con el git real ----------
 
-test('[F15-R6] el git real ejecuta el programa de --upload-pack, --receive-pack, --exec, -u y -O, y esos comandos son amplios', { skip: skipHardening }, async () => {
+/**
+ * Entorno aislado de [F15-R6] (design.md §6.1, Enmienda 1, mejora M2): sin variables GIT_* ni npm_config_* heredadas
+ * (`npm test` añade estas últimas) y con HOME y XDG_CONFIG_HOME temporales, para que no influyan el ~/.gitconfig
+ * (alias, url.insteadOf), el ~/.npmrc ni la caché de npm del usuario.
+ */
+async function isolatedEvidenceEnv() {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    const upper = key.toUpperCase();
+    if (upper.startsWith('GIT_') || upper.startsWith('NPM_CONFIG_')) continue;
+    env[key] = value;
+  }
+  env.HOME = await tempDir('muver-home-f15-');
+  env.XDG_CONFIG_HOME = await tempDir('muver-xdg-f15-');
+  env.GIT_CONFIG_NOSYSTEM = '1';
+  env.GIT_TERMINAL_PROMPT = '0';
+  return env;
+}
+
+/** Script #!/bin/sh que crea el fichero de marca `markFile` (ruta fija dentro del script) y termina con `exitCode`. */
+async function writeMarkScript(file, markFile, exitCode) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, `#!/bin/sh\n: > '${markFile}'\nexit ${exitCode}\n`, { mode: 0o755 });
+  await fs.chmod(file, 0o755);
+}
+
+test('[F15-R6] el git y el npm reales ejecutan el programa de --upload-pack, --receive-pack, --exec, -u, -O, -s, --strategy y --git, y esos comandos son amplios', { skip: skipHardening }, async () => {
+  const env = await isolatedEvidenceEnv();
+  const run = (args, opts = {}) => execFileAsync('git', args, { cwd: repo, env, timeout: 10000, shell: false, windowsHide: true, ...opts });
   const repo = await makeProjectDir({ git: { commits: ['Inicial'] } });
   cleanup.push(repo);
   await fs.writeFile(path.join(repo, 'saludo.txt'), 'hola\n', 'utf8');
-  await git(repo, ['add', 'saludo.txt']);
-  await git(repo, ['commit', '-q', '-m', 'Saludo']);
+  await run(['add', 'saludo.txt']);
+  await run(['commit', '-q', '-m', 'Saludo']);
+  // Ramas que divergen (Enmienda 1): f15-otra sale del commit anterior a HEAD y añade otra.txt; así merge no es
+  // fast-forward y cherry-pick tiene que fusionar.
+  const startBranch = (await run(['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim();
+  const startCommit = (await run(['rev-parse', 'HEAD'])).stdout.trim();
+  await run(['checkout', '-q', '-b', 'f15-otra', 'HEAD~1']);
+  await fs.writeFile(path.join(repo, 'otra.txt'), 'otra\n', 'utf8');
+  await run(['add', 'otra.txt']);
+  await run(['commit', '-q', '-m', 'Otra']);
+  await run(['checkout', '-q', startBranch]);
+
   const marks = await tempDir('muver-marks-f15-');
   const tools = await tempDir('muver-tools-f15-');
   // marca.sh crea el fichero cuya ruta recibe como primer argumento (git le añade detrás sus propios argumentos).
@@ -299,7 +338,11 @@ test('[F15-R6] el git real ejecuta el programa de --upload-pack, --receive-pack,
   await fs.writeFile(marker, '#!/bin/sh\n: > "$1"\nexit 1\n', { mode: 0o755 });
   await fs.chmod(marker, 0o755);
   const program = (name) => `${marker} ${path.join(marks, name)}`;
+  // Estrategias de fusión: git les pasa la base y las cabezas, no una ruta, así que la marca va fija en el script.
+  await writeMarkScript(path.join(tools, 'git-merge-f15path'), path.join(marks, 'merge'), 2);
+  await writeMarkScript(path.join(repo, 'git-merge-f15', 'marca'), path.join(marks, 'cherry-pick'), 2);
   const cloneDest = path.join(await tempDir('muver-clone-f15-'), 'destino');
+  const pathWithTools = [tools, env.PATH].join(path.delimiter);
   const cases = [
     { name: 'fetch', base: 'git fetch', args: ['fetch', `--upload-pack=${program('fetch')}`, '.'], full: 'git fetch --upload-pack=x origin' },
     { name: 'ls-remote', base: 'git ls-remote', args: ['ls-remote', `--upload-pack=${program('ls-remote')}`, '.'], full: 'git ls-remote --upload-pack=x .' },
@@ -307,14 +350,34 @@ test('[F15-R6] el git real ejecuta el programa de --upload-pack, --receive-pack,
     { name: 'push-exec', base: 'git push', args: ['push', `--exec=${program('push-exec')}`, '.', 'HEAD:refs/heads/f15-b'], full: 'git push --exec=x . HEAD' },
     { name: 'clone', base: 'git clone', args: ['clone', '-u', program('clone'), '.', cloneDest], full: 'git clone -u x . destino' },
     { name: 'grep', base: 'git grep', args: ['grep', `-O${program('grep')}`, 'hola'], full: 'git grep -Ox hola' },
+    // Enmienda 1: estrategia del PATH en un merge que no es fast-forward.
+    { name: 'merge', base: 'git merge', args: ['merge', '-s', 'f15path', 'f15-otra'], full: 'git merge -s x f15-otra', env: { ...env, PATH: pathWithTools }, abort: 'merge' },
+    // Enmienda 1: estrategia con una ruta relativa al cwd (git-merge-f15/marca dentro del repo).
+    { name: 'cherry-pick', base: 'git cherry-pick', args: ['cherry-pick', '--strategy=f15/marca', 'f15-otra'], full: 'git cherry-pick --strategy=x f15-otra', abort: 'cherry-pick' },
   ];
-  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
   for (const c of cases) {
-    // Se ignora el código de salida: marca.sh termina con 1 y git falla después de haberlo ejecutado.
-    await execFileAsync('git', c.args, { cwd: repo, env, timeout: 10000, shell: false, windowsHide: true }).catch(() => {});
+    // Se ignora el código de salida: los programas de marca terminan con error y git falla después de ejecutarlos.
+    await run(c.args, c.env ? { env: c.env } : {}).catch(() => {});
+    if (c.abort) {
+      // El caso siguiente parte de un repo limpio (se ignoran los errores).
+      await run([c.abort, '--abort']).catch(() => {});
+      await run(['reset', '-q', '--hard', startCommit]).catch(() => {});
+    }
     assert.ok(existsSync(path.join(marks, c.name)), `la evidencia es efectiva: git ${c.args[0]} ejecutó el programa (${c.name})`);
     assert.equal(isBroadCommand(c.base), true, c.base);
     assert.equal(suggestAllowedCommand(c.full), null, c.full);
+  }
+
+  // Enmienda 1: npm view con un paquete git ejecuta el programa de --git (solo si hay npm en el PATH).
+  if (findOnSystemPath('npm')) {
+    const fakeGit = path.join(tools, 'git-falso');
+    await writeMarkScript(fakeGit, path.join(marks, 'npm-view'), 1);
+    const emptyDir = await tempDir('muver-npm-f15-');
+    await execFileAsync('npm', ['view', `git+file://${repo}`, `--git=${fakeGit}`, '--offline'],
+      { cwd: emptyDir, env, timeout: 30000, shell: false, windowsHide: true }).catch(() => {});
+    assert.ok(existsSync(path.join(marks, 'npm-view')), 'la evidencia es efectiva: npm view ejecutó el programa de --git');
+    assert.equal(isBroadCommand('npm view'), true, 'npm view');
+    assert.equal(suggestAllowedCommand('npm view x --git=y'), null, 'npm view x --git=y');
   }
 });
 

@@ -5,8 +5,8 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #15 `comandos-amplios-git-npm` — comandos amplios de git y npm, `taskkill` con guardia final y ruta real del `cwd` (mejoras del reviewer de la feature 14)
-- **Estado:** `in_progress` — enmienda 1 de la spec aprobada por el humano (2026-10-25); implementer con T18–T23
-- **Tarea actual:** T18–T23 (enmienda 1); luego puerta 2 de nuevo y reviewer. T16 manual pendiente del humano.
+- **Estado:** `in_progress` — enmienda 1 implementada (488 tests en verde, `init.sh` OK); **esperando aprobación humana de los tests (puerta 2, de nuevo)**
+- **Tarea actual:** puerta 2; T1–T15 y T17–T23 hechas; T16 manual en Windows pendiente del humano.
 - **Siguiente paso:** reviewer → done. Después: 19 (git-config-sin-clic, alta), 16, 17, 18 y la 13.
 - **Bloqueos / esperando:** — (pendiente del humano, no bloqueante: T16 en Windows)
 

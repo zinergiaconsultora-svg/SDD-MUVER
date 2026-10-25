@@ -496,7 +496,7 @@ test('[F15-R1] isBroadCommand: git <sub> es amplio salvo que <sub> esté en GIT_
   assertBroadTable(
     ['git fetch', 'git pull', 'git push', 'git clone', 'git ls-remote', 'git grep', 'git hook', 'git submodule', 'git bisect', 'git rebase',
       'git difftool', 'git mergetool', 'git filter-branch', 'git send-email', 'git maintenance', 'git help', 'git init', 'git worktree',
-      'git apply', 'git co', 'git evilsub', 'git STATUS', 'git', 'git -c', 'git -C x'],
+      'git apply', 'git merge', 'git cherry-pick', 'git revert', 'git co', 'git evilsub', 'git STATUS', 'git', 'git -c', 'git -C x'],
     ['git status', 'git diff', 'git log', 'git show', 'git rev-list', 'git commit', 'git add', 'git checkout', 'git branch', 'git stash', 'git blame'],
   );
   for (const sub of GIT_SAFE_SUBCOMMANDS) assert.equal(isBroadCommand(`git ${sub}`), false, sub);
@@ -507,9 +507,10 @@ test('[F15-R2] isBroadCommand: npm <sub> es amplio salvo NPM_SAFE_SUBCOMMANDS o 
   assertBroadTable(
     ['npm install', 'npm i', 'npm add', 'npm ci', 'npm exec', 'npm x', 'npm explore', 'npm init', 'npm create', 'npm innit', 'npm run-script',
       'npm rum', 'npm urn', 'npm run', 'npm run -s', 'npm config', 'npm c', 'npm set', 'npm edit', 'npm repo', 'npm docs', 'npm help',
-      'npm fund', 'npm publish', 'npm pack', 'npm rebuild', 'npm update', 'npm audit', 'npm desconocido', 'npm rum -x', 'npm urn --foo'],
+      'npm fund', 'npm publish', 'npm pack', 'npm rebuild', 'npm update', 'npm audit', 'npm view', 'npm info', 'npm show', 'npm v',
+      'npm desconocido', 'npm rum -x', 'npm urn --foo'],
     ['npm test', 'npm t', 'npm tst', 'npm start', 'npm stop', 'npm restart', 'npm run build', 'npm run-script build', 'npm rum build',
-      'npm urn build', 'npm ls', 'npm list', 'npm outdated', 'npm view', 'npm explain', 'npm why', 'npm query', 'npm prefix', 'npm root'],
+      'npm urn build', 'npm ls', 'npm list', 'npm outdated', 'npm explain', 'npm why', 'npm query', 'npm prefix', 'npm root'],
   );
   for (const sub of NPM_SAFE_SUBCOMMANDS) assert.equal(isBroadCommand(`npm ${sub}`), false, sub);
   assert.deepEqual(NPM_RUN_SUBCOMMANDS, ['run', 'run-script', 'rum', 'urn']);
@@ -539,10 +540,12 @@ test('[F15-R5] GIT_EXEC_SUBCOMMANDS y NPM_EXEC_SUBCOMMANDS: congeladas, exactas,
     'web--browse', 'credential', 'upload-pack', 'receive-pack', 'archive',
     'fetch', 'pull', 'push', 'clone', 'ls-remote', 'grep', 'hook', 'send-email', 'fetch-pack', 'send-pack',
     'remote-ext', 'upload-archive', 'shell', 'maintenance',
+    'merge', 'cherry-pick', 'revert',
   ]);
   assert.deepEqual(NPM_EXEC_SUBCOMMANDS, [
     'exec', 'x', 'explore', 'init', 'create', 'innit', 'install', 'i', 'add', 'ci', 'install-test', 'it',
     'install-ci-test', 'cit', 'update', 'rebuild', 'link', 'edit', 'config', 'c', 'repo', 'docs', 'help', 'fund',
+    'view', 'info', 'show', 'v',
   ]);
   assert.ok(Object.isFrozen(GIT_EXEC_SUBCOMMANDS));
   assert.ok(Object.isFrozen(NPM_EXEC_SUBCOMMANDS));
@@ -555,10 +558,11 @@ test('[F15-R5] GIT_EXEC_SUBCOMMANDS y NPM_EXEC_SUBCOMMANDS: congeladas, exactas,
     assert.equal(isBroadCommand(`npm ${sub} algo`), true, `npm ${sub} algo`);
     assert.ok(!NPM_SAFE_SUBCOMMANDS.includes(sub) && !NPM_RUN_SUBCOMMANDS.includes(sub), `npm ${sub} no puede estar en la lista permitida`);
   }
-  for (const g of ['fetch', 'pull', 'push', 'clone', 'ls-remote', 'grep', 'hook', 'submodule', 'bisect', 'rebase', 'difftool', 'mergetool', 'filter-branch']) {
+  for (const g of ['fetch', 'pull', 'push', 'clone', 'ls-remote', 'grep', 'hook', 'submodule', 'bisect', 'rebase', 'difftool', 'mergetool', 'filter-branch',
+    'merge', 'cherry-pick', 'revert']) {
     assert.ok(GIT_EXEC_SUBCOMMANDS.includes(g), g);
   }
-  for (const n of ['exec', 'x', 'explore', 'init', 'create', 'install', 'edit']) assert.ok(NPM_EXEC_SUBCOMMANDS.includes(n), n);
+  for (const n of ['exec', 'x', 'explore', 'init', 'create', 'install', 'edit', 'view', 'info', 'show', 'v']) assert.ok(NPM_EXEC_SUBCOMMANDS.includes(n), n);
   assert.equal(isBroadCommand('npm run-script'), true, 'run-script sin script es amplio aunque no esté en la lista de referencia');
 });
 
@@ -566,7 +570,8 @@ test('[F15-R5] GIT_EXEC_SUBCOMMANDS y NPM_EXEC_SUBCOMMANDS: congeladas, exactas,
 
 test('[F15-R7] suggestAllowedCommand(s) no proponen git/npm amplios y conservan el alias de run con el script', () => {
   for (const cmd of ['git fetch --upload-pack=x origin', 'git push --receive-pack=x', 'git clone -u x repo', 'git grep -Ox hola', 'git hook run pre-commit',
-    'git ls-remote --upload-pack=x .', 'git submodule foreach ls', 'npm run-script', 'npm install left-pad', 'npm i -D x', 'npm exec foo', 'npm.cmd exec foo']) {
+    'git ls-remote --upload-pack=x .', 'git submodule foreach ls', 'git cherry-pick --strategy=x otra', 'git merge -s x otra', 'git revert HEAD',
+    'npm view x --git=y', 'npm run-script', 'npm install left-pad', 'npm i -D x', 'npm exec foo', 'npm.cmd exec foo']) {
     assert.equal(suggestAllowedCommand(cmd), null, cmd);
     assert.deepEqual(suggestAllowedCommands(cmd), [], cmd);
   }

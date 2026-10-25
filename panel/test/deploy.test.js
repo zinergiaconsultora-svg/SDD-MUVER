@@ -276,13 +276,17 @@ test('[F15-R16] docs/architecture.md, "Seguridad de la ejecución": guardia de t
   for (const needle of ['killProcessTree', 'isTrustedPath', 'taskkillUntrusted', 'ruta real del cwd', 'NoDefaultCurrentDirectoryInExePath']) {
     assert.ok(item(1).includes(needle), `el apartado 1 debe mencionar ${needle}`);
   }
-  for (const needle of ['lista permitida', 'GIT_SAFE_SUBCOMMANDS', 'NPM_SAFE_SUBCOMMANDS', '--upload-pack', '--receive-pack', '.cmd', '.ps1', 'pnpm']) {
+  for (const needle of ['lista permitida', 'GIT_SAFE_SUBCOMMANDS', 'NPM_SAFE_SUBCOMMANDS', '--upload-pack', '--receive-pack', '.cmd', '.ps1', 'pnpm',
+    '--strategy', '--git']) {
     assert.ok(item(2).includes(needle), `el apartado 2 debe mencionar ${needle}`);
   }
   for (const needle of ['--node-options', '--script-shell', '--output', 'yarn <script>', 'bun <fichero>']) {
     assert.ok(item(6).includes(needle), `el apartado 6 debe mencionar ${needle}`);
   }
   assert.ok(!section.includes('y `taskkill` solo lanzan rutas de confianza, y en Windows los hijos reciben'), 'se sustituye la frase antigua del apartado 1');
+  // Enmienda 1 (nota N1): el inciso de la ruta real del cwd va detrás del cwd y el apartado 1 no pasa de 120 columnas.
+  assert.ok(!section.includes('(por ruta y por ruta real) (también'), 'el apartado 1 no contiene el inciso mal colocado');
+  for (const line of item(1).split('\n')) assert.ok(line.length <= 120, `línea del apartado 1 de más de 120 columnas: ${line}`);
 });
 
 test('[F15-R17] docs/verification.md: sección Feature 15 con una fila por requisito y cada [F15-R<n>] no manual en panel/test/', async () => {

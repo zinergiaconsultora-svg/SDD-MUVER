@@ -55,26 +55,35 @@ export const RUNNER_COMMANDS = Object.freeze([
   'osascript', 'awk', 'gawk', 'mawk', 'nawk', 'sed', 'tclsh', 'wish', 'bash', 'sh', 'dash', 'zsh', 'ksh', 'fish',
   'csh', 'tcsh', 'pwsh', 'powershell', 'git', 'npm', 'pnpm', 'yarn', 'make',
 ]);
-/** git <sub> que ejecutan programas o cambian la configuración (referencia; isBroadCommand usa GIT_SAFE_SUBCOMMANDS). */
+/**
+ * git <sub> que ejecutan programas, cambian la configuración o aceptan una estrategia de fusión (referencia;
+ * isBroadCommand usa GIT_SAFE_SUBCOMMANDS). Feature 15, Enmienda 1 (design.md §3.4): `merge -s` y
+ * `cherry-pick --strategy` ejecutan `git-merge-<estrategia>` del PATH o de una ruta relativa; `revert` sale por prudencia.
+ */
 export const GIT_EXEC_SUBCOMMANDS = Object.freeze([
   'config', 'submodule', 'bisect', 'rebase', 'filter-branch', 'difftool', 'mergetool', 'daemon', 'instaweb',
   'web--browse', 'credential', 'upload-pack', 'receive-pack', 'archive',
   'fetch', 'pull', 'push', 'clone', 'ls-remote', 'grep', 'hook', 'send-email', 'fetch-pack', 'send-pack',
   'remote-ext', 'upload-archive', 'shell', 'maintenance',
+  'merge', 'cherry-pick', 'revert',
 ]);
 /**
- * Feature 15 (design.md §3.2): git <sub> comprobados (git 2.43, `git <sub> -h` y prueba en temporales): ninguna
- * opción ejecuta un programa indicado en la línea de órdenes. Cualquier otro git <sub> es amplio (lista permitida).
+ * Feature 15 (design.md §3.2): git <sub> comprobados (git 2.43, `git <sub> -h` y prueba en temporales; revisados en
+ * la Enmienda 1): ninguna opción ejecuta un programa indicado en la línea de órdenes. Cualquier otro git <sub> es
+ * amplio (lista permitida).
  */
 export const GIT_SAFE_SUBCOMMANDS = Object.freeze([
   'status', 'diff', 'log', 'show', 'rev-list', 'rev-parse', 'describe', 'ls-files', 'ls-tree', 'cat-file', 'show-ref',
   'for-each-ref', 'branch', 'tag', 'add', 'restore', 'switch', 'checkout', 'reset', 'rm', 'mv', 'stash', 'commit',
-  'merge', 'cherry-pick', 'revert', 'blame', 'shortlog', 'reflog', 'cherry', 'merge-base', 'name-rev', 'count-objects',
+  'blame', 'shortlog', 'reflog', 'cherry', 'merge-base', 'name-rev', 'count-objects',
   'version', 'check-ignore', 'check-attr', 'diff-tree', 'diff-index', 'diff-files', 'whatchanged',
 ]);
-/** Feature 15 (design.md §3.3): npm <sub> que no son amplios: ejecutan solo scripts de package.json (riesgo de F14 D6) o solo leen (npm 10.9). */
+/**
+ * Feature 15 (design.md §3.3): npm <sub> que no son amplios: ejecutan solo scripts de package.json (riesgo de F14 D6)
+ * o solo leen (npm 10.9; revisados en la Enmienda 1, sin `view`/`info`/`show`/`v`, que ejecutan el programa de `--git`).
+ */
 export const NPM_SAFE_SUBCOMMANDS = Object.freeze([
-  'test', 't', 'tst', 'start', 'stop', 'restart', 'ls', 'list', 'll', 'la', 'outdated', 'view', 'info', 'show', 'v',
+  'test', 't', 'tst', 'start', 'stop', 'restart', 'ls', 'list', 'll', 'la', 'outdated',
   'explain', 'why', 'query', 'prefix', 'root',
 ]);
 /** npm <sub> <script>: no amplio solo con un nombre de script que no empieza por "-". */
@@ -83,6 +92,7 @@ export const NPM_RUN_SUBCOMMANDS = Object.freeze(['run', 'run-script', 'rum', 'u
 export const NPM_EXEC_SUBCOMMANDS = Object.freeze([
   'exec', 'x', 'explore', 'init', 'create', 'innit', 'install', 'i', 'add', 'ci', 'install-test', 'it',
   'install-ci-test', 'cit', 'update', 'rebuild', 'link', 'edit', 'config', 'c', 'repo', 'docs', 'help', 'fund',
+  'view', 'info', 'show', 'v',
 ]);
 /** pnpm/yarn/bun <sub> que ejecuta paquetes arbitrarios (npm usa su lista permitida desde la feature 15). */
 export const PKG_EXEC_SUBCOMMANDS = Object.freeze(['exec', 'x', 'dlx', 'explore', 'create', 'init']);
