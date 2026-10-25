@@ -1,5 +1,6 @@
 // Tests estáticos de despliegue: .gitignore, deploy/*.yml, deploy/*.ps1 y docs/acceso-web.md — F2-R7, F2-R44, F2-R45, F2-R46
 // Feature 14: F14-R30 (correcciones N1/N2), F14-R31 (sección "Seguridad de la ejecución") y F14-R32 (trazabilidad).
+// Feature 15: F15-R16 (textos nuevos de "Seguridad de la ejecución") y F15-R17 (trazabilidad de la feature 15).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -257,4 +258,56 @@ test('[F14-R32] docs/verification.md: sección Feature 14 con una fila por requi
     assert.ok(allTests.includes(`[F14-R${n}]`), `[F14-R${n}] aparece en panel/test/`);
   }
   assert.match(section, /^\| R12 \|.*MANUAL/m, 'R12 es manual');
+});
+
+// ---------- Feature 15: documentación (R16, R17) ----------
+
+test('[F15-R16] docs/architecture.md, "Seguridad de la ejecución": guardia de taskkill, ruta real del cwd, listas permitidas y riesgos nuevos', async () => {
+  const architecture = await read(path.join(REPO_DIR, 'docs', 'architecture.md'));
+  const start = architecture.indexOf('## Seguridad de la ejecución');
+  assert.ok(start >= 0, 'título de la sección');
+  const section = architecture.slice(start, architecture.indexOf('\n## ', start + 1));
+  const item = (n) => {
+    const from = section.indexOf(`\n${n}. **`);
+    assert.ok(from >= 0, `apartado ${n}`);
+    const to = section.indexOf(`\n${n + 1}. **`, from + 1);
+    return section.slice(from, to < 0 ? undefined : to);
+  };
+  for (const needle of ['killProcessTree', 'isTrustedPath', 'taskkillUntrusted', 'ruta real del cwd', 'NoDefaultCurrentDirectoryInExePath']) {
+    assert.ok(item(1).includes(needle), `el apartado 1 debe mencionar ${needle}`);
+  }
+  for (const needle of ['lista permitida', 'GIT_SAFE_SUBCOMMANDS', 'NPM_SAFE_SUBCOMMANDS', '--upload-pack', '--receive-pack', '.cmd', '.ps1', 'pnpm']) {
+    assert.ok(item(2).includes(needle), `el apartado 2 debe mencionar ${needle}`);
+  }
+  for (const needle of ['--node-options', '--script-shell', '--output', 'yarn <script>', 'bun <fichero>']) {
+    assert.ok(item(6).includes(needle), `el apartado 6 debe mencionar ${needle}`);
+  }
+  assert.ok(!section.includes('y `taskkill` solo lanzan rutas de confianza, y en Windows los hijos reciben'), 'se sustituye la frase antigua del apartado 1');
+});
+
+test('[F15-R17] docs/verification.md: sección Feature 15 con una fila por requisito y cada [F15-R<n>] no manual en panel/test/', async () => {
+  const verification = await read(path.join(REPO_DIR, 'docs', 'verification.md'));
+  const start = verification.indexOf('## Mapa de trazabilidad — Feature 15: `comandos-amplios-git-npm` (prefijo `[F15-R<n>]`)');
+  assert.ok(start >= 0, 'título de la sección');
+  assert.ok(start > verification.indexOf('## Mapa de trazabilidad — Feature 14'), 'después de la sección de la feature 14');
+  const end = verification.indexOf('\n## ', start + 1);
+  const section = verification.slice(start, end < 0 ? undefined : end);
+  assert.ok(section.includes('§6.3'), 'cambios declarados en tests anteriores');
+  const testsText = [];
+  for (const entry of await fs.readdir(path.join(PANEL_DIR, 'test'))) {
+    if (entry.endsWith('.js')) testsText.push(await read(path.join(PANEL_DIR, 'test', entry)));
+  }
+  const allTests = testsText.join('\n');
+  for (let n = 1; n <= 18; n++) {
+    const rows = section.match(new RegExp(`^\\| R${n} \\|.*$`, 'gm')) || [];
+    assert.equal(rows.length, 1, `una sola fila F15 de R${n}`);
+    if (rows[0].includes('MANUAL')) continue;
+    if (n === 18) {
+      assert.ok(rows[0].includes('init.sh'), 'R18 = ./init.sh');
+      continue;
+    }
+    assert.ok(rows[0].includes(`[F15-R${n}]`), `la fila de R${n} cita [F15-R${n}]`);
+    assert.ok(allTests.includes(`[F15-R${n}]`), `[F15-R${n}] aparece en panel/test/`);
+  }
+  assert.match(section, /^\| R13 \|.*MANUAL.*pendiente del humano/m, 'R13 es manual y está pendiente del humano');
 });

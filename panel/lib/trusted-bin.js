@@ -1,9 +1,9 @@
 // Resolvedor de ejecutables de confianza (feature 14, design.md §3 y §5.1). El panel nunca lanza un programa por
 // nombre suelto ni con una ruta dentro de la carpeta de un proyecto: los nombres se resuelven a rutas absolutas
 // buscando solo en las entradas absolutas de PATH y en rutas conocidas, y se descartan los candidatos que están en el
-// cwd de la llamada o en las carpetas del catálogo (por ruta y por ruta real). En Windows libuv buscaría un nombre
-// suelto primero en el cwd del hijo (M1). Las rutas Windows se componen con path.win32 para que los tests en Linux
-// cubran esa lógica.
+// cwd de la llamada (también su ruta real, feature 15) o en las carpetas del catálogo (por ruta y por ruta real). En
+// Windows libuv buscaría un nombre suelto primero en el cwd del hijo (M1). Las rutas Windows se componen con
+// path.win32 para que los tests en Linux cubran esa lógica.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -153,6 +153,17 @@ export function createBinaryResolver({
     return homeKey === key || homeKey.startsWith(key + sep);
   }
 
+  /** Ruta real absoluta de una carpeta, o null si no existe, falla o no es absoluta (feature 15, design.md §5). */
+  function realDir(dir) {
+    if (!isAbsoluteFor(dir, platform)) return null;
+    try {
+      const real = fsOps.realpath(dir);
+      return isAbsoluteFor(real, platform) ? real : null;
+    } catch {
+      return null;
+    }
+  }
+
   function excludedDirs({ cwd } = {}) {
     const out = [];
     const seen = new Set();
@@ -162,7 +173,8 @@ export function createBinaryResolver({
     } catch {
       projects = [];
     }
-    for (const dir of [cwd, ...projects]) {
+    // Feature 15 (M3): la ruta real del cwd va justo detrás del cwd (enlace simbólico o unión); los repetidos se descartan.
+    for (const dir of [cwd, realDir(cwd), ...projects]) {
       if (!isAbsoluteFor(dir, platform)) continue;
       const key = pathKey(dir);
       if (!key || seen.has(key)) continue;

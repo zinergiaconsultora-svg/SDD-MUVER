@@ -15,6 +15,10 @@ export const MAX_COMMAND_ARGS = 50;
 export const MAX_LINE_BYTES = 1024 * 1024;
 export const KILL_GRACE_MS = 5000;
 
+/** Feature 15 (design.md §4.1): aviso en la consola cuando taskkill no pasa la guardia final. */
+export const KILL_ERRORS = Object.freeze({
+  taskkillUntrusted: (pid) => `[panel] No se lanza taskkill: su ruta no es de confianza (revisa SystemRoot); se termina solo el proceso ${pid}`,
+});
 
 /**
  * Separa una línea de comando en argumentos: espacios y tabuladores separan; "…" agrupa (con \" y \\ dentro);
@@ -108,8 +112,10 @@ export function resolveExecutable(name, { platform = process.platform, env = pro
 }
 
 /**
- * Termina el árbol de procesos de `child`. Windows: taskkill /T /F. Resto: SIGTERM al grupo (el hijo se lanzó con
- * detached: true) y, si no ha salido a los `graceMs`, SIGKILL al grupo.
+ * Termina el árbol de procesos de `child`. Windows: taskkill /T /F, solo si su ruta es de confianza para `resolver`
+ * (o uno creado para `platform` y `env`) con `cwd`, y con NoDefaultCurrentDirectoryInExePath=1 (feature 15); si no,
+ * solo child.kill(). Resto: SIGTERM al grupo (el hijo se lanzó con detached: true) y, si no ha salido a los
+ * `graceMs`, SIGKILL al grupo.
  */
 export function killProcessTree(child, {
   platform = process.platform,
@@ -118,11 +124,27 @@ export function killProcessTree(child, {
   killImpl = (pid, signal) => process.kill(pid, signal),
   graceMs = KILL_GRACE_MS,
   setTimeoutImpl = setTimeout,
+  resolver = null,
+  cwd,
 } = {}) {
   if (!child || !Number.isInteger(child.pid)) return;
   if (platform === 'win32') {
     // Feature 14 (R10): por ruta absoluta, nunca por nombre (libuv lo buscaría primero en el cwd).
-    execFileImpl(taskkillPath(env), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+    // Feature 15 (R10, R11): la ruta pasa por la guardia final, como el resto de lanzamientos.
+    const file = taskkillPath(env);
+    const guard = resolver ?? createBinaryResolver({ platform, env });
+    if (!guard.isTrustedPath(file, { cwd })) {
+      console.error(KILL_ERRORS.taskkillUntrusted(child.pid));
+      if (typeof child.kill === 'function') {
+        try {
+          child.kill();
+        } catch {
+          /* ya terminado */
+        }
+      }
+      return;
+    }
+    execFileImpl(file, ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, env: { ...env, NoDefaultCurrentDirectoryInExePath: '1' } }, () => {});
     return;
   }
   let exited = child.exitCode !== null && child.exitCode !== undefined;

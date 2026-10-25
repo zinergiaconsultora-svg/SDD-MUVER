@@ -1,6 +1,7 @@
 // Tests de lib/claude-cli.js — F4: R7–R16, R65 (unitarios) y R9 (estático del fuente).
 // Feature 14: F14-R8 (resolveClaudeCommand con el resolvedor), F14-R14, F14-R15, F14-R20 (comandos amplios) y
 // F14-R28 (tope de denegaciones). Ajustes declarados (design.md §8.3): [F4-R12] y [F4-R65].
+// Feature 15: F15-R1…R5 (listas permitidas de git y npm, nombre base) y F15-R7 (sugerencias).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -29,6 +30,10 @@ import {
   RUNNER_COMMANDS,
   GIT_EXEC_SUBCOMMANDS,
   PKG_EXEC_SUBCOMMANDS,
+  GIT_SAFE_SUBCOMMANDS,
+  NPM_SAFE_SUBCOMMANDS,
+  NPM_RUN_SUBCOMMANDS,
+  NPM_EXEC_SUBCOMMANDS,
 } from '../lib/claude-cli.js';
 import { PANEL_DIR } from './helpers.js';
 import { createBinaryResolver, BIN_ERRORS } from '../lib/trusted-bin.js';
@@ -478,4 +483,98 @@ test('[F14-R20] buildAllowedTools con 200 comandos válidos aleatorios: ninguna 
     assert.ok(!rule.includes(':*'), rule);
     assert.ok(!match[2].startsWith('-'), rule);
   }
+});
+
+// ---------- Feature 15: listas permitidas de git y npm (R1–R5) ----------
+
+function assertBroadTable(broad, notBroad) {
+  for (const cmd of broad) assert.equal(isBroadCommand(cmd), true, `amplio: ${cmd}`);
+  for (const cmd of notBroad) assert.equal(isBroadCommand(cmd), false, `no amplio: ${cmd}`);
+}
+
+test('[F15-R1] isBroadCommand: git <sub> es amplio salvo que <sub> esté en GIT_SAFE_SUBCOMMANDS (exacto)', () => {
+  assertBroadTable(
+    ['git fetch', 'git pull', 'git push', 'git clone', 'git ls-remote', 'git grep', 'git hook', 'git submodule', 'git bisect', 'git rebase',
+      'git difftool', 'git mergetool', 'git filter-branch', 'git send-email', 'git maintenance', 'git help', 'git init', 'git worktree',
+      'git apply', 'git co', 'git evilsub', 'git STATUS', 'git', 'git -c', 'git -C x'],
+    ['git status', 'git diff', 'git log', 'git show', 'git rev-list', 'git commit', 'git add', 'git checkout', 'git branch', 'git stash', 'git blame'],
+  );
+  for (const sub of GIT_SAFE_SUBCOMMANDS) assert.equal(isBroadCommand(`git ${sub}`), false, sub);
+  assert.ok(Object.isFrozen(GIT_SAFE_SUBCOMMANDS));
+});
+
+test('[F15-R2] isBroadCommand: npm <sub> es amplio salvo NPM_SAFE_SUBCOMMANDS o run/run-script/rum/urn con un script', () => {
+  assertBroadTable(
+    ['npm install', 'npm i', 'npm add', 'npm ci', 'npm exec', 'npm x', 'npm explore', 'npm init', 'npm create', 'npm innit', 'npm run-script',
+      'npm rum', 'npm urn', 'npm run', 'npm run -s', 'npm config', 'npm c', 'npm set', 'npm edit', 'npm repo', 'npm docs', 'npm help',
+      'npm fund', 'npm publish', 'npm pack', 'npm rebuild', 'npm update', 'npm audit', 'npm desconocido', 'npm rum -x', 'npm urn --foo'],
+    ['npm test', 'npm t', 'npm tst', 'npm start', 'npm stop', 'npm restart', 'npm run build', 'npm run-script build', 'npm rum build',
+      'npm urn build', 'npm ls', 'npm list', 'npm outdated', 'npm view', 'npm explain', 'npm why', 'npm query', 'npm prefix', 'npm root'],
+  );
+  for (const sub of NPM_SAFE_SUBCOMMANDS) assert.equal(isBroadCommand(`npm ${sub}`), false, sub);
+  assert.deepEqual(NPM_RUN_SUBCOMMANDS, ['run', 'run-script', 'rum', 'urn']);
+  assert.ok(Object.isFrozen(NPM_SAFE_SUBCOMMANDS));
+  assert.ok(Object.isFrozen(NPM_RUN_SUBCOMMANDS));
+});
+
+test('[F15-R3] isBroadCommand: pnpm, yarn y bun siguen las reglas de la feature 14', () => {
+  assertBroadTable(
+    ['pnpm dlx x', 'yarn create app', 'bun x y', 'pnpm run', 'yarn run -s'],
+    ['yarn test', 'bun run build', 'pnpm run lint', 'pnpm install'],
+  );
+  assert.deepEqual(PKG_EXEC_SUBCOMMANDS, ['exec', 'x', 'dlx', 'explore', 'create', 'init']);
+});
+
+test('[F15-R4] isBroadCommand: el nombre base ignora .exe, .cmd, .bat, .com y .ps1 (sin distinguir mayúsculas)', () => {
+  assertBroadTable(
+    ['npm.cmd exec x', 'NPM.CMD install', 'git.exe fetch', 'npx.cmd', 'node.bat -e', 'pnpm.ps1 dlx x', 'C:/tools/Git/cmd/git.exe push',
+      'NODE.EXE', 'git.com push', 'env.exe A=1 x'],
+    ['npm.cmd test', 'git.exe status', 'node.cmd build.js', 'GIT.EXE log', 'npm.ps1 run build'],
+  );
+});
+
+test('[F15-R5] GIT_EXEC_SUBCOMMANDS y NPM_EXEC_SUBCOMMANDS: congeladas, exactas, todas amplias y disjuntas de las permitidas', () => {
+  assert.deepEqual(GIT_EXEC_SUBCOMMANDS, [
+    'config', 'submodule', 'bisect', 'rebase', 'filter-branch', 'difftool', 'mergetool', 'daemon', 'instaweb',
+    'web--browse', 'credential', 'upload-pack', 'receive-pack', 'archive',
+    'fetch', 'pull', 'push', 'clone', 'ls-remote', 'grep', 'hook', 'send-email', 'fetch-pack', 'send-pack',
+    'remote-ext', 'upload-archive', 'shell', 'maintenance',
+  ]);
+  assert.deepEqual(NPM_EXEC_SUBCOMMANDS, [
+    'exec', 'x', 'explore', 'init', 'create', 'innit', 'install', 'i', 'add', 'ci', 'install-test', 'it',
+    'install-ci-test', 'cit', 'update', 'rebuild', 'link', 'edit', 'config', 'c', 'repo', 'docs', 'help', 'fund',
+  ]);
+  assert.ok(Object.isFrozen(GIT_EXEC_SUBCOMMANDS));
+  assert.ok(Object.isFrozen(NPM_EXEC_SUBCOMMANDS));
+  for (const sub of GIT_EXEC_SUBCOMMANDS) {
+    assert.equal(isBroadCommand(`git ${sub}`), true, `git ${sub}`);
+    assert.ok(!GIT_SAFE_SUBCOMMANDS.includes(sub), `git ${sub} no puede estar en la lista permitida`);
+  }
+  for (const sub of NPM_EXEC_SUBCOMMANDS) {
+    assert.equal(isBroadCommand(`npm ${sub}`), true, `npm ${sub}`);
+    assert.equal(isBroadCommand(`npm ${sub} algo`), true, `npm ${sub} algo`);
+    assert.ok(!NPM_SAFE_SUBCOMMANDS.includes(sub) && !NPM_RUN_SUBCOMMANDS.includes(sub), `npm ${sub} no puede estar en la lista permitida`);
+  }
+  for (const g of ['fetch', 'pull', 'push', 'clone', 'ls-remote', 'grep', 'hook', 'submodule', 'bisect', 'rebase', 'difftool', 'mergetool', 'filter-branch']) {
+    assert.ok(GIT_EXEC_SUBCOMMANDS.includes(g), g);
+  }
+  for (const n of ['exec', 'x', 'explore', 'init', 'create', 'install', 'edit']) assert.ok(NPM_EXEC_SUBCOMMANDS.includes(n), n);
+  assert.equal(isBroadCommand('npm run-script'), true, 'run-script sin script es amplio aunque no esté en la lista de referencia');
+});
+
+// ---------- Feature 15: sugerencias (R7) ----------
+
+test('[F15-R7] suggestAllowedCommand(s) no proponen git/npm amplios y conservan el alias de run con el script', () => {
+  for (const cmd of ['git fetch --upload-pack=x origin', 'git push --receive-pack=x', 'git clone -u x repo', 'git grep -Ox hola', 'git hook run pre-commit',
+    'git ls-remote --upload-pack=x .', 'git submodule foreach ls', 'npm run-script', 'npm install left-pad', 'npm i -D x', 'npm exec foo', 'npm.cmd exec foo']) {
+    assert.equal(suggestAllowedCommand(cmd), null, cmd);
+    assert.deepEqual(suggestAllowedCommands(cmd), [], cmd);
+  }
+  assert.equal(suggestAllowedCommand('npm run-script lint -- --fix'), 'npm run-script lint');
+  assert.equal(suggestAllowedCommand('npm rum build'), 'npm rum build');
+  assert.equal(suggestAllowedCommand('npm urn build --x'), 'npm urn build');
+  assert.equal(suggestAllowedCommand('npm.cmd run-script lint'), 'npm.cmd run-script lint', 'conserva el texto que escribió Claude');
+  assert.equal(suggestAllowedCommand('git commit -m x'), 'git commit');
+  assert.equal(suggestAllowedCommand('git rev-list --count HEAD'), 'git rev-list');
+  assert.deepEqual(suggestAllowedCommands('git fetch origin && npm test'), ['npm test']);
 });

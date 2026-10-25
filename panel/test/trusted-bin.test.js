@@ -1,5 +1,6 @@
 // Tests unitarios del resolvedor de ejecutables de confianza (lib/trusted-bin.js) — feature 14: R1, R2, R3, R4, R5.
 // Todo con `platform`, `env` y funciones de sistema de ficheros inyectadas: no se toca el disco ni se lanza nada.
+// Feature 15: F15-R14 y F15-R15 (ruta real del cwd de la llamada en las carpetas excluidas).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -12,6 +13,8 @@ import {
   CMD_SCRIPT_ERROR,
   NO_GIT_BASH_ERROR,
 } from '../lib/trusted-bin.js';
+import { resolveExecutable } from '../lib/exec-utils.js';
+import { resolveClaudeCommand } from '../lib/claude-cli.js';
 
 /** fsOps de prueba: `files` son los ficheros existentes (ejecutables), `links` ruta → ruta real; cuenta los isFile. */
 function fakeFs(files, { links = {}, notExecutable = [] } = {}) {
@@ -255,4 +258,80 @@ test('[F14-R3][F14-R5] el catálogo se lee en cada llamada (instantánea vigente
   assert.equal(resolver.resolve('git', { cwd: '/x' }).file, '/srv/nuevo/git');
   projects = ['/srv/nuevo'];
   assert.equal(resolver.resolve('git', { cwd: '/x' }).file, '/usr/bin/git', 'proyecto añadido en caliente');
+});
+
+// ---------- Feature 15: ruta real del cwd (R14, R15) ----------
+
+/** fsOps de prueba con carpetas enlazadas: `files` existen (ruta real = ella misma); `dirLinks` carpeta → ruta real. */
+function linkedFs(files, dirLinks, { realpathFor } = {}) {
+  const set = new Set(files);
+  return {
+    isFile: (p) => set.has(p),
+    isExecutable: () => true,
+    realpath: (p) => {
+      if (realpathFor && Object.prototype.hasOwnProperty.call(dirLinks, p)) return realpathFor(p);
+      if (Object.prototype.hasOwnProperty.call(dirLinks, p)) return dirLinks[p];
+      return set.has(p) ? p : null;
+    },
+  };
+}
+
+test('[F15-R14] linux: el resolvedor excluye la ruta real del cwd (enlace simbólico) en resolve e isTrustedPath', () => {
+  const files = ['/datos/proyecto/git', '/usr/bin/git'];
+  const resolver = createBinaryResolver({
+    platform: 'linux', env: { PATH: '/datos/proyecto:/usr/bin', HOME: '/home/u' }, homeDir: '/home/u', execPath: '/opt/node/bin/node',
+    fsOps: linkedFs(files, { '/tmp/enlace': '/datos/proyecto' }),
+  });
+  assert.deepEqual(resolver.excludedDirs({ cwd: '/tmp/enlace' }), ['/tmp/enlace', '/datos/proyecto']);
+  assert.deepEqual(resolver.resolve('git', { cwd: '/tmp/enlace' }), { ok: true, file: '/usr/bin/git', prefixArgs: [] });
+  assert.equal(resolver.isTrustedPath('/datos/proyecto/git', { cwd: '/tmp/enlace' }), false);
+  assert.equal(resolver.isTrustedPath('/datos/proyecto/sub/git', { cwd: '/tmp/enlace' }), false, 'también sus subcarpetas');
+  assert.equal(resolver.isTrustedPath('/usr/bin/git', { cwd: '/tmp/enlace' }), true);
+  // Si la ruta real coincide con el cwd no se duplica.
+  const same = createBinaryResolver({ platform: 'linux', env: { PATH: '/usr/bin' }, homeDir: '/home/u', fsOps: linkedFs([], { '/srv/p': '/srv/p' }) });
+  assert.deepEqual(same.excludedDirs({ cwd: '/srv/p' }), ['/srv/p']);
+});
+
+test('[F15-R14] win32: el resolvedor excluye la ruta real del cwd (unión C:\\enlace → D:\\proyecto)', () => {
+  const files = ['D:\\proyecto\\git.exe', 'C:\\Tools\\git.exe'];
+  const resolver = createBinaryResolver({
+    platform: 'win32', env: { Path: 'D:\\proyecto;C:\\Tools', USERPROFILE: 'C:\\Users\\U' }, execPath: WIN_EXEC,
+    fsOps: linkedFs(files, { 'C:\\enlace': 'D:\\proyecto' }),
+  });
+  assert.deepEqual(resolver.excludedDirs({ cwd: 'C:\\enlace' }), ['C:\\enlace', 'D:\\proyecto']);
+  assert.deepEqual(resolver.resolve('git', { cwd: 'C:\\enlace' }), { ok: true, file: 'C:\\Tools\\git.exe', prefixArgs: [] });
+  assert.equal(resolver.isTrustedPath('D:\\proyecto\\git.exe', { cwd: 'C:\\enlace' }), false);
+  assert.equal(resolver.isTrustedPath('d:\\PROYECTO\\git.exe', { cwd: 'C:\\enlace' }), false, 'sin distinguir mayúsculas');
+});
+
+test('[F15-R15] realpath del cwd null, que lanza o relativo: solo se excluye el cwd, sin propagar el error ni cambiar resultados', () => {
+  const files = ['/datos/proyecto/git', '/usr/bin/git'];
+  const env = { PATH: '/datos/proyecto:/usr/bin', HOME: '/home/u' };
+  const baseline = createBinaryResolver({ platform: 'linux', env, homeDir: '/home/u', fsOps: linkedFs(files, {}) });
+  const expected = baseline.resolve('git', { cwd: '/tmp/enlace' });
+  assert.deepEqual(expected, { ok: true, file: '/datos/proyecto/git', prefixArgs: [] }, 'resultado de la feature 14 sin ruta real');
+  const variants = {
+    null: () => null,
+    lanza: () => { throw new Error('EACCES'); },
+    relativa: () => 'rel/x',
+  };
+  for (const [label, realpathFor] of Object.entries(variants)) {
+    const resolver = createBinaryResolver({ platform: 'linux', env, homeDir: '/home/u', fsOps: linkedFs(files, { '/tmp/enlace': null }, { realpathFor }) });
+    assert.doesNotThrow(() => resolver.excludedDirs({ cwd: '/tmp/enlace' }), label);
+    assert.deepEqual(resolver.excludedDirs({ cwd: '/tmp/enlace' }), ['/tmp/enlace'], label);
+    assert.deepEqual(resolver.resolve('git', { cwd: '/tmp/enlace' }), expected, label);
+    assert.equal(resolver.isTrustedPath('/usr/bin/git', { cwd: '/tmp/enlace' }), true, label);
+    assert.equal(resolver.isTrustedPath('/tmp/enlace/git', { cwd: '/tmp/enlace' }), false, label);
+  }
+  // Win32 con una ruta real relativa: tampoco cuenta.
+  const winRel = createBinaryResolver({ platform: 'win32', env: { Path: 'C:\\Tools' }, execPath: WIN_EXEC, fsOps: linkedFs([], { 'C:\\enlace': 'proyecto' }) });
+  assert.deepEqual(winRel.excludedDirs({ cwd: 'C:\\enlace' }), ['C:\\enlace']);
+  // Resolvedores de compatibilidad (realpath: () => null): mismos resultados que en la feature 14.
+  const exists = (f) => files.includes(f);
+  assert.deepEqual(resolveExecutable('git', { platform: 'linux', env, exists, cwd: '/tmp/enlace' }), { file: '/datos/proyecto/git', prefixArgs: [] });
+  assert.deepEqual(resolveExecutable('git', { platform: 'linux', env, exists, cwd: '/datos/proyecto' }), { file: '/usr/bin/git', prefixArgs: [] });
+  const claudeFiles = ['/datos/proyecto/claude', '/usr/bin/claude'];
+  const claudeEnv = { PATH: '/datos/proyecto:/usr/bin', HOME: '/home/u' };
+  assert.deepEqual(resolveClaudeCommand('claude', { platform: 'linux', env: claudeEnv, exists: (f) => claudeFiles.includes(f), cwd: '/datos/proyecto' }), { file: '/usr/bin/claude', prefixArgs: [] });
+  assert.deepEqual(resolveClaudeCommand('claude', { platform: 'linux', env: claudeEnv, exists: (f) => claudeFiles.includes(f), cwd: '/tmp/enlace' }), { file: '/datos/proyecto/claude', prefixArgs: [] });
 });

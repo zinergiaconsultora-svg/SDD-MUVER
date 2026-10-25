@@ -55,22 +55,53 @@ export const RUNNER_COMMANDS = Object.freeze([
   'osascript', 'awk', 'gawk', 'mawk', 'nawk', 'sed', 'tclsh', 'wish', 'bash', 'sh', 'dash', 'zsh', 'ksh', 'fish',
   'csh', 'tcsh', 'pwsh', 'powershell', 'git', 'npm', 'pnpm', 'yarn', 'make',
 ]);
-/** git <sub> que ejecuta programas o cambia la configuración. */
+/** git <sub> que ejecutan programas o cambian la configuración (referencia; isBroadCommand usa GIT_SAFE_SUBCOMMANDS). */
 export const GIT_EXEC_SUBCOMMANDS = Object.freeze([
   'config', 'submodule', 'bisect', 'rebase', 'filter-branch', 'difftool', 'mergetool', 'daemon', 'instaweb',
   'web--browse', 'credential', 'upload-pack', 'receive-pack', 'archive',
+  'fetch', 'pull', 'push', 'clone', 'ls-remote', 'grep', 'hook', 'send-email', 'fetch-pack', 'send-pack',
+  'remote-ext', 'upload-archive', 'shell', 'maintenance',
 ]);
-/** npm/pnpm/yarn/bun <sub> que ejecuta paquetes arbitrarios. */
+/**
+ * Feature 15 (design.md §3.2): git <sub> comprobados (git 2.43, `git <sub> -h` y prueba en temporales): ninguna
+ * opción ejecuta un programa indicado en la línea de órdenes. Cualquier otro git <sub> es amplio (lista permitida).
+ */
+export const GIT_SAFE_SUBCOMMANDS = Object.freeze([
+  'status', 'diff', 'log', 'show', 'rev-list', 'rev-parse', 'describe', 'ls-files', 'ls-tree', 'cat-file', 'show-ref',
+  'for-each-ref', 'branch', 'tag', 'add', 'restore', 'switch', 'checkout', 'reset', 'rm', 'mv', 'stash', 'commit',
+  'merge', 'cherry-pick', 'revert', 'blame', 'shortlog', 'reflog', 'cherry', 'merge-base', 'name-rev', 'count-objects',
+  'version', 'check-ignore', 'check-attr', 'diff-tree', 'diff-index', 'diff-files', 'whatchanged',
+]);
+/** Feature 15 (design.md §3.3): npm <sub> que no son amplios: ejecutan solo scripts de package.json (riesgo de F14 D6) o solo leen (npm 10.9). */
+export const NPM_SAFE_SUBCOMMANDS = Object.freeze([
+  'test', 't', 'tst', 'start', 'stop', 'restart', 'ls', 'list', 'll', 'la', 'outdated', 'view', 'info', 'show', 'v',
+  'explain', 'why', 'query', 'prefix', 'root',
+]);
+/** npm <sub> <script>: no amplio solo con un nombre de script que no empieza por "-". */
+export const NPM_RUN_SUBCOMMANDS = Object.freeze(['run', 'run-script', 'rum', 'urn']);
+/** npm <sub> que ejecutan programas o paquetes indicados en la línea de órdenes (referencia, design.md §3.4). */
+export const NPM_EXEC_SUBCOMMANDS = Object.freeze([
+  'exec', 'x', 'explore', 'init', 'create', 'innit', 'install', 'i', 'add', 'ci', 'install-test', 'it',
+  'install-ci-test', 'cit', 'update', 'rebuild', 'link', 'edit', 'config', 'c', 'repo', 'docs', 'help', 'fund',
+]);
+/** pnpm/yarn/bun <sub> que ejecuta paquetes arbitrarios (npm usa su lista permitida desde la feature 15). */
 export const PKG_EXEC_SUBCOMMANDS = Object.freeze(['exec', 'x', 'dlx', 'explore', 'create', 'init']);
 const PYTHON_FAMILY = new Set(['python', 'python2', 'python3', 'py', 'pythonw', 'pypy', 'pypy3']);
-const PKG_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+const OTHER_PKG_MANAGERS = new Set(['pnpm', 'yarn', 'bun']);
+const COMMAND_EXT_RE = /\.(exe|cmd|bat|com|ps1)$/;
 
-/** Nombre base del primer token: último segmento tras /, en minúsculas y sin .exe. */
+/** Nombre base del primer token: último segmento tras /, en minúsculas y sin .exe, .cmd, .bat, .com ni .ps1 (feature 15). */
 function commandBase(token) {
-  return String(token).split('/').pop().toLowerCase().replace(/\.exe$/, '');
+  return String(token).split('/').pop().toLowerCase().replace(COMMAND_EXT_RE, '');
 }
 
-/** true si el comando autorizado permitiría a Claude ejecutar cualquier programa (design.md §3.5). */
+/** true si npm <t1> <t2> no es amplio: subcomando permitido o alias de run con un nombre de script (feature 15 §3.5). */
+function isSafeNpm(t1, t2) {
+  if (NPM_SAFE_SUBCOMMANDS.includes(t1)) return true;
+  return NPM_RUN_SUBCOMMANDS.includes(t1) && t2 !== undefined && !t2.startsWith('-');
+}
+
+/** true si el comando autorizado permitiría a Claude ejecutar cualquier programa (F14 §3.5 y F15 §3.5). */
 export function isBroadCommand(cmd) {
   const tokens = normalizeCommand(cmd).split(' ').filter(Boolean);
   if (!tokens.length) return false;
@@ -81,8 +112,10 @@ export function isBroadCommand(cmd) {
     const pythonModule = PYTHON_FAMILY.has(base) && t1 === '-m' && t2 !== undefined && !t2.startsWith('-');
     if (!pythonModule) return true;
   }
-  if (base === 'git' && GIT_EXEC_SUBCOMMANDS.includes(t1)) return true;
-  if (PKG_MANAGERS.has(base)) {
+  // Desde aquí t1 existe y no empieza por - ni / (si no, el caso anterior ya devolvió true).
+  if (base === 'git') return !GIT_SAFE_SUBCOMMANDS.includes(t1);
+  if (base === 'npm') return !isSafeNpm(t1, t2);
+  if (OTHER_PKG_MANAGERS.has(base)) {
     if (PKG_EXEC_SUBCOMMANDS.includes(t1)) return true;
     if (t1 === 'run' && (t2 === undefined || t2.startsWith('-'))) return true;
   }
@@ -234,7 +267,10 @@ export function suggestAllowedCommand(command) {
   const parts = [t0];
   if (t1 !== undefined && !t1.startsWith('-')) {
     parts.push(t1);
-    if (['npm', 'pnpm', 'yarn', 'bun'].includes(t0) && t1 === 'run' && t2 !== undefined && !t2.startsWith('-')) parts.push(t2);
+    // Feature 15 §3.6: alias de run de npm (se conserva el que usó Claude) y nombre base sin extensión.
+    const base = commandBase(t0);
+    const runAlias = base === 'npm' ? NPM_RUN_SUBCOMMANDS.includes(t1) : OTHER_PKG_MANAGERS.has(base) && t1 === 'run';
+    if (runAlias && t2 !== undefined && !t2.startsWith('-')) parts.push(t2);
   } else if (PYTHON_FAMILY.has(commandBase(t0)) && t1 === '-m' && t2 !== undefined && !t2.startsWith('-')) {
     parts.push(t1, t2);
   }

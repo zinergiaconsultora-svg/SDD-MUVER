@@ -2,17 +2,19 @@
 // lib/sse.js, lib/work-api.js) — F4: R17–R27, R29, R30, R32–R43. Siempre con el CLI falso, nunca el `claude` real.
 // Feature 14: F14-R6 (guardia al lanzar), F14-R13 (entorno de Windows), F14-R27 (límite para todos los eventos) y
 // F14-R28 (tope de 50 denegaciones). Ajustes de tests de la fase 4: [F4-R30] y [F4-R24][F4-R65] (ver verification.md).
+// Feature 15: F15-R12 (killTree recibe el resolvedor de guardedSpawn y el cwd del run).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { makeProjectDir, makeTempDir, writeRegistry, startApp, request, removeDir, PANEL_DIR, FAKE_COMMAND } from './helpers.js';
+import { makeProjectDir, makeTempDir, writeRegistry, startApp, request, removeDir, PANEL_DIR, FAKE_COMMAND, FAKE_CLAUDE } from './helpers.js';
 import { makeClaudeHome, sessionLine, encodeForFixture, VIEJO_FOLDER } from './claude-fixtures.js';
 import { waitForRun, readSse, readFakeLog, fileExists, waitFor, isAlive } from './work-helpers.js';
 import { slugify } from '../lib/registry.js';
 import { RUN_ID_RE, createRunStore } from '../lib/run-store.js';
 import { createRunManager, NOTICES } from '../lib/runs.js';
+import { killProcessTree } from '../lib/exec-utils.js';
 import { createBinaryResolver, BIN_ERRORS } from '../lib/trusted-bin.js';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -671,4 +673,38 @@ test('[F14-R28] escenario flood con el límite normal: 50 denegaciones en index.
   const lines = (await fs.readFile(path.join(runDir, `${r.json.runId}.jsonl`), 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
   assert.equal(lines.filter((e) => e.type === 'permission_denied').length, 50);
   assert.equal(lines.filter((e) => e.type === 'notice' && e.message === NOTICES.denialsCapped).length, 1);
+});
+
+// ---------- Feature 15: killTree con el resolvedor y el cwd del run (R12) ----------
+
+test('[F15-R12] cancelar un run [[hang]] o detenerlo por tiempo máximo llama a killTree con platform, env, el mismo resolvedor y cwd = carpeta del proyecto', async () => {
+  for (const mode of ['cancel', 'timeout']) {
+    const projectDir = await makeProjectDir();
+    cleanup.push(projectDir);
+    const dataDir = await tempDir('muver-f15-runs-');
+    const store = createRunStore({ dataDir });
+    const resolver = createBinaryResolver({ getProjectDirs: () => [projectDir] });
+    const env = { ...process.env, FAKE_CLAUDE_LOG: path.join(dataDir, 'fake.log') };
+    const killCalls = [];
+    const killTree = (child, opts) => {
+      killCalls.push(opts);
+      killProcessTree(child, opts); // termina de verdad el CLI falso
+    };
+    const runs = createRunManager({ store, resolver, env, killTree, graceMs: 500, runTimeoutMs: mode === 'timeout' ? 300 : 60000 });
+    const started = await runs.startClaude({ project: { id: 'proy', dir: projectDir }, prompt: '[[hang]]', session: { mode: 'new' }, claudeCommand: { file: process.execPath, prefixArgs: [FAKE_CLAUDE] } });
+    assert.equal(started.ok, true, mode);
+    const runId = started.meta.runId;
+    if (mode === 'cancel') {
+      await new Promise((r) => setTimeout(r, 200)); // deja arrancar el CLI falso
+      assert.ok(runs.cancel(runId), 'run activo cancelado');
+    }
+    await waitFor(async () => runs.get(runId) === null, { message: `run ${runId} terminado (${mode})`, timeoutMs: 15000 });
+    assert.equal(killCalls.length, 1, mode);
+    assert.equal(killCalls[0].resolver, resolver, `${mode}: el mismo objeto resolvedor que guardedSpawn`);
+    assert.equal(killCalls[0].cwd, projectDir, `${mode}: cwd = carpeta del proyecto`);
+    assert.equal(killCalls[0].platform, process.platform);
+    assert.equal(killCalls[0].env, env);
+    const found = await store.find(runId);
+    assert.equal(found.meta.state, mode === 'cancel' ? 'cancelled' : 'timeout');
+  }
 });

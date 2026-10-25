@@ -373,6 +373,43 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R33 | `./init.sh` completo en verde (fases 1–4 y feature 14) y `node sdd-lint.js` con 0 errores (T31) |
 | T30 | **MANUAL — Windows — pendiente del humano, no bloqueante** (R12, R19, R25; design.md §8.4). El humano decidió el 2026-10-25 cerrar la feature 14 con esta prueba pendiente; se hará junto con la de la feature 15 (cancelar un run en Windows). Resultado: _(anotar fecha, versiones y resultado)_ |
 
+## Mapa de trazabilidad — Feature 15: `comandos-amplios-git-npm` (prefijo `[F15-R<n>]`)
+
+> Tests en `panel/test/` (`node --test`, sin dependencias). Entorno de los tests de integración (design.md §6.1):
+> `hardening.test.js` `[F15-R6]` usa un repo git temporal real con un commit y un script `marca.sh` que solo crea un
+> fichero de marca en un temporal; lanza el git del sistema con `execFile` (`shell: false`, `timeout` de 10 s,
+> `GIT_CONFIG_NOSYSTEM=1`) contra el propio repo (`.`) y un clon en un temporal, nunca un remoto real; primero
+> comprueba que el git real crea la marca y después que el comando es amplio. `[F15-R14]` de integración crea un enlace
+> simbólico real a una carpeta temporal con un `git` falso y usa el `defaultFsOps`. Ambos se saltan en Windows (y
+> `[F15-R6]` también sin git). `[F15-R12]` lanza el CLI falso (`fixtures/fake-claude.js`, `[[hang]]`), nunca el
+> `claude` real. Ningún test lee ni escribe `panel/projects.json` ni `~/.claude`.
+>
+> **Cambios declarados en tests anteriores (design.md §6.3): ninguno.** Los ficheros de test anteriores solo reciben
+> tests nuevos `[F15-R<n>]` al final, líneas nuevas en el comentario de cabecera y nuevos nombres importados; ningún
+> test existente se modifica, se salta ni se debilita. Las tablas `[F14-R14]`/`[F14-R15]`, los tests `[F4-R28]`/
+> `[F14-R10]` de `killProcessTree` y `[F14-R31]`/`[F14-R32]` de `deploy.test.js` pasan sin cambios.
+
+| Requisito | Test(s) que lo verifican |
+|-----------|--------------------------|
+| R1 | `panel/test/claude-cli.test.js` → "[F15-R1] isBroadCommand: git <sub> es amplio salvo que <sub> esté en GIT_SAFE_SUBCOMMANDS (exacto)" |
+| R2 | `panel/test/claude-cli.test.js` → "[F15-R2] isBroadCommand: npm <sub> es amplio salvo NPM_SAFE_SUBCOMMANDS o run/run-script/rum/urn con un script" |
+| R3 | `panel/test/claude-cli.test.js` → "[F15-R3] isBroadCommand: pnpm, yarn y bun siguen las reglas de la feature 14" (y "[F14-R14] …" sin modificar) |
+| R4 | `panel/test/claude-cli.test.js` → "[F15-R4] isBroadCommand: el nombre base ignora .exe, .cmd, .bat, .com y .ps1…" |
+| R5 | `panel/test/claude-cli.test.js` → "[F15-R5] GIT_EXEC_SUBCOMMANDS y NPM_EXEC_SUBCOMMANDS: congeladas, exactas, todas amplias y disjuntas de las permitidas" |
+| R6 | `panel/test/hardening.test.js` → "[F15-R6] el git real ejecuta el programa de --upload-pack, --receive-pack, --exec, -u y -O, y esos comandos son amplios" |
+| R7 | `panel/test/claude-cli.test.js` → "[F15-R7] suggestAllowedCommand(s) no proponen git/npm amplios y conservan el alias de run con el script" (y "[F14-R15] …" sin modificar) |
+| R8 | `panel/test/work-api.test.js` → "[F15-R8] POST /permissions y PATCH con git fetch, npm run-script o npm install piden acknowledgeBroad…" |
+| R9 | `panel/test/work-api.test.js` → "[F15-R9] comandos ya guardados que pasan a ser amplios: aparecen en broadCommands…" |
+| R10 | `panel/test/exec-utils.test.js` → "[F15-R10] killProcessTree en win32 con ruta de confianza: una llamada, mismos argumentos, sin shell y NoDefaultCurrentDirectoryInExePath=1" |
+| R11 | `panel/test/exec-utils.test.js` → "[F15-R11] killProcessTree en win32 con taskkill dentro del cwd: no lanza nada, child.kill() y error taskkillUntrusted" |
+| R12 | `panel/test/runs-api.test.js` → "[F15-R12] cancelar un run [[hang]] o detenerlo por tiempo máximo llama a killTree con platform, env, el mismo resolvedor y cwd…" |
+| R13 | **MANUAL — Windows, pendiente del humano** (T16, design.md §6.4, junto con la T30 de la feature 14): cancelar un run de Claude o de tests (`[[hang]]`) y comprobar con `Get-Process claude,node,bash` que no quedan procesos del run ni aparece `No se lanza taskkill` en la consola; añadir `git push` en "Ajustes de ejecución" y ver el diálogo "Autorizar de todos modos". Resultado: _(anotar fecha, versión de Windows, `node -v`, `git --version` y resultado)_ |
+| R14 | `panel/test/trusted-bin.test.js` → "[F15-R14] linux: el resolvedor excluye la ruta real del cwd (enlace simbólico)…", "[F15-R14] win32: el resolvedor excluye la ruta real del cwd (unión…)"; `panel/test/hardening.test.js` → "[F15-R14] integración: con el cwd en un enlace simbólico al proyecto…" |
+| R15 | `panel/test/trusted-bin.test.js` → "[F15-R15] realpath del cwd null, que lanza o relativo: solo se excluye el cwd…" |
+| R16 | `panel/test/deploy.test.js` → "[F15-R16] docs/architecture.md, "Seguridad de la ejecución": guardia de taskkill, ruta real del cwd, listas permitidas y riesgos nuevos" (y "[F14-R31] …" sin modificar) |
+| R17 | `panel/test/deploy.test.js` → "[F15-R17] docs/verification.md: sección Feature 15…" |
+| R18 | `./init.sh` completo en verde (fases 1–4 y features 14 y 15) y `node sdd-lint.js` con 0 errores (T17) |
+
 ## Qué NO se considera verificado
 
 - "Yo lo he probado a mano una vez" no cuenta como test.

@@ -200,7 +200,8 @@ export function createRunManager({
 
   function stopProcess(rec) {
     if (rec.child && Number.isInteger(rec.child.pid) && rec.child.exitCode === null && rec.child.signalCode === null) {
-      killTree(rec.child, { platform, env });
+      // Feature 15 (R12): el mismo resolvedor que guardedSpawn y la carpeta del proyecto como cwd (guardia de taskkill).
+      killTree(rec.child, { platform, env, resolver, cwd: rec.cwd });
     }
     if (!rec.cancelTimer) {
       // Si el proceso no llega a salir (o no llegó a lanzarse), se cierra el run igualmente.

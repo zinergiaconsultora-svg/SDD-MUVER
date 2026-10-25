@@ -1,5 +1,6 @@
 // Tests de lib/exec-utils.js — F4: R28, R31, R52, R53, R54. Feature 14: F14-R1, F14-R4 y F14-R10 (resolución sin
 // recurrir al nombre suelto y taskkill por ruta absoluta). Ajustes declarados (design.md §8.3): [F4-R54] y [F4-R28].
+// Feature 15: F15-R10 y F15-R11 (taskkill con la guardia final y NoDefaultCurrentDirectoryInExePath=1).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -10,6 +11,7 @@ import {
   findGitBash,
   killProcessTree,
   taskkillPath,
+  KILL_ERRORS,
   createLineSplitter,
   stripAnsi,
 } from '../lib/exec-utils.js';
@@ -238,4 +240,59 @@ test('[F4-R50] stripAnsi elimina colores y secuencias OSC', () => {
   assert.equal(stripAnsi('\x1b[32mtodo bien\x1b[0m'), 'todo bien');
   assert.equal(stripAnsi('\x1b[1;31mrojo\x1b[22m y \x1b]0;título\x07normal'), 'rojo y normal');
   assert.equal(stripAnsi('\x1b[?25lsin cursor\x1b[2K'), 'sin cursor');
+});
+
+// ---------- Feature 15: taskkill con la guardia final (R10, R11) ----------
+
+test('[F15-R10] killProcessTree en win32 con ruta de confianza: una llamada, mismos argumentos, sin shell y NoDefaultCurrentDirectoryInExePath=1', () => {
+  const env = { SystemRoot: 'C:\\Windows', OTRA_VARIABLE: 'se-conserva' };
+  const injected = createBinaryResolver({ platform: 'win32', env, fsOps: { isFile: () => false, isExecutable: () => true, realpath: () => null }, getProjectDirs: () => ['D:\\proyectos\\uno'] });
+  for (const resolver of [undefined, injected]) {
+    const calls = [];
+    killProcessTree({ pid: 1234 }, { platform: 'win32', env, resolver, cwd: 'D:\\proyectos\\uno', execFileImpl: (file, args, opts) => calls.push({ file, args, opts }) });
+    assert.equal(calls.length, 1, resolver ? 'con resolvedor inyectado' : 'con el resolvedor de respaldo');
+    assert.equal(calls[0].file, 'C:\\Windows\\System32\\taskkill.exe');
+    assert.deepEqual(calls[0].args, ['/PID', '1234', '/T', '/F']);
+    assert.equal(calls[0].opts.windowsHide, true);
+    assert.ok(!calls[0].opts.shell);
+    assert.equal(calls[0].opts.env.NoDefaultCurrentDirectoryInExePath, '1');
+    assert.equal(calls[0].opts.env.OTRA_VARIABLE, 'se-conserva');
+    assert.equal(calls[0].opts.env.SystemRoot, 'C:\\Windows');
+  }
+  assert.ok(!('NoDefaultCurrentDirectoryInExePath' in env), 'no se modifica el env recibido');
+});
+
+test('[F15-R11] killProcessTree en win32 con taskkill dentro del cwd: no lanza nada, child.kill() y error taskkillUntrusted', () => {
+  const calls = [];
+  const kills = [];
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => errors.push(args.join(' '));
+  try {
+    killProcessTree({ pid: 555, kill: (...args) => kills.push(args) }, {
+      platform: 'win32',
+      env: { SystemRoot: 'C:\\proj' },
+      cwd: 'C:\\proj',
+      execFileImpl: (...args) => calls.push(args),
+    });
+  } finally {
+    console.error = original;
+  }
+  assert.equal(calls.length, 0, 'no se lanza taskkill');
+  assert.equal(kills.length, 1, 'se termina solo el hijo');
+  assert.deepEqual(errors, ['[panel] No se lanza taskkill: su ruta no es de confianza (revisa SystemRoot); se termina solo el proceso 555']);
+  assert.equal(KILL_ERRORS.taskkillUntrusted(555), errors[0]);
+  assert.ok(Object.isFrozen(KILL_ERRORS));
+
+  // Mismo caso con un proyecto del catálogo en el resolvedor inyectado (cwd distinto) y un hijo cuyo kill lanza.
+  const resolver = createBinaryResolver({ platform: 'win32', env: { SystemRoot: 'C:\\proj' }, fsOps: { isFile: () => false, isExecutable: () => true, realpath: () => null }, getProjectDirs: () => ['C:\\proj'] });
+  console.error = () => {};
+  try {
+    assert.doesNotThrow(() => killProcessTree({ pid: 556, kill: () => { throw new Error('ya terminado'); } }, {
+      platform: 'win32', env: { SystemRoot: 'C:\\proj' }, resolver, cwd: 'D:\\otro', execFileImpl: (...args) => calls.push(args),
+    }));
+  } finally {
+    console.error = original;
+  }
+  assert.equal(calls.length, 0);
 });

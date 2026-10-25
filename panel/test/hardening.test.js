@@ -2,6 +2,8 @@
 // carpeta del proyecto con un PATH de prueba aislado, core.fsmonitor y textconv con marca, diff literal de un fichero
 // "*", hooks en GET /changes y "Aprobar spec" con un run activo. Nunca se lanza el `claude` real (el PATH de prueba
 // no reutiliza el del sistema) ni se hace push a un remoto real (remoto --bare temporal).
+// Feature 15: [F15-R6] (evidencia con el git real de que fetch/ls-remote/push/clone/grep ejecutan programas) y
+// [F15-R14] de integración (ruta real del cwd con un enlace simbólico real).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -13,7 +15,8 @@ import { promisify } from 'node:util';
 
 import { makeTempDir, makeProjectDir, writeRegistry, startApp, request, removeDir, hasGit, git } from './helpers.js';
 import { waitForRun, readFakeLog, fileExists } from './work-helpers.js';
-import { BIN_ERRORS } from '../lib/trusted-bin.js';
+import { BIN_ERRORS, createBinaryResolver } from '../lib/trusted-bin.js';
+import { isBroadCommand, suggestAllowedCommand } from '../lib/claude-cli.js';
 
 const execFileAsync = promisify(execFile);
 const PASSWORD = 'contraseña-de-la-feature-14';
@@ -279,4 +282,58 @@ test('[F14-R29] approve-spec con un run activo → 409 con runId y feature_list.
   const ok = await ctx.post('/api/projects/proy/sdd/approve-spec', { featureId: 2 });
   assert.equal(ok.status, 200, ok.text);
   assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).features[1].status, 'in_progress');
+});
+
+// ---------- Feature 15, R6: evidencia con el git real ----------
+
+test('[F15-R6] el git real ejecuta el programa de --upload-pack, --receive-pack, --exec, -u y -O, y esos comandos son amplios', { skip: skipHardening }, async () => {
+  const repo = await makeProjectDir({ git: { commits: ['Inicial'] } });
+  cleanup.push(repo);
+  await fs.writeFile(path.join(repo, 'saludo.txt'), 'hola\n', 'utf8');
+  await git(repo, ['add', 'saludo.txt']);
+  await git(repo, ['commit', '-q', '-m', 'Saludo']);
+  const marks = await tempDir('muver-marks-f15-');
+  const tools = await tempDir('muver-tools-f15-');
+  // marca.sh crea el fichero cuya ruta recibe como primer argumento (git le añade detrás sus propios argumentos).
+  const marker = path.join(tools, 'marca.sh');
+  await fs.writeFile(marker, '#!/bin/sh\n: > "$1"\nexit 1\n', { mode: 0o755 });
+  await fs.chmod(marker, 0o755);
+  const program = (name) => `${marker} ${path.join(marks, name)}`;
+  const cloneDest = path.join(await tempDir('muver-clone-f15-'), 'destino');
+  const cases = [
+    { name: 'fetch', base: 'git fetch', args: ['fetch', `--upload-pack=${program('fetch')}`, '.'], full: 'git fetch --upload-pack=x origin' },
+    { name: 'ls-remote', base: 'git ls-remote', args: ['ls-remote', `--upload-pack=${program('ls-remote')}`, '.'], full: 'git ls-remote --upload-pack=x .' },
+    { name: 'push-receive', base: 'git push', args: ['push', `--receive-pack=${program('push-receive')}`, '.', 'HEAD:refs/heads/f15-a'], full: 'git push --receive-pack=x . HEAD' },
+    { name: 'push-exec', base: 'git push', args: ['push', `--exec=${program('push-exec')}`, '.', 'HEAD:refs/heads/f15-b'], full: 'git push --exec=x . HEAD' },
+    { name: 'clone', base: 'git clone', args: ['clone', '-u', program('clone'), '.', cloneDest], full: 'git clone -u x . destino' },
+    { name: 'grep', base: 'git grep', args: ['grep', `-O${program('grep')}`, 'hola'], full: 'git grep -Ox hola' },
+  ];
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
+  for (const c of cases) {
+    // Se ignora el código de salida: marca.sh termina con 1 y git falla después de haberlo ejecutado.
+    await execFileAsync('git', c.args, { cwd: repo, env, timeout: 10000, shell: false, windowsHide: true }).catch(() => {});
+    assert.ok(existsSync(path.join(marks, c.name)), `la evidencia es efectiva: git ${c.args[0]} ejecutó el programa (${c.name})`);
+    assert.equal(isBroadCommand(c.base), true, c.base);
+    assert.equal(suggestAllowedCommand(c.full), null, c.full);
+  }
+});
+
+// ---------- Feature 15, R14 (integración): ruta real del cwd con un enlace simbólico real ----------
+
+test('[F15-R14] integración: con el cwd en un enlace simbólico al proyecto, el git falso del destino no se resuelve ni es de confianza', { skip: IS_WINDOWS ? 'enlaces simbólicos: en Windows se comprueba con fsOps inyectado' : false }, async () => {
+  const project = await fs.realpath(await tempDir('muver-f15-proj-'));
+  const links = await tempDir('muver-f15-link-');
+  const marks = await tempDir('muver-f15-marks-');
+  const link = path.join(links, 'enlace');
+  await fs.symlink(project, link);
+  await plantFakeBins(project, ['git'], marks);
+  const realGit = findOnSystemPath('git');
+  const PATH = realGit ? [project, path.dirname(realGit)].join(':') : project;
+  const resolver = createBinaryResolver({ env: { PATH, HOME: links } });
+  const resolved = resolver.resolve('git', { cwd: link });
+  if (realGit) assert.equal(resolved.ok, true, JSON.stringify(resolved));
+  assert.notEqual(resolved.file, path.join(project, 'git'), 'no se resuelve el git falso del destino del enlace');
+  assert.equal(resolver.isTrustedPath(path.join(project, 'git'), { cwd: link }), false);
+  assert.ok(resolver.excludedDirs({ cwd: link }).includes(project), 'la ruta real del cwd está excluida');
+  assert.equal(markExists(marks, 'git'), false, 'el git falso nunca se ejecuta');
 });

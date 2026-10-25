@@ -190,19 +190,26 @@
    resuelven a una ruta absoluta buscando solo en las entradas absolutas del `PATH` (se descartan vacías, `.`,
    relativas y con `%`) y en rutas conocidas (`node` = el propio Node del panel, `taskkill` =
    `%SystemRoot%\System32\taskkill.exe`, Git for Windows, `%USERPROFILE%\.local\bin\claude.exe`…); en Windows solo
-   `.com`/`.exe`. Se descartan los candidatos (por ruta y por ruta real) del `cwd` de la llamada y de las carpetas del
-   catálogo (registro + Claude Code); de un **proyecto contenedor** (raíz, carpeta personal o un ancestro suyo) solo se
+   `.com`/`.exe`. Se descartan los candidatos (por ruta y por ruta real) (también la ruta real del cwd de la llamada,
+   feature 15) del `cwd` de la llamada y de las carpetas del catálogo (registro + Claude Code); de un **proyecto contenedor** (raíz, carpeta personal o un ancestro suyo) solo se
    excluye su raíz. La lista de candidatos se guarda en caché (un `PATH` nuevo se ve al reiniciar el panel); la
    exclusión se recalcula en cada llamada. Guardia final: `runs.js` (`guardedSpawn`), el runner de git
-   (`createGitRunner`) y `taskkill` solo lanzan rutas de confianza, y en Windows los hijos reciben
-   `NoDefaultCurrentDirectoryInExePath=1`. Única excepción: un comando de tests escrito con ruta relativa
+   (`createGitRunner`) y `killProcessTree` (`taskkill`) solo lanzan rutas de confianza (`isTrustedPath`), y en Windows
+   todos esos hijos reciben `NoDefaultCurrentDirectoryInExePath=1`; si la ruta de `taskkill` no es de confianza, no se
+   lanza y se termina solo el hijo (`taskkillUntrusted`, feature 15). Única excepción: un comando de tests escrito con ruta relativa
    (`./test.sh`, `projectScript`) ejecuta código del proyecto, igual que `bash init.sh`.
 2. **Comandos amplios** (`isBroadCommand` en `lib/claude-cli.js`): intérpretes, shells y envolventes a secas o con
    una opción (`node`, `node -e`, `bash -c`, `env`, `xargs`, `find`…), `git` con subcomandos de ejecución
    (`git -c`, `git config`…) y `npm`/`pnpm`/`yarn`/`bun` con `exec`, `dlx`, `run` sin script… equivalen a una terminal
    libre. Nunca se proponen tras una denegación; si el humano los añade a mano, la API exige `acknowledgeBroad: true`
    (la interfaz muestra un aviso y el botón "Autorizar de todos modos"), queda `acknowledgedBroad` en `audit.log` y
-   "Ajustes de ejecución" avisa mientras estén guardados.
+   "Ajustes de ejecución" avisa mientras estén guardados. Desde la feature 15, `git <sub>` y `npm <sub>` usan una
+   **lista permitida** (`GIT_SAFE_SUBCOMMANDS`, `NPM_SAFE_SUBCOMMANDS` y `npm run`/`run-script`/`rum`/`urn` con
+   script): todo subcomando que no esté en ella es amplio (`git fetch`/`pull`/`push`/`clone`/`ls-remote`/`grep`/`hook`…,
+   que ejecutan programas con `--upload-pack`, `--receive-pack`, `-O`…; `npm install`, `ci`, `audit`, `edit`…). `pnpm`,
+   `yarn` y `bun` siguen con la lista de denegación de la feature 14, que no es exhaustiva. El nombre base ignora
+   `.exe`, `.cmd`, `.bat`, `.com` y `.ps1`. Las listas se comprobaron con git 2.43.0 y npm 10.9.4: se revisan cuando
+   se actualice git o npm en la máquina del panel.
 3. **Configuración del repositorio**: toda llamada git del panel lleva `-c core.fsmonitor=false` (lecturas por el
    runner central y pasos de "Commit y push"); el diff usa `--literal-pathspecs` (un fichero llamado `*` es solo ese
    fichero) y `--no-ext-diff --no-textconv` (no ejecuta drivers de diff del repo).
@@ -221,6 +228,10 @@
    `cloudflared` se arranca por nombre desde `scripts/` (fuera de la feature 14); los nietos que lance Claude por
    nombre siguen sus propias reglas de búsqueda. Además, el run tiene un límite de salida de 5 MB que cuenta todos los
    eventos (salvo `state`/`end`) y guarda como mucho 50 denegaciones de permiso.
+   - Una regla `Bash(<comando> *)` admite cualquier opción detrás: `npm test --node-options=…` o `--script-shell=…`
+     ejecuta código indicado en la línea de órdenes, y `git log`/`diff`/`show --output=<fichero>` (también las reglas
+     por defecto) escribe en cualquier ruta (feature 15, pendiente de decisión: features 18 y 16).
+   - `pnpm`, `yarn` y `bun` ejecutan scripts y binarios por nombre (`yarn <script>`, `bun <fichero>`) (feature 17).
 
 ## Restricciones y decisiones de arquitectura
 > Cosas que condicionan: "debe funcionar en móvil", "un solo usuario admin", "tiene que integrarse con X"…

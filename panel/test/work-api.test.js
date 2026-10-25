@@ -3,6 +3,7 @@
 // Bloque B (F4: R4–R6, R62–R64, R66, R78, R79): estado, permisos por proyecto y cola de atención.
 // Feature 14: F14-R16, F14-R17 y F14-R18 (comandos amplios con confirmación expresa). Ajuste de [F4-R6]: la
 // respuesta de /work incluye broadCommands (desviación declarada en docs/verification.md).
+// Feature 15: F15-R8 y F15-R9 (git/npm fuera de la lista permitida piden la misma confirmación; sin tocar work-api.js).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -621,4 +622,47 @@ test('[F14-R18] GET /work incluye broadCommands en el orden de allowedCommands (
   ] });
   assert.deepEqual((await ctx.authed('/api/projects/proy/work')).json.broadCommands, ['node', 'env']);
   assert.deepEqual((await ctx.authed('/api/projects/otro/work')).json.broadCommands, []);
+});
+
+// ---------- Feature 15: git y npm fuera de la lista permitida (R8, R9) ----------
+
+test('[F15-R8] POST /permissions y PATCH con git fetch, npm run-script o npm install piden acknowledgeBroad; con la marca se guardan y se auditan', async () => {
+  const ctx = await setup();
+  const before = await fs.readFile(ctx.registryFile, 'utf8');
+  const r = await ctx.post('/api/projects/proy/permissions', { command: 'git fetch' });
+  assert.equal(r.status, 400);
+  assert.equal(r.json.needsAcknowledge, true);
+  assert.equal(r.json.field, 'command');
+  assert.deepEqual(r.json.broadCommands, ['git fetch']);
+  assert.equal(await fs.readFile(ctx.registryFile, 'utf8'), before, 'projects.json sin cambios');
+
+  const ok = await ctx.post('/api/projects/proy/permissions', { command: 'git fetch', acknowledgeBroad: true });
+  assert.equal(ok.status, 200, ok.text);
+  assert.deepEqual(ok.json, { allowedCommands: ['git fetch'] });
+  assert.deepEqual((await readJsonFile(ctx.registryFile)).projects[0].allowedCommands, ['git fetch']);
+  const accepted = (await auditLines(ctx)).filter((l) => l.action === 'permissions.add' && l.status === 200);
+  assert.deepEqual(accepted.at(-1).detail.acknowledgedBroad, ['git fetch']);
+
+  const saved = await fs.readFile(ctx.registryFile, 'utf8');
+  const patch = await ctx.authed('/api/projects/proy', { method: 'PATCH', body: JSON.stringify({ allowedCommands: ['npm test', 'npm run-script', 'npm install'] }) });
+  assert.equal(patch.status, 400);
+  assert.equal(patch.json.needsAcknowledge, true);
+  assert.equal(patch.json.field, 'allowedCommands');
+  assert.deepEqual(patch.json.broadCommands, ['npm run-script', 'npm install']);
+  assert.equal(await fs.readFile(ctx.registryFile, 'utf8'), saved, 'registro intacto');
+
+  const commit = await ctx.post('/api/projects/proy/permissions', { command: 'git commit' });
+  assert.equal(commit.status, 200, 'git commit está en la lista permitida: no pide la marca');
+  assert.deepEqual(commit.json, { allowedCommands: ['git fetch', 'git commit'] });
+});
+
+test('[F15-R9] comandos ya guardados que pasan a ser amplios: aparecen en broadCommands y un PATCH que los mantiene no pide la marca', async () => {
+  const dir = await makeProjectDir();
+  const ctx = await setup({ dir, entries: [{ id: 'proy', name: 'Proy', path: dir, allowedCommands: ['npm test', 'git push', 'npm install'] }] });
+  assert.deepEqual((await ctx.authed('/api/projects/proy/work')).json.broadCommands, ['git push', 'npm install']);
+  const keep = await ctx.authed('/api/projects/proy', { method: 'PATCH', body: JSON.stringify({ allowedCommands: ['npm test', 'git push', 'npm install'], testCommand: 'npm run build' }) });
+  assert.equal(keep.status, 200, keep.text);
+  const saved = (await readJsonFile(ctx.registryFile)).projects[0];
+  assert.deepEqual(saved.allowedCommands, ['npm test', 'git push', 'npm install']);
+  assert.equal(saved.testCommand, 'npm run build');
 });
