@@ -9,7 +9,7 @@ import { makeProjectDir, makeTempDir, writeRegistry, startApp, request, removeDi
 import { waitForRun, readFakeLog, fileExists } from './work-helpers.js';
 
 const PASSWORD = 'contraseña-de-la-fase-4';
-const DEFAULT_TOOLS_TEXT = 'Read,Edit,Write,Glob,Grep,Bash(git status *),Bash(git diff *),Bash(git log *)';
+const DEFAULT_TOOLS_TEXT = 'Read,Edit,Write,Glob,Grep,Bash(git status *),PowerShell(git status *),Bash(git diff *),PowerShell(git diff *),Bash(git log *),PowerShell(git log *)' // corrección T36: reglas Bash y PowerShell;
 
 const cleanup = [];
 const apps = [];

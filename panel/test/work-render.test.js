@@ -381,3 +381,9 @@ test('[F4-R87] corrección T36: en "Te necesitan" un run terminado con denegacio
   assert.ok(html.includes('2 comandos denegados'));
   assert.ok(html.includes('data-action="dismiss-run"'));
 });
+
+test('[F4-R84] corrección T36: una denegación de PowerShell ofrece "Permitir en este proyecto y reintentar" para el comando base', () => {
+  const html = renderPermissionPrompt({ state: 'succeeded', permissionDenials: [{ tool: 'PowerShell', detail: 'node --version', suggestion: 'node', suggestions: ['node'] }] });
+  assert.ok(html.includes('Comando denegado: PowerShell: node --version'));
+  assert.ok(html.includes('data-action="allow-command"') && html.includes('data-command="node"'));
+});

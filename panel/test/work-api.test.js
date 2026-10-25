@@ -285,7 +285,7 @@ test('[F4-R60] commit-push: un mensaje "--amend; rm -rf /" llega como un único 
 // =====================================================================================================
 
 const SPEC_READY_FEATURES = { features: [{ id: 1, slug: 'base', status: 'done' }, { id: 4, slug: 'puesto-de-mando-trabajar', status: 'spec_ready' }] };
-const DEFAULT_TOOLS = ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)'];
+const DEFAULT_TOOLS = ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(git status *)', 'PowerShell(git status *)', 'Bash(git diff *)', 'PowerShell(git diff *)', 'Bash(git log *)', 'PowerShell(git log *)'];
 
 async function readJsonFile(file) {
   return JSON.parse(await fs.readFile(file, 'utf8'));

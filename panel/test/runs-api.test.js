@@ -14,7 +14,7 @@ import { RUN_ID_RE } from '../lib/run-store.js';
 const PASSWORD = 'contraseña-de-la-fase-4';
 const IS_WINDOWS = process.platform === 'win32';
 const skipWindows = IS_WINDOWS ? 'árbol de procesos en Windows: comprobación manual (R97)' : false;
-const DEFAULT_TOOLS_TEXT = 'Read,Edit,Write,Glob,Grep,Bash(git status *),Bash(git diff *),Bash(git log *)';
+const DEFAULT_TOOLS_TEXT = 'Read,Edit,Write,Glob,Grep,Bash(git status *),PowerShell(git status *),Bash(git diff *),PowerShell(git diff *),Bash(git log *),PowerShell(git log *)' // corrección T36: reglas Bash y PowerShell;
 
 const cleanup = [];
 const apps = [];
@@ -323,6 +323,19 @@ test('[F4-R24][F4-R65] corrección T36: salida real (tool_input vacío) → succ
   assert.equal(done.run.state, 'succeeded');
   assert.deepEqual(done.run.permissionDenials, [{ tool: 'Bash', detail: 'head; git rev-list --left-right --count main...HEAD', suggestion: 'head', suggestions: ['head', 'git rev-list'] }]);
   assert.ok(!JSON.stringify(done.events).includes('"detail":"{}"'));
+});
+
+test('[F4-R24][F4-R65] corrección T36: denegación real de PowerShell → succeeded con "node" como comando propuesto; con node autorizado la regla PowerShell va en --allowedTools', async () => {
+  const dir = await makeProjectDir();
+  const ctx = await setup({ projectDir: dir, entries: [{ id: 'proy', name: 'Proy', path: dir, allowedCommands: ['node'] }] });
+  const r = await ctx.post('/api/projects/proy/runs', { prompt: '[[denied_powershell]] Ejecuta node --version' });
+  const done = await wait(ctx, r.json.runId);
+  assert.equal(done.run.state, 'succeeded');
+  assert.deepEqual(done.run.permissionDenials, [{ tool: 'PowerShell', detail: 'node --version', suggestion: 'node', suggestions: ['node'] }]);
+  assert.ok(done.events.some((e) => e.type === 'tool' && e.name === 'PowerShell' && e.summary === 'node --version'));
+  const [entry] = await readFakeLog(ctx.app.fakeLog);
+  assert.ok(entry.allowedTools[0].split(',').includes('PowerShell(node *)'), entry.allowedTools[0]);
+  assert.ok(entry.allowedTools[0].split(',').includes('Bash(node *)'));
 });
 
 test('[F4-R13][F4-R14] corrección T36: un resumen final de ~2500 caracteres llega entero en el texto y en el result', async () => {

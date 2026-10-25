@@ -19,10 +19,12 @@ import {
   isValidAllowedCommand,
   suggestAllowedCommands,
   TEXT_MAX_CHARS,
+  BASH_RULE,
+  POWERSHELL_RULE,
 } from '../lib/claude-cli.js';
 import { PANEL_DIR } from './helpers.js';
 
-const DEFAULT_TOOLS_TEXT = 'Read,Edit,Write,Glob,Grep,Bash(git status *),Bash(git diff *),Bash(git log *)';
+const DEFAULT_TOOLS_TEXT = 'Read,Edit,Write,Glob,Grep,Bash(git status *),PowerShell(git status *),Bash(git diff *),PowerShell(git diff *),Bash(git log *),PowerShell(git log *)' // corrección T36: reglas Bash y PowerShell;
 // Corrección tras la prueba manual T36 (Claude Code 2.1.307): --allowedTools es VARIÁDICA en el CLI real y se
 // tragaba el prompt colocado detrás. El prompt va ahora por stdin y --allowedTools es la última opción.
 const BASE = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits'];
@@ -30,7 +32,7 @@ const BASE = ['-p', '--output-format', 'stream-json', '--verbose', '--permission
 test('[F4-R7] constantes: CLI_FLAGS, herramientas por defecto, prompts SDD y máximo del prompt', () => {
   assert.equal(CLI_FLAGS.print, '-p');
   assert.equal(CLI_FLAGS.acceptEdits, 'acceptEdits');
-  assert.deepEqual(DEFAULT_ALLOWED_TOOLS, ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)']);
+  assert.deepEqual(DEFAULT_ALLOWED_TOOLS, ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(git status *)', 'PowerShell(git status *)', 'Bash(git diff *)', 'PowerShell(git diff *)', 'Bash(git log *)', 'PowerShell(git log *)']);
   assert.equal(SDD_PROMPTS.implement, 'implementa la siguiente tarea pendiente');
   assert.equal(SDD_PROMPTS.approveTests, 'tests aprobados, lanza al reviewer');
   assert.equal(MAX_PROMPT_CHARS, 20000);
@@ -39,7 +41,7 @@ test('[F4-R7] constantes: CLI_FLAGS, herramientas por defecto, prompts SDD y má
 
 test('[F4-R7] buildClaudeArgs en modo new: array exacto, --allowedTools al final y sin el prompt (va por stdin)', () => {
   const args = buildClaudeArgs({ session: { mode: 'new' }, allowedCommands: ['npm test'] });
-  assert.deepEqual(args, [...BASE, '--allowedTools', `${DEFAULT_TOOLS_TEXT},Bash(npm test *)`]);
+  assert.deepEqual(args, [...BASE, '--allowedTools', `${DEFAULT_TOOLS_TEXT},Bash(npm test *),PowerShell(npm test *)`]);
   assert.deepEqual(buildClaudeArgs({}), [...BASE, '--allowedTools', DEFAULT_TOOLS_TEXT]);
   assert.ok(!buildClaudeArgs({ prompt: 'Añade validación de email' }).includes('Añade validación de email'), 'el prompt nunca va en argv');
 });
@@ -80,9 +82,9 @@ test('[F4-R9] estático: el fuente de lib/claude-cli.js solo nombra los argument
 
 test('[F4-R10] buildAllowedTools: [], dos comandos y duplicado de una regla por defecto', () => {
   assert.equal(buildAllowedTools([]), DEFAULT_TOOLS_TEXT);
-  assert.equal(buildAllowedTools(['npm test', 'npm run build']), `${DEFAULT_TOOLS_TEXT},Bash(npm test *),Bash(npm run build *)`);
-  assert.equal(buildAllowedTools(['git status', 'npm test', 'npm  test']), `${DEFAULT_TOOLS_TEXT},Bash(npm test *)`);
-  assert.equal(buildAllowedTools(['npm test; rm -rf /', 'ok']), `${DEFAULT_TOOLS_TEXT},Bash(ok *)`, 'los inválidos se ignoran');
+  assert.equal(buildAllowedTools(['npm test', 'npm run build']), `${DEFAULT_TOOLS_TEXT},Bash(npm test *),PowerShell(npm test *),Bash(npm run build *),PowerShell(npm run build *)`);
+  assert.equal(buildAllowedTools(['git status', 'npm test', 'npm  test']), `${DEFAULT_TOOLS_TEXT},Bash(npm test *),PowerShell(npm test *)`);
+  assert.equal(buildAllowedTools(['npm test; rm -rf /', 'ok']), `${DEFAULT_TOOLS_TEXT},Bash(ok *),PowerShell(ok *)`, 'los inválidos se ignoran');
   assert.equal(buildAllowedTools(undefined), DEFAULT_TOOLS_TEXT);
 });
 
@@ -320,4 +322,29 @@ test('[F4-R65] suggestAllowedCommands: comando base de cada parte, validado con 
   assert.deepEqual(suggestAllowedCommands('npm run lint -- --fix && npm test | tee x'), ['npm run lint', 'npm test', 'tee x']);
   assert.deepEqual(suggestAllowedCommands('echo $(x); a(b)'), []);
   assert.deepEqual(suggestAllowedCommands(undefined), []);
+});
+
+// ---------- Corrección T36: herramienta PowerShell de Claude Code en Windows (F4-R10, F4-R24, F4-R65) ----------
+
+test('[F4-R10] corrección T36: cada comando autorizado (y git status/diff/log) se emite como regla Bash y PowerShell', () => {
+  assert.equal(POWERSHELL_RULE('node'), 'PowerShell(node *)');
+  assert.equal(BASH_RULE('node'), 'Bash(node *)');
+  const tools = buildAllowedTools(['node']).split(',');
+  assert.ok(tools.includes('Bash(node *)') && tools.includes('PowerShell(node *)'));
+  for (const git of ['git status', 'git diff', 'git log']) assert.ok(tools.includes(`PowerShell(${git} *)`), git);
+  const args = buildClaudeArgs({ session: { mode: 'new' }, allowedCommands: ['node'] });
+  assert.equal(args.at(-2), '--allowedTools', '--allowedTools sigue siendo la última opción');
+  assert.ok(args.at(-1).includes('PowerShell(node *)'));
+});
+
+test('[F4-R24][F4-R65] corrección T36: una denegación de PowerShell se trata como la de Bash (detalle y comando base)', () => {
+  const { events } = mapAll([
+    line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'ps1', name: 'PowerShell', input: { command: 'node --version' } }] } }),
+    line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'ps1', is_error: true, content: 'This PowerShell command contains multiple operations. The following part requires approval: node --version' }] } }),
+    line({ type: 'result', is_error: false, result: 'ok', permission_denials: [{ tool_name: 'PowerShell', tool_use_id: 'ps1', tool_input: {} }] }),
+  ]);
+  assert.deepEqual(events.find((e) => e.type === 'permission_denied'), { type: 'permission_denied', tool: 'PowerShell', detail: 'node --version', suggestion: 'node', suggestions: ['node'] });
+  const direct = mapAll([line({ type: 'result', is_error: false, permission_denials: [{ tool_name: 'PowerShell', tool_use_id: 'x', tool_input: { command: 'npm run lint -- --fix' } }] })]).events;
+  assert.equal(direct.find((e) => e.type === 'permission_denied').suggestion, 'npm run lint');
+  assert.equal(summarizeToolInput('PowerShell', { command: 'node --version' }, CWD), 'node --version');
 });

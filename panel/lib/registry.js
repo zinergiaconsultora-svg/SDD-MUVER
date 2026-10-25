@@ -98,6 +98,40 @@ export async function loadRegistry(file) {
   return { projects };
 }
 
+async function fileExists(file) {
+  try {
+    await fs.access(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Corrección T36: el registro VIVO es <datos>/projects.json (panel/data/, ignorado por git), para que fijar, ocultar,
+ * altas y ajustes de ejecución no reescriban un fichero versionado. Al arrancar: si ya existe, se usa; si no, se copia
+ * una vez el heredado panel/projects.json (sin borrarlo); si tampoco existe, se siembra con projects.example.json.
+ * Devuelve 'existing' | 'migrated' | 'seeded' | 'none'. Nunca pisa un registro de datos existente.
+ */
+export async function prepareProjectsFile({ dataFile, legacyFile, exampleFile, log = console.log } = {}) {
+  if (await fileExists(dataFile)) return 'existing';
+  const source = (legacyFile && (await fileExists(legacyFile))) ? legacyFile : (exampleFile && (await fileExists(exampleFile))) ? exampleFile : null;
+  if (!source) return 'none';
+  await fs.mkdir(path.dirname(dataFile), { recursive: true });
+  try {
+    await fs.copyFile(source, dataFile, fs.constants.COPYFILE_EXCL);
+  } catch (err) {
+    if (err && err.code === 'EEXIST') return 'existing';
+    throw err;
+  }
+  if (source === legacyFile) {
+    log(`Registro de proyectos migrado a ${dataFile}`);
+    return 'migrated';
+  }
+  log(`Registro de proyectos creado en ${dataFile} a partir de projects.example.json`);
+  return 'seeded';
+}
+
 /** Guarda el registro de forma atómica (escribe .tmp y renombra). */
 export async function saveRegistry(file, registry) {
   const tmp = `${file}.tmp`;

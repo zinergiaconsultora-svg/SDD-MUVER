@@ -81,6 +81,11 @@ docs/acceso-web.md     (tocar) SOLO añadir al final "## 9. Cloudflare Access" y
 
 ### 3.1 `panel/projects.json` (capa de ajustes) — campos nuevos opcionales
 
+> **Corrección T36:** el registro vivo pasa a `<datos>/projects.json` (no versionado). `prepareProjectsFile` (en
+> `lib/registry.js`, llamado por `server.js` al arrancar) lo crea una sola vez copiando `panel/projects.json` (semilla
+> heredada, que se conserva y la app ya no modifica) o, si no existe, `panel/projects.example.json`; nunca pisa uno
+> existente. La opción `projectsFile` de `createApp` se mantiene (tests).
+
 ```json
 { "id": "app-flyder", "name": "app-flyder", "path": "C:\\Users\\Usuario\\app-flyder", "appUrl": "", "repoUrl": "", "tags": [],
   "hidden": false, "pinned": false,
@@ -328,13 +333,14 @@ export const CLI_FLAGS = Object.freeze({
   continueLast: '--continue', resume: '--resume',
 });
 export const BASH_RULE = (cmd) => `Bash(${cmd} *)`;   // sintaxis actual; la antigua era `Bash(cmd:*)`
+export const POWERSHELL_RULE = (cmd) => `PowerShell(${cmd} *)`; // corrección T36: herramienta PowerShell en Windows
 export const DEFAULT_ALLOWED_TOOLS = Object.freeze(['Read','Edit','Write','Glob','Grep', BASH_RULE('git status'), BASH_RULE('git diff'), BASH_RULE('git log')]);
 export const FORBIDDEN_ARGS = Object.freeze(['--dangerously-skip-permissions','--allow-dangerously-skip-permissions','bypassPermissions']);
 export const SDD_PROMPTS = Object.freeze({ implement: 'implementa la siguiente tarea pendiente', approveTests: 'tests aprobados, lanza al reviewer' });
 export const MAX_PROMPT_CHARS = 20000;
 ```
 
-- `buildAllowedTools(allowedCommands)` → cadena: `DEFAULT_ALLOWED_TOOLS` + `BASH_RULE(c)` por cada comando válido, sin duplicados, `join(',')`.
+- `buildAllowedTools(allowedCommands)` → cadena: `DEFAULT_ALLOWED_TOOLS` + `BASH_RULE(c)` y `POWERSHELL_RULE(c)` por cada comando válido, sin duplicados, `join(',')`. **Corrección T36** (Claude Code 2.1.307 en Windows): Claude elige entre las herramientas `Bash` (Git Bash) y `PowerShell`; con solo reglas `Bash(...)` todo comando por PowerShell se denegaba. Según la doc oficial de permisos (§PowerShell) las reglas tienen la misma forma (`PowerShell(git commit *)`), así que cada comando por defecto y autorizado se emite con ambas. Las denegaciones de `PowerShell` se mapean igual que las de `Bash` (`SHELL_TOOLS`), y si el texto "requires approval: …" llega después de `system/permission_denied`, la denegación registrada se completa.
 - `buildClaudeArgs({ session, allowedCommands })` → `[-p, --output-format, stream-json, --verbose, --permission-mode, acceptEdits, (--continue | --resume <id>)?, --allowedTools, <tools>]`. Lanza si algún elemento está en `FORBIDDEN_ARGS` (defensa en profundidad). **Corrección tras la prueba manual T36 (Claude Code 2.1.307):** en el CLI real `--allowedTools` es una opción **variádica** y consumía el prompt que antes iba como último argumento (`Error: Input must be provided either through stdin or as a prompt argument when using --print`). Ahora el prompt **no va en argv**: `lib/runs.js` lo escribe en el stdin del proceso (UTF-8) y lo cierra; `--allowedTools` es siempre la última opción. Con ello desaparece el espacio inicial para prompts que empiezan por `-` (R11): por stdin no pueden leerse como opción. El CLI falso de los tests reproduce el parseo variádico y la lectura de stdin.
 - `resolveClaudeCommand(claudeBin, { platform, env, execPath, exists })` → `{ file, prefixArgs }` o `{ error }`:
 

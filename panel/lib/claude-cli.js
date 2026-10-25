@@ -19,7 +19,16 @@ export const CLI_FLAGS = Object.freeze({
 
 /** Regla de --allowedTools para un comando Bash (sintaxis actual; la antigua era `Bash(cmd:*)`). */
 export const BASH_RULE = (cmd) => `Bash(${cmd} *)`;
-export const DEFAULT_ALLOWED_TOOLS = Object.freeze(['Read', 'Edit', 'Write', 'Glob', 'Grep', BASH_RULE('git status'), BASH_RULE('git diff'), BASH_RULE('git log')]);
+/**
+ * Corrección T36: en Windows Claude Code tiene también la herramienta PowerShell y elige cualquiera de las dos.
+ * Sus reglas tienen la misma forma que las de Bash (doc oficial de permisos, §PowerShell): `PowerShell(cmd *)`.
+ */
+export const POWERSHELL_RULE = (cmd) => `PowerShell(${cmd} *)`;
+/** Herramientas de shell: sus denegaciones se tratan igual (detalle y comando base propuesto). */
+export const SHELL_TOOLS = Object.freeze(['Bash', 'PowerShell']);
+/** Reglas de un comando autorizado: una por herramienta de shell. */
+export const shellRules = (cmd) => [BASH_RULE(cmd), POWERSHELL_RULE(cmd)];
+export const DEFAULT_ALLOWED_TOOLS = Object.freeze(['Read', 'Edit', 'Write', 'Glob', 'Grep', ...shellRules('git status'), ...shellRules('git diff'), ...shellRules('git log')]);
 export const FORBIDDEN_ARGS = Object.freeze(['--dangerously-skip-permissions', '--allow-dangerously-skip-permissions', 'bypassPermissions']);
 export const SDD_PROMPTS = Object.freeze({ implement: 'implementa la siguiente tarea pendiente', approveTests: 'tests aprobados, lanza al reviewer' });
 export const MAX_PROMPT_CHARS = 20000;
@@ -48,13 +57,12 @@ export function isValidAllowedCommand(c) {
   return ALLOWED_COMMAND_RE.test(normalizeCommand(c));
 }
 
-/** Valor único de --allowedTools: reglas por defecto + Bash(<comando> *) por comando válido, sin duplicados. */
+/** Valor único de --allowedTools: reglas por defecto + Bash(<cmd> *) y PowerShell(<cmd> *) por comando válido, sin duplicados. */
 export function buildAllowedTools(allowedCommands) {
   const rules = [...DEFAULT_ALLOWED_TOOLS];
   for (const command of Array.isArray(allowedCommands) ? allowedCommands : []) {
     if (!isValidAllowedCommand(command)) continue;
-    const rule = BASH_RULE(normalizeCommand(command));
-    if (!rules.includes(rule)) rules.push(rule);
+    for (const rule of shellRules(normalizeCommand(command))) if (!rules.includes(rule)) rules.push(rule);
   }
   return rules.join(',');
 }
@@ -154,7 +162,7 @@ export function summarizeToolInput(name, input, cwd) {
   else if (name === 'NotebookEdit') {
     const file = data.notebook_path ?? data.file_path;
     summary = typeof file === 'string' ? relativeTo(file, cwd) : '';
-  } else if (name === 'Bash') summary = data.command;
+  } else if (SHELL_TOOLS.includes(name)) summary = data.command;
   else if (name === 'Glob' || name === 'Grep') summary = data.pattern;
   else if (name === 'WebFetch') summary = data.url;
   else if (name === 'Task' || name === 'Agent') summary = data.description;
@@ -226,6 +234,23 @@ export function createStreamMapper({ cwd } = {}) {
   const seenDenials = new Set();
   const denials = [];
   const approvals = new Map(); // tool_use_id → parte del comando que pide aprobación (texto del error real)
+  const toolInputs = new Map(); // tool_use_id → input del tool_use (respaldo si la denegación llega sin input)
+  const denialById = new Map(); // tool_use_id → denegación registrada (se completa si el texto llega después)
+
+  function shellSuggestions(approval, command) {
+    if (approval) return suggestAllowedCommands(approval);
+    const single = typeof command === 'string' ? suggestAllowedCommand(command) : null;
+    return single ? [single] : [];
+  }
+
+  /** El texto "requires approval: …" puede llegar DESPUÉS de la denegación (system/permission_denied): se completa. */
+  function enrichDenial(toolUseId, approval) {
+    const denial = denialById.get(toolUseId);
+    if (!denial || !SHELL_TOOLS.includes(denial.tool)) return;
+    if (!denial.fromInput) denial.detail = clipPlain(approval, DENIAL_DETAIL_MAX_CHARS);
+    denial.suggestions = shellSuggestions(approval, null);
+    denial.suggestion = denial.suggestions[0] ?? null;
+  }
 
   function denialEvent(toolName, input, toolUseId) {
     if (toolUseId !== undefined && toolUseId !== null) {
@@ -234,16 +259,15 @@ export function createStreamMapper({ cwd } = {}) {
     }
     const tool = typeof toolName === 'string' && toolName ? toolName : 'desconocida';
     const data = input && typeof input === 'object' ? input : {};
-    const approval = toolUseId !== undefined && toolUseId !== null ? approvals.get(toolUseId) || null : null;
-    let suggestions = [];
-    if (tool === 'Bash') {
-      if (approval) suggestions = suggestAllowedCommands(approval);
-      else if (typeof data.command === 'string') {
-        const single = suggestAllowedCommand(data.command);
-        suggestions = single ? [single] : [];
-      }
-    }
-    const denial = { tool, detail: denialDetail(data, approval), suggestion: suggestions[0] ?? null, suggestions };
+    const hasId = toolUseId !== undefined && toolUseId !== null;
+    const approval = hasId ? approvals.get(toolUseId) || null : null;
+    const fromInput = typeof data.command === 'string' && data.command !== '';
+    const used = hasId && toolInputs.get(toolUseId);
+    const fallbackCommand = !fromInput && !approval && used && typeof used.command === 'string' ? used.command : null;
+    const suggestions = SHELL_TOOLS.includes(tool) ? shellSuggestions(approval, fromInput ? data.command : fallbackCommand) : [];
+    const detail = fallbackCommand ? clipPlain(fallbackCommand, DENIAL_DETAIL_MAX_CHARS) : denialDetail(data, approval);
+    const denial = { tool, detail, suggestion: suggestions[0] ?? null, suggestions };
+    if (hasId) denialById.set(toolUseId, Object.defineProperty(denial, 'fromInput', { value: fromInput, enumerable: false }));
     denials.push(denial);
     return { type: 'permission_denied', ...denial };
   }
@@ -256,6 +280,7 @@ export function createStreamMapper({ cwd } = {}) {
       if (block.type === 'text' && typeof block.text === 'string' && block.text.trim() !== '') {
         events.push({ type: 'text', text: clipText(block.text) });
       } else if (block.type === 'tool_use') {
+        if (block.id) toolInputs.set(block.id, block.input && typeof block.input === 'object' ? block.input : {});
         events.push({ type: 'tool', name: String(block.name ?? ''), summary: summarizeToolInput(block.name, block.input, cwd) });
       }
     }
@@ -267,7 +292,10 @@ export function createStreamMapper({ cwd } = {}) {
     const errors = blocks.filter((b) => b && b.type === 'tool_result' && b.is_error === true);
     for (const b of errors) {
       const approval = approvalCommandFrom(toolResultText(b.content));
-      if (approval && b.tool_use_id) approvals.set(b.tool_use_id, approval);
+      if (approval && b.tool_use_id) {
+        approvals.set(b.tool_use_id, approval);
+        enrichDenial(b.tool_use_id, approval);
+      }
     }
     return errors.map((b) => ({ type: 'tool_error', preview: clipPlain(toolResultText(b.content), TOOL_ERROR_MAX_CHARS) }));
   }

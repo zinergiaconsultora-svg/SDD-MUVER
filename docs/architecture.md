@@ -21,7 +21,11 @@
 ## Piezas principales (a alto nivel)
 > Ej: una base de datos, un servidor/backend, una interfaz/frontend, integraciones externas.
 
-- **Base de datos:** no hay. El registro de proyectos es un fichero `panel/projects.json`
+- **Base de datos:** no hay. El registro de proyectos es un fichero JSON; desde la corrección T36 de la fase 4 el
+  registro **vivo** es `<datos>/projects.json` (`panel/data/`, ignorado por git): al arrancar, si no existe, se copia
+  una vez el heredado `panel/projects.json` (consola: `Registro de proyectos migrado a <ruta>`) o, si tampoco existe,
+  `panel/projects.example.json` (los 4 proyectos de ejemplo). La app ya no escribe en `panel/projects.json`, que
+  queda versionado solo como semilla heredada y el humano puede borrar cuando quiera. Cada entrada tiene
   (`id`, `name`, `path` local absoluta, `appUrl`, `repoUrl` opcional, `tags` opcional y, desde la fase 3,
   `hidden` y `pinned` opcionales), editable a mano. Desde la fase 3 es una **capa de ajustes**: se fusiona por
   ruta con los proyectos detectados en Claude Code y sigue admitiendo proyectos manuales. El estado de cada
@@ -57,7 +61,8 @@
   - `lib/claude-cli.js`: llamada a **Claude Code CLI** (`claude -p --output-format stream-json --verbose
     --permission-mode acceptEdits [--continue | --resume <id>] --allowedTools <reglas>`, con el prompt por **stdin**:
     `--allowedTools` es variádica en el CLI real y se tragaba un prompt posicional — corrección tras la prueba T36), con todas las
-    flags en `CLI_FLAGS`, la lista por defecto (lectura/edición + `git status/diff/log`) más los
+    flags en `CLI_FLAGS`, reglas `Bash(<cmd> *)` **y** `PowerShell(<cmd> *)` por cada comando (corrección T36: en
+    Windows Claude Code usa también la herramienta PowerShell), la lista por defecto (lectura/edición + `git status/diff/log`) más los
     `allowedCommands` del proyecto, y el traductor del stream-json a eventos. **Nunca** se salta los permisos
     (lista `FORBIDDEN_ARGS` + test estático). Sin `--bare`: el CLI ejecuta los hooks y el `CLAUDE.md` del propio
     proyecto, como en la terminal.
@@ -99,7 +104,7 @@
 
 - **Lenguaje(s):** JavaScript (Node.js >= 18, ES Modules) en servidor y navegador.
 - **Framework(s):** ninguno. Sin bundler, sin dependencias npm. Tests con `node:test` + `node:assert`.
-- **Base de datos:** ninguna (fichero JSON `panel/projects.json`).
+- **Base de datos:** ninguna (fichero JSON `<datos>/projects.json`; ejemplo versionado en `panel/projects.example.json`).
 - **Hosting / despliegue:** el PC Windows del humano. `cd panel && npm start` escucha en `0.0.0.0:4310`
   (variable `PORT`) e imprime las URLs de acceso (localhost e IP de la red local), el directorio de datos,
   si la contraseña está configurada y la URL pública si existe. Publicación HTTPS mediante Cloudflare
@@ -165,7 +170,7 @@
                                                                                      v
 [Móvil / PC en la Wi-Fi] --HTTP (LAN)----------------------------------------> [panel/server.js] --fs/git--> [carpeta de cada proyecto]
                                                                                      |
-                                                                 panel/projects.json + panel/data/ (auth.json, sessions.json, public-url.txt)
+                                                                 panel/data/ (projects.json, auth.json, sessions.json, public-url.txt, runs/, audit.log)
                                                                                      |
                                                      solo lectura --> ~/.claude.json + ~/.claude/projects/*/*.jsonl (Claude Code)
                                                                                      |

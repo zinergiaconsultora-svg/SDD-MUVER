@@ -264,3 +264,54 @@ test('[F4-R62] normalizeSettings conserva allowedCommands/testCommand válidos y
   assert.deepEqual(execSettingsOf({ id: 'a' }), { allowedCommands: [], testCommand: '' });
   assert.deepEqual(execSettingsOf({ allowedCommands: ['npm test', 'npm test', 'x;y'], testCommand: ' make ' }), { allowedCommands: ['npm test'], testCommand: 'make' });
 });
+
+// ---------- Corrección T36: registro vivo en el directorio de datos (no versionado) ----------
+
+test('[F4-R94] corrección T36: prepareProjectsFile migra panel/projects.json a <datos>/projects.json una sola vez sin borrar el original', async () => {
+  const { prepareProjectsFile } = await import('../lib/registry.js');
+  const dir = await makeTempDir();
+  const legacy = path.join(dir, 'projects.json');
+  const example = path.join(dir, 'projects.example.json');
+  const dataFile = path.join(dir, 'data', 'projects.json');
+  await fs.writeFile(legacy, JSON.stringify({ projects: [{ id: 'mio', name: 'Mío', path: dir, pinned: true }] }));
+  await fs.writeFile(example, JSON.stringify({ projects: [{ id: 'ejemplo', name: 'Ejemplo', path: dir }] }));
+  const logs = [];
+  const first = await prepareProjectsFile({ dataFile, legacyFile: legacy, exampleFile: example, log: (m) => logs.push(m) });
+  assert.equal(first, 'migrated');
+  assert.deepEqual(logs, [`Registro de proyectos migrado a ${dataFile}`]);
+  assert.equal(await fs.readFile(dataFile, 'utf8'), await fs.readFile(legacy, 'utf8'), 'copia exacta');
+  await fs.access(legacy); // el original sigue ahí
+  // Ya existe en datos: no se pisa (aunque el heredado cambie).
+  await fs.writeFile(dataFile, JSON.stringify({ projects: [{ id: 'editado', name: 'Editado', path: dir }] }));
+  await fs.writeFile(legacy, JSON.stringify({ projects: [] }));
+  assert.equal(await prepareProjectsFile({ dataFile, legacyFile: legacy, exampleFile: example, log: (m) => logs.push(m) }), 'existing');
+  assert.deepEqual((await loadRegistry(dataFile)).projects.map((p) => p.id), ['editado']);
+  assert.equal(logs.length, 1);
+  await removeDir(dir);
+});
+
+test('[F4-R94] corrección T36: sin registro previo se siembra con projects.example.json; sin ninguno no se crea nada', async () => {
+  const { prepareProjectsFile } = await import('../lib/registry.js');
+  const dir = await makeTempDir();
+  const example = path.join(dir, 'projects.example.json');
+  const dataFile = path.join(dir, 'data', 'projects.json');
+  await fs.writeFile(example, JSON.stringify({ projects: [{ id: 'ejemplo', name: 'Ejemplo', path: dir }] }));
+  const logs = [];
+  assert.equal(await prepareProjectsFile({ dataFile, legacyFile: path.join(dir, 'no-existe.json'), exampleFile: example, log: (m) => logs.push(m) }), 'seeded');
+  assert.deepEqual((await loadRegistry(dataFile)).projects.map((p) => p.id), ['ejemplo']);
+  assert.match(logs[0], /projects\.example\.json/);
+  const empty = path.join(dir, 'vacio', 'projects.json');
+  assert.equal(await prepareProjectsFile({ dataFile: empty, legacyFile: path.join(dir, 'x.json'), exampleFile: path.join(dir, 'y.json'), log: () => {} }), 'none');
+  await assert.rejects(fs.access(empty));
+  await removeDir(dir);
+});
+
+test('[F4-R94] corrección T36: server.js usa <datos>/projects.json y existe panel/projects.example.json con los 4 proyectos', async () => {
+  const PANEL = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const server = await fs.readFile(path.join(PANEL, 'server.js'), 'utf8');
+  assert.ok(server.includes("path.join(config.dataDir, 'projects.json')"), 'registro vivo en el directorio de datos');
+  assert.ok(server.includes('prepareProjectsFile'));
+  assert.ok(!/projectsFile:\s*path\.join\(PANEL_DIR, 'projects\.json'\)/.test(server), 'la app ya no escribe en panel/projects.json');
+  const example = JSON.parse(await fs.readFile(path.join(PANEL, 'projects.example.json'), 'utf8'));
+  assert.equal(example.projects.length, 4);
+});

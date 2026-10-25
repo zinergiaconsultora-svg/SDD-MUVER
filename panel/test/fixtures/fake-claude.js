@@ -130,6 +130,18 @@ switch (scenario) {
     process.exitCode = 0;
     break;
   }
+  case 'denied_powershell': {
+    // Claude Code 2.1.307 en Windows: elige la herramienta PowerShell; denegación con tool_input vacío y el comando
+    // en el texto del error ("requires approval: node --version"); result = success.
+    init();
+    toolUse('ps1', 'PowerShell', { command: 'node --version' });
+    out({ type: 'system', subtype: 'permission_denied', tool_name: 'PowerShell', tool_use_id: 'ps1', tool_input: {} });
+    toolResult('ps1', 'This PowerShell command contains multiple operations. The following part requires approval: node --version', true);
+    assistantText('No tengo permiso para ejecutar node --version.');
+    result({ result: 'No tengo permiso para ejecutar node --version.', permission_denials: [{ tool_name: 'PowerShell', tool_use_id: 'ps1', tool_input: {} }] });
+    process.exitCode = 0;
+    break;
+  }
   case 'denied_fail': {
     // Denegación y result que NO es éxito → needs_permission.
     init();

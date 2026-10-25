@@ -145,7 +145,7 @@ Todas son opcionales. El panel las lee al arrancar (`panel/lib/config.js`).
 | Variable | Valor por defecto | Para qué |
 |----------|-------------------|----------|
 | `PORT` | `4310` | Puerto del panel. `install-service.ps1 -Port N` lo fija para las tareas. |
-| `PANEL_DATA_DIR` | `panel\data` | Carpeta de datos privados (`auth.json`, `sessions.json`, `public-url.txt`, logs). Ruta absoluta o relativa a `panel\`. |
+| `PANEL_DATA_DIR` | `panel\data` | Carpeta de datos privados (`auth.json`, `sessions.json`, `public-url.txt`, logs y, desde la fase 4, `projects.json` con tus proyectos: el panel lo copia una vez del antiguo `panel\projects.json`, que ya no modifica y puedes borrar cuando quieras). Ruta absoluta o relativa a `panel\`. |
 | `PANEL_SECURE_COOKIES` | desactivado | Con `1` la cookie de sesión lleva siempre el atributo `Secure` (solo HTTPS). **Solo** si usas el panel exclusivamente a través del túnel: con ella activada, el login por `http://<ip-lan>:4310` deja de funcionar. Por defecto el atributo se añade solo cuando la petición entra por Cloudflare. |
 | `PANEL_TRUST_PROXY` | activado | Con `0` el panel ignora las cabeceras que añade Cloudflare (`X-Forwarded-Proto`, `CF-Connecting-IP`). Úsalo si **no** publicas con Cloudflare Tunnel y no quieres que un cliente de la red local pueda falsear su IP ante el límite de intentos. |
 | `CLOUDFLARED_BIN` | `cloudflared` (en el PATH) | Ruta completa a `cloudflared.exe` si no está en el PATH. |

@@ -11,13 +11,23 @@ import { readConfig, buildStartupLines } from './lib/config.js';
 import { loadAuth } from './lib/auth.js';
 import { readPublicUrl } from './lib/public-url.js';
 import { createClaudeDiscovery } from './lib/claude-discovery.js';
+import { prepareProjectsFile } from './lib/registry.js';
 import { resolveClaudeCommand } from './lib/claude-cli.js';
 
 const PANEL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const config = readConfig(process.env, { panelDir: PANEL_DIR });
 
+// Corrección T36: el registro vivo está en el directorio de datos (no versionado). panel/projects.json queda como
+// semilla heredada (se copia una vez y la app ya no escribe en él); si no existe, se usa projects.example.json.
+const projectsFile = path.join(config.dataDir, 'projects.json');
+await prepareProjectsFile({
+  dataFile: projectsFile,
+  legacyFile: path.join(PANEL_DIR, 'projects.json'),
+  exampleFile: path.join(PANEL_DIR, 'projects.example.json'),
+});
+
 const server = createApp({
-  projectsFile: path.join(PANEL_DIR, 'projects.json'),
+  projectsFile,
   publicDir: path.join(PANEL_DIR, 'public'),
   dataDir: config.dataDir,
   trustProxy: config.trustProxy,

@@ -192,6 +192,10 @@ automático. Si un requisito no se puede probar, está mal escrito.
 > (`readConfig` incluye los campos nuevos), `registry.test.js` (`PATCHABLE_FIELDS` ampliado) y
 > `auth-api.test.js` (la sesión del login lleva `reauthAt`).
 
+> **Corrección T36 (prueba manual con Claude Code 2.1.307 en Windows):** stdin para el prompt, `succeeded` con
+> denegaciones, texto de hasta 20 000 caracteres, reglas y denegaciones de `PowerShell` (escenario `denied_powershell`
+> del CLI falso) y registro vivo en `<datos>/projects.json` (tests de `prepareProjectsFile` en `registry.test.js`).
+
 | Requisito | Test(s) que lo verifican |
 |-----------|---------------------------|
 | R1 | `panel/test/config.test.js` → "[F4-R1] readConfig: valores por defecto de la fase 4 con env vacío", "[F4-R1] readConfig: cada variable nueva válida", "[F4-R1] readConfig: valores fuera de rango vuelven al defecto y PANEL_ALLOW_EXEC 0/false…" |
@@ -203,7 +207,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R7 | `panel/test/claude-cli.test.js` → "[F4-R7] constantes: CLI_FLAGS, herramientas por defecto, prompts SDD y máximo del prompt", "[F4-R7] buildClaudeArgs en modo new: array exacto, --allowedTools al final y sin el prom…" |
 | R8 | `panel/test/claude-cli.test.js` → "[F4-R8] buildClaudeArgs: --continue y --resume <id> antes de --allowedTools (la opción v…" |
 | R9 | `panel/test/claude-cli.test.js` → "[F4-R9] ningún modo incluye argumentos prohibidos, ni con un prompt igual a uno de ellos", "[F4-R9] estático: el fuente de lib/claude-cli.js solo nombra los argumentos prohibidos e…" |
-| R10 | `panel/test/claude-cli.test.js` → "[F4-R10] buildAllowedTools: [], dos comandos y duplicado de una regla por defecto", "[F4-R10][F4-R62] isValidAllowedCommand" |
+| R10 | `panel/test/claude-cli.test.js` → "[F4-R10] buildAllowedTools: [], dos comandos y duplicado de una regla por defecto", "[F4-R10][F4-R62] isValidAllowedCommand", "[F4-R10] corrección T36: cada comando autorizado (y git status/diff/log) se emite como r…" |
 | R11 | `panel/test/claude-cli.test.js` → "[F4-R11] un prompt que empieza por "-" no puede leerse como opción: nunca va en argv (se…"; `panel/test/runs-api.test.js` → "[F4-R11] un prompt que empieza por "-" llega por stdin tal cual y no se interpreta como …" |
 | R12 | `panel/test/claude-cli.test.js` → "[F4-R12] resolveClaudeCommand: .js/.mjs/.cjs → node + fichero; Linux → tal cual; ruta ab…", "[F4-R12] resolveClaudeCommand en Windows: claude.exe en PATH, instalador nativo, npm glo…" |
 | R13 | `panel/test/claude-cli.test.js` → "[F4-R13] escenario ok → session, text, tool, tool, text y result en orden exacto", "[F4-R14][F4-R13] corrección T36: texto del asistente y del result hasta 20000 caracteres…"; `panel/test/runs-api.test.js` → "[F4-R13][F4-R14] corrección T36: un resumen final de ~2500 caracteres llega entero en el…" |
@@ -217,7 +221,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R21 | `panel/test/runs-api.test.js` → "[F4-R21] con maxRuns 1 un run en A hace que B responda 429; tras cancelar A, B → 202" |
 | R22 | `panel/test/runs-api.test.js` → "[F4-R22] sesión new/continue/resume: válida e inválida" |
 | R23 | `panel/test/runs-api.test.js` → "[F4-R17][F4-R23][F4-R34][F4-R38] POST /runs con el escenario ok: 202, argumentos, cwd, e…" |
-| R24 | `panel/test/claude-cli.test.js` → "[F4-R14][F4-R24] dos denegaciones en result, una ya emitida como system/permission_denie…", "[F4-R24][F4-R65] denegación real con tool_input vacío: el detalle sale del texto "requir…", "[F4-R24] denegación con tool_input.command: se usa ese comando; sin comando ni texto: de…"; `panel/test/runs-api.test.js` → "[F4-R24] corrección T36: denegación con result de éxito → succeeded con permissionDenial…", "[F4-R24][F4-R65] corrección T36: salida real (tool_input vacío) → succeeded y detalle de…" |
+| R24 | `panel/test/claude-cli.test.js` → "[F4-R14][F4-R24] dos denegaciones en result, una ya emitida como system/permission_denie…", "[F4-R24][F4-R65] denegación real con tool_input vacío: el detalle sale del texto "requir…", "[F4-R24] denegación con tool_input.command: se usa ese comando; sin comando ni texto: de…", "[F4-R24][F4-R65] corrección T36: una denegación de PowerShell se trata como la de Bash (…"; `panel/test/runs-api.test.js` → "[F4-R24] corrección T36: denegación con result de éxito → succeeded con permissionDenial…", "[F4-R24][F4-R65] corrección T36: salida real (tool_input vacío) → succeeded y detalle de…", "[F4-R24][F4-R65] corrección T36: denegación real de PowerShell → succeeded con "node" co…" |
 | R25 | `panel/test/runs-api.test.js` → "[F4-R25] escenarios error y crash → failed; ejecutable inexistente → failed con evento e…" |
 | R26 | `panel/test/runs-api.test.js` → "[F4-R20][F4-R26] un run activo bloquea otro chat y los tests (409 con runId); cancelar m…" |
 | R27 | `panel/test/runs-api.test.js` → "[F4-R27] cancelar un run terminado → 409; id bien formado inexistente o mal formado → 404" |
@@ -258,7 +262,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R62 | `panel/test/claude-cli.test.js` → "[F4-R10][F4-R62] isValidAllowedCommand"; `panel/test/registry.test.js` → "[F4-R62] validatePatch: allowedCommands válidos (recorte, colapso de espacios, sin dupli…", "[F4-R62] validatePatch: allowedCommands y testCommand inválidos con field y texto de des…", "[F4-R62] normalizeSettings conserva allowedCommands/testCommand válidos y execSettingsOf…"; `panel/test/work-api.test.js` → "[F4-R62][F4-R63] PATCH con allowedCommands/testCommand: válidos se guardan, inválidos 40…" |
 | R63 | `panel/test/work-api.test.js` → "[F4-R5][F4-R63] allowExec false: las ocho acciones de ejecución → 403 sin procesos ni fi…", "[F4-R62][F4-R63] PATCH con allowedCommands/testCommand: válidos se guardan, inválidos 40…" |
 | R64 | `panel/test/work-api.test.js` → "[F4-R64] POST /permissions: añade sin duplicar, crea la entrada de un proyecto solo de C…" |
-| R65 | `panel/test/claude-cli.test.js` → "[F4-R65] suggestAllowedCommand", "[F4-R65] la denegación de una herramienta distinta de Bash no propone comando", "[F4-R24][F4-R65] denegación real con tool_input vacío: el detalle sale del texto "requir…", "[F4-R65] suggestAllowedCommands: comando base de cada parte, validado con ALLOWED_COMMAN…"; `panel/test/runs-api.test.js` → "[F4-R24][F4-R65] corrección T36: salida real (tool_input vacío) → succeeded y detalle de…" |
+| R65 | `panel/test/claude-cli.test.js` → "[F4-R65] suggestAllowedCommand", "[F4-R65] la denegación de una herramienta distinta de Bash no propone comando", "[F4-R24][F4-R65] denegación real con tool_input vacío: el detalle sale del texto "requir…", "[F4-R65] suggestAllowedCommands: comando base de cada parte, validado con ALLOWED_COMMAN…", "[F4-R24][F4-R65] corrección T36: una denegación de PowerShell se trata como la de Bash (…"; `panel/test/runs-api.test.js` → "[F4-R24][F4-R65] corrección T36: salida real (tool_input vacío) → succeeded y detalle de…", "[F4-R24][F4-R65] corrección T36: denegación real de PowerShell → succeeded con "node" co…" |
 | R66 | `panel/test/registry.test.js` → "[F4-R66] isHttpUrl y validatePatch con URLs que no son http(s)", "[F4-R66] validateNewProject rechaza appUrl/repoUrl que no son http(s) y acepta vacías o …"; `panel/test/work-api.test.js` → "[F4-R66] POST /api/projects y PATCH con appUrl/repoUrl que no son http(s) → 400 con fiel…" |
 | R67 | `panel/test/reauth-api.test.js` → "[F4-R67] reauth.js: TTL de 15 minutos, petición por el túnel y confirmación reciente", "[F4-R67] por el túnel sin confirmación reciente (16 min) → 401 reauthRequired sin proces…" |
 | R68 | `panel/test/auth.test.js` → "[F4-R68] createSessionStore: create({ reauthAt }), markReauth, persistencia y carga de r…"; `panel/test/reauth-api.test.js` → "[F4-R68] POST /api/auth/reauth correcto → 204, reauthAt en sessions.json y la acción pas…", "[F4-R68] reauth incorrecto → 401 "Contraseña incorrecta" (sin reauthRequired); al sexto …" |
@@ -277,7 +281,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R81 | `panel/test/work-render.test.js` → "[F4-R81] renderWorkView en solo lectura (ejecución desactivada o sin carpeta): aviso, si…" |
 | R82 | `panel/test/work-render.test.js` → "[F4-R82] describeAction: textos exactos de cada acción con escapado" |
 | R83 | `panel/test/work-render.test.js` → "[F4-R83] renderRunEvent pinta cada tipo de evento escapando el texto", "[F4-R83] renderRunLog pinta como mucho los últimos 2000 eventos y avisa", "[F4-R83] corrección T36: el resultado no repite el texto si es idéntico al último del as…" |
-| R84 | `panel/test/work-render.test.js` → "[F4-R84] renderPermissionPrompt con y sin sugerencia, y buildRetryPayload", "[F4-R84] corrección T36: un run terminado con denegaciones avisa "N comandos denegados" …" |
+| R84 | `panel/test/work-render.test.js` → "[F4-R84] renderPermissionPrompt con y sin sugerencia, y buildRetryPayload", "[F4-R84] corrección T36: un run terminado con denegaciones avisa "N comandos denegados" …", "[F4-R84] corrección T36: una denegación de PowerShell ofrece "Permitir en este proyecto …" |
 | R85 | `panel/test/work-render.test.js` → "[F4-R85] renderDiff marca add/del/hunk/meta, escapa y avisa del recorte" |
 | R86 | `panel/test/work-render.test.js` → "[F4-R86] createApiClient: un 401 con reauthRequired no llama a onUnauthorized y el error…", "[F4-R86] withReauth: repite la acción una vez tras un reauth correcto; nada si se cancela" |
 | R87 | `panel/test/work-render.test.js` → "[F4-R87] renderAttention con proyectos y runs; vacío → cadena vacía", "[F4-R87] corrección T36: en "Te necesitan" un run terminado con denegaciones es un aviso…" |
@@ -287,7 +291,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R91 | `panel/test/styles.test.js` → "[F4-R91] index.html: #attention dentro de #list-view antes de #projects y diálogos <dial…", "[F4-R91] app.js importa work.js", "[F4-R91] styles.css define los selectores de la fase 4 con colores en variables para cla…" |
 | R92 | `panel/test/claude-discovery.test.js` → "[F4-R92] un summary de 120 caracteres se recorta con clipTitle a 80 + "…"" |
 | R93 | `panel/test/deploy.test.js` → "[F4-R93] uninstall-service.ps1 cierra también los cloudflared.exe del túnel" |
-| R94 | `panel/test/deploy.test.js` → "[F4-R94] docs: architecture.md con módulos, rutas y variables de la fase 4; verification…" |
+| R94 | `panel/test/deploy.test.js` → "[F4-R94] docs: architecture.md con módulos, rutas y variables de la fase 4; verification…"; `panel/test/registry.test.js` → "[F4-R94] corrección T36: prepareProjectsFile migra panel/projects.json a <datos>/project…", "[F4-R94] corrección T36: sin registro previo se siembra con projects.example.json; sin n…", "[F4-R94] corrección T36: server.js usa <datos>/projects.json y existe panel/projects.exa…" |
 | R95 | **MANUAL — pendiente del humano** (ver fila T36/T37) |
 | R96 | **MANUAL — pendiente del humano** (ver fila T36/T37) |
 | R97 | **MANUAL — pendiente del humano** (ver fila T36/T37) |
