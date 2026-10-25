@@ -4,11 +4,11 @@
 > leader y el implementer. Si cierras la sesión y la abres mañana, esto te dice por
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
-- **Feature en curso:** #15 `comandos-amplios-git-npm` — comandos amplios de git y npm, `taskkill` con guardia final y ruta real del `cwd` (mejoras del reviewer de la feature 14)
-- **Estado:** `in_progress` — enmienda 1 implementada; **puerta 2 aprobada de nuevo por el humano** (2026-10-25); reviewer revisando
-- **Tarea actual:** puerta 2; T1–T15 y T17–T23 hechas; T16 manual en Windows pendiente del humano.
-- **Siguiente paso:** reviewer → done. Después: 19 (git-config-sin-clic, alta), 16, 17, 18 y la 13.
-- **Bloqueos / esperando:** — (pendiente del humano, no bloqueante: T16 en Windows)
+- **Feature en curso:** — (la 15 se cerró como `done`; siguiente: #19 `git-config-sin-clic`, `pending`)
+- **Estado:** feature 15 `done` (2026-10-25), segunda revisión APROBADO; spec_author redactando la spec de la 19
+- **Tarea actual:** spec de la feature 19.
+- **Siguiente paso:** humano aprueba la spec de la 19 → implementer → puerta 2 → reviewer → done. Después: 16, 17, 18 y la 13.
+- **Bloqueos / esperando:** — (pendiente del humano, no bloqueante: T16 de la feature 15 en Windows; duda 5 de la 15 a comprobar con el CLI real)
 
 ## Decisiones tomadas con el humano
 

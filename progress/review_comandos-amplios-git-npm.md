@@ -1,118 +1,105 @@
-# Revisión — Feature 15: `comandos-amplios-git-npm`
+# Revisión — Feature 15: `comandos-amplios-git-npm` (segunda revisión, tras la Enmienda 1)
 
-**Veredicto: RECHAZADO** (HEAD `0fae39a`, implementación en `347bd6d`, diff desde
-`sdd-checkpoint-comandos-amplios-git-npm-start`). La implementación cumple el design aprobado, los 488 tests pasan
-y la trazabilidad está completa. Pero la lista permitida de git (`GIT_SAFE_SUBCOMMANDS`, design §3.2) incluye
-`cherry-pick` y `merge`, y **los dos ejecutan un programa indicado en la línea de órdenes** con el git real 2.43.0
-(bloqueante B1). Esto contradice la premisa de M1 ("un `git <sub>` solo es normal si se ha comprobado que no ejecuta
-un programa indicado en la línea de órdenes") y la nota de evidencia de design §3.2, que dice que se comprobó y no
-se ejecutó. El arreglo es pequeño, pero cambia la spec aprobada (design §3.2/§3.4, la tabla de R1 y los casos de R6),
-así que tiene que volver a pasar por el humano.
+> Primera revisión (RECHAZADO por B1): en git, commit `0d03081` (`git show 0d03081:progress/review_comandos-amplios-git-npm.md`).
+
+**Veredicto: APROBADO** (HEAD `d85c092`, enmienda implementada en `749b239`; diff de la feature desde
+`sdd-checkpoint-comandos-amplios-git-npm-start` y de la enmienda desde `sdd-checkpoint-comandos-amplios-git-npm-enmienda1`).
+El bloqueante B1 está resuelto: `merge`, `cherry-pick` y `revert` han salido de `GIT_SAFE_SUBCOMMANDS`, y
+`view`/`info`/`show`/`v` de `NPM_SAFE_SUBCOMMANDS`. Todos pasan a las listas de referencia y `[F15-R6]` demuestra con el
+git y el npm reales que se ejecuta el programa. M2, N1 y N3 también están resueltos. Los 488 tests pasan. Con el git
+2.43.0 y el npm 10.9.4 reales, en temporales y con `HOME` temporal, no he conseguido que ningún subcomando que siga
+en las listas permitidas ejecute un programa indicado en la línea de órdenes, salvo las vías ya asignadas a #16, #18,
+#19 y la duda 5. No quedan bloqueantes. T16 (R13, manual en Windows) sigue pendiente del humano, como estaba previsto.
 
 ## Checklist
 
 | # | Punto | Resultado |
 |---|-------|-----------|
-| 1 | Trazabilidad R1–R18 ↔ tests | OK. Las etiquetas `[F15-R1]`–`[F15-R12]` y `[F15-R14]`–`[F15-R17]` existen en `panel/test/`. R13 es manual en Windows (T16) y queda pendiente del humano, sin bloquear. R18 se cubre con `./init.sh`. `[F15-R17]` comprueba automáticamente que hay una fila por requisito y que cada etiqueta está en algún test. |
-| 2 | Tests (`bash init.sh`) | OK: **488 tests, 488 pass, 0 fail, 0 skipped** (Linux, git 2.43.0, npm 10.9.4). sdd-lint: 0 errores y 0 advertencias (17 tareas con trazabilidad). He leído los tests nuevos y no son triviales. `[F15-R6]` primero demuestra con el git real que se crea el fichero de marca y solo después comprueba la clasificación. `[F15-R14]` tiene una versión unitaria (linux y win32) y otra con un enlace simbólico real y `defaultFsOps`. `[F15-R12]` usa un run real `[[hang]]` cancelado y otro detenido por tiempo máximo, y compara el resolvedor por identidad. `[F15-R11]` comprueba el mensaje exacto, que `child.kill()` se llama una vez, que no se lanza nada y que un `kill` que lanza no rompe. **Laguna**: ningún test cubre las opciones `--strategy` de los subcomandos permitidos (B1). |
-| 3 | Tareas | T1–T15 y T17 `[x]`. T16 `[ ]` (manual en Windows, aceptado). |
-| 4 | Convenciones | OK. Código en inglés, comentarios en español, constantes congeladas en MAYÚSCULAS y referencias a la feature y la sección en los comentarios. En `docs/architecture.md` dos líneas del apartado 1 se pasan del ancho de la sección (N1). |
-| 5 | Checkpoints | Se cumplen, salvo por B1 y la entrada de `progress/history.md` (la añade el leader al cerrar). No hay `progress/impl_comandos-amplios-git-npm.md`: el estado está en `progress/current.md`, como en las features anteriores. |
-| 6 | Diseño | OK respecto a lo que pide el design. `claude-cli.js` (§3.2–§3.6), `exec-utils.js` (§4.1–§4.2), `runs.js` (§4.3) y `trusted-bin.js` (§5) coinciden con el texto del design. `work-api.js`, `app.js` y `public/` no cambian (§9). Los únicos cambios en tests anteriores son líneas de cabecera e imports ampliados (§6.3: "ninguno", correcto). No se ha colado nada extra. El defecto B1 está **en el design**, no en lo que se implementó. |
+| 1 | Trazabilidad R1–R18 ↔ tests | OK. Las etiquetas `[F15-R1]`–`[F15-R12]` y `[F15-R14]`–`[F15-R17]` existen en `panel/test/` (R6 en `hardening.test.js`; R14 en `trusted-bin.test.js` y `hardening.test.js`). R13 es manual (T16, pendiente del humano, no bloquea). R18 se cubre con `./init.sh`. `[F15-R17]` sigue comprobando una fila por requisito en `docs/verification.md`, y la fila de R6 cita el nombre nuevo del test. |
+| 2 | Tests (`bash init.sh`) | OK: **488 tests, 488 pass, 0 fail, 0 skipped** (Linux, git 2.43.0, npm 10.9.4). sdd-lint: 0 errores y 0 advertencias. `[F15-R6]` se ejecuta (no se salta), y también el caso de npm. He leído los cambios: las ramas divergen de verdad (`f15-otra` sale de `HEAD~1`), así que `merge` no es fast-forward. Cada caso tiene su propio fichero de marca con la ruta fija dentro del script. Hay `--abort` + `reset --hard` entre casos. Siempre se comprueba primero la marca y después la clasificación. El caso de npm usa `git+file://<repo>` con `--offline` desde una carpeta vacía. Los tests no son triviales: con las listas de antes, `isBroadCommand('git merge')` daba `false` y el test falla. |
+| 3 | Tareas | T1–T15 y T17–T23 `[x]`. T16 `[ ]` (manual en Windows; desde la enmienda incluye los pasos 3 y 4 de design §6.4, que recogen la mejora M1). |
+| 4 | Convenciones | OK. Código en inglés, comentarios en español, constantes congeladas en MAYÚSCULAS, referencias a la feature, la enmienda y la sección del design. Algunas líneas nuevas pasan de 120 columnas (N4). `docs/conventions.md` no fija un ancho y los tests de antes ya tienen líneas así. |
+| 5 | Checkpoints | Se cumplen. Falta la entrada de `progress/history.md`, que añade el leader al cerrar. Igual que en las features anteriores, no hay `progress/impl_comandos-amplios-git-npm.md`: el estado está en `progress/current.md`. |
+| 6 | Diseño | OK. `claude-cli.js` coincide con las listas de design §3.2–§3.4 de la Enmienda 1: 37 subcomandos de git, los añadidos van al final de las listas de referencia y `isBroadCommand`/`suggestAllowedCommand` no cambian. `hardening.test.js` coincide con §6.1 (casos, scripts, entorno aislado). `docs/architecture.md` coincide con §7.1 (frase de N1 y apartado 2) y `docs/verification.md` con §7.2. No se ha colado nada extra. Hay una desviación declarada en `docs/verification.md`: el apartado 2 de `architecture.md` también se ha reajustado a 120 columnas. Solo cambian los saltos de línea y `[F14-R31]` pasa. La acepto. |
+
+## Hallazgos de la primera revisión
+
+| Hallazgo | Estado | Comprobación |
+|---|---|---|
+| **B1** — `merge`/`cherry-pick` en la lista permitida | **Resuelto** | Ya no están en `GIT_SAFE_SUBCOMMANDS`. Están en `GIT_EXEC_SUBCOMMANDS`, junto con `revert`. `isBroadCommand('git merge'/'git cherry-pick'/'git revert')` devuelve `true` y las tablas de `[F15-R1]` y `[F15-R5]` lo fijan. `suggestAllowedCommand` devuelve `null` para `git cherry-pick --strategy=x otra`, `git merge -s x otra` y `git revert HEAD` (`[F15-R7]`). `[F15-R6]` reproduce las dos evidencias con el git real: `merge -s <nombre del PATH>` y `cherry-pick --strategy=<ruta relativa>`. La nota falsa de design §3.2 se ha corregido. |
+| (nuevo en la enmienda) `npm view --git` | Resuelto | Lo detectó el implementer al revisar las listas. `view`, `info`, `show` y `v` pasan a `NPM_EXEC_SUBCOMMANDS`. Lo he reproducido: `npm view git+file://<repo> --git=P` ejecuta `P`. |
+| M1 — git 2.52 en Windows | Recogida en T16 | Pasos 3 y 4 de design §6.4 y fila de R13 de `docs/verification.md`. Pendiente del humano. |
+| **M2** — aislamiento de `[F15-R6]` | **Resuelto** | `isolatedEvidenceEnv()` quita las variables `GIT_*` y `NPM_CONFIG_*` (sin distinguir mayúsculas; también `NPM_CONFIG_USERCONFIG`) y pone `HOME`/`XDG_CONFIG_HOME` temporales, `GIT_CONFIG_NOSYSTEM=1` y `GIT_TERMINAL_PROMPT=0`. Todos los casos lo usan, también los seis de antes. |
+| **N1** — inciso mal colocado en `architecture.md` | **Resuelto** | La frase dice ahora "…del `cwd` de la llamada y de la ruta real del cwd (feature 15), y de las carpetas del catálogo…". `[F15-R16]` comprueba que el inciso viejo ya no está y que ninguna línea del apartado 1 pasa de 120 columnas. |
+| N2 — `SystemRoot` del entorno del panel | Sin cambios (no se pidió) | Sigue siendo correcto según R10/R11. |
+| **N3** — `revert --strategy` | **Resuelto** | `revert` sale por prudencia (design §3.2 y §11). |
 
 ## Revisión con mentalidad de atacante
 
-### Subcomandos y opciones de la lista permitida (con el git y el npm reales, en un temporal del scratchpad)
+Entorno: scratchpad, `HOME`/`XDG_CONFIG_HOME` temporales, `GIT_CONFIG_NOSYSTEM=1`, git 2.43.0 y npm 10.9.4 reales, y
+programas de marca que solo crean ficheros en el temporal.
 
-- **`git cherry-pick --strategy=<s>`**: ejecuta `git-merge-<s>` **sin validar el nombre**.
-  - Con `git-merge-evilx` en el `PATH`, `git cherry-pick --strategy=evilx other` lo ejecutó.
-  - Con una barra en `<s>`, el nombre se resuelve **relativo al cwd**. Con un fichero `git-merge-p/ev` en el repo, `git cherry-pick --strategy=p/ev other` lo ejecutó.
-  - Con solo una carpeta vacía llamada `git-merge-..` en el repo, `--strategy=../../../../../../../../usr/bin/env` alcanza **cualquier programa del disco**.
-  - `-X<opción>` le pasa `--<opción>` como primer argumento: un registrador lo vio como `[--split-string=sh -c 'touch x' sh] [<base>] [--] [<head>] [<commit>]`.
-  - Juntándolo todo: `git cherry-pick --strategy=../…/usr/bin/env -X"split-string=sh -c 'touch MARCA' sh" other` **ejecutó el código de shell escrito en la línea de órdenes** (se creó `MARK-envS`).
-  - La carpeta la puede crear Claude con `acceptEdits` (Write con `git-merge-../x`), o puede venir ya en un repo malicioso clonado. El código va en la línea de órdenes, no en un fichero del proyecto, así que **no** es el riesgo aceptado en F14 D6.
-- **`git merge -s <s>`**: ejecuta `git-merge-<s>` del `PATH`.
-  - `git merge -s evilx other` con `git-merge-evilx` en el `PATH` → ejecutado. Esto contradice la nota de design §3.2: "Se comprobó con un `git-merge-evilx` en el `PATH` y no se ejecutó".
-  - Con una barra (`-s p/ev`, o una ruta con `../`) responde "Could not find merge strategy" y no ejecuta nada: `merge` valida el nombre contra la carpeta de ejecución y el `PATH`.
-  - Es la misma clase de fallo que `git evilsub`, que la spec trata como amplio (R1).
-- **`git revert --strategy=<s>`**: no ejecutó nada (2.43 hace la fusión interna en los reverts). La opción sí existe (`git revert -h`).
-- Resto de `GIT_SAFE_SUBCOMMANDS`: revisé `git <sub> -h` de los 40 subcomandos buscando strategy, program, command, cmd, exec, editor, tool, pager, filter, textconv y helper. Lo único que aparece:
-  - `cat-file --textconv`/`--filters`: usan drivers de `.git/config`/`.gitattributes` (#19).
-  - `-s`/`-X` de `merge`, `cherry-pick` y `revert`.
-  - Editor, pager, gpg, fsmonitor y hooks salen de la configuración o del entorno, no de la línea de órdenes.
-  - `--output` es de la feature 16.
-- **npm**:
-  - `npm test --help --viewer=browser --browser=<registrador>` y `npm view --help …` solo imprimen el uso; no lanzan nada.
-  - `NPM_SAFE_SUBCOMMANDS` no contiene ningún alias que lleve a un subcomando de ejecución.
-  - `npm <script> --node-options`/`--script-shell`/`--prefix=<otra carpeta>` (scripts de otro `package.json`) son de la feature 18.
+### git: los 37 subcomandos de `GIT_SAFE_SUBCOMMANDS`
 
-### `killProcessTree` en win32
+- **`git <sub> -h` de los 37**, buscando `strateg`, `program`, `command`, `cmd`, `exec`, `tool`, `filter`, `textconv`, `helper`, `upload`, `receive`, `shell`, `hook`, `--output` y `template`.
+  - Solo aparece `cat-file --textconv`/`--filters`, que usa drivers de `.git/config`/`.gitattributes` (#19).
+  - Lo demás no ejecuta nada: `commit -t` lee un fichero, `for-each-ref --shell` solo cambia el entrecomillado y `rev-list --exclude-hidden` es un filtro de refs.
+- **Estrategias de fusión con todas las estrategias falsas en el `PATH`** (`git-merge-{ort,recursive,resolve,octopus,ours,subtree,evil}`): **ninguna se ejecuta**. Hacen la fusión interna.
+  - Probados: `stash apply`, `checkout -m`, `switch -m`, `reset --merge`, `restore --merge`.
+  - `show`/`log`/`diff-tree --remerge-diff` y `log --diff-merges=remerge` sobre un commit de merge real.
+  - `commit --cleanup`, `status`, `describe --dirty`, `cherry`, `merge-base --fork-point`.
+- **Vías que dependen de la configuración o del entorno, no de la línea de órdenes**:
+  - `--ext-diff`/`--textconv`, editor, paginador y `interactive.diffFilter` en `-p`.
+  - `-S`/`-u <key-id>`/`--show-signature`/`%G?`: el programa de firma sale de `gpg.program` o del `PATH`.
+  - `--trailer` (`trailer.<k>.command`), `--alternate-refs` (`core.alternateRefsCommand`) y la descarga perezosa de un clon parcial (remoto de `.git/config`).
+  - Estas vías son #19 o la duda 5 (`PATH=`/`GIT_*=` delante de la regla).
+- **`--output` de `diff`/`log`/`show`/`reflog`/`stash show`** escribe ficheros, no ejecuta: es la #16.
+- **Opciones globales** (`-c`, `-C`, `--exec-path`, `-p`): van delante del subcomando y la regla de F14 ya las trata como amplias.
 
-- Solo puede lanzar `taskkillPath(env)` = `path.win32.join(SystemRoot || SYSTEMROOT || 'C:\\Windows', 'System32', 'taskkill.exe')`, con `execFile`, sin shell y con argumentos fijos.
-  - Si `SystemRoot` es relativo, la ruta no es absoluta y `isTrustedPath` la rechaza → `child.kill()`.
-  - Si `SystemRoot` contiene `..`, `join` lo normaliza antes de la guardia.
-- La guardia no exige que la ruta esté de verdad en `System32`, solo que sea absoluta y no esté en el cwd, en su ruta real ni en el catálogo. Un `SystemRoot` raro, como `\\servidor\x` o `D:\otra`, se aceptaría. Pero `env` es el del panel (`createRunManager({ env })` / `process.env`) y Claude no lo controla. Riesgo práctico nulo, dentro de lo que pide R10/R11 (N2).
-- `runs.js` es el único que llama a `killTree`, y le pasa `resolver` (el mismo objeto que `guardedSpawn`) y `cwd: rec.cwd` (= `project.dir`).
+### npm: los 16 de `NPM_SAFE_SUBCOMMANDS`
 
-### Exclusión por ruta real del cwd
+- **Proyecto con una dependencia `git+file://`**, en tres estados: instalada, sin `node_modules` ni lockfile, y solo con lockfile (`--package-lock-only`).
+  - Con `--git=P`, ninguno de estos ejecutó `P`: `outdated` (también `--long`, `--all` y con nombre), `ls`/`ll`/`la` (también `--all --long` y con una especificación `git+file://`), `explain`/`why` (también con `git+file://`), `query` (`*`, `:outdated`, `:outdated(any)`, `:outdated(major)`, `:vuln`, `:missing`), `prefix`, `root` y `test`.
+  - Control positivo: `npm view git+file://… --git=P` sí lo ejecuta, así que la prueba es efectiva.
+- **Los 16 subcomandos con `""`, `--help`, `-h`, `--usage` y `help`**, añadiendo `--viewer=browser --browser=Q --editor=Q --shell=Q --node-gyp=Q --git=Q` y con la entrada estándar vacía: **ninguno ejecutó `Q`**.
+- **Lo que queda está asignado a otras features**:
+  - #18: `--script-shell`, `--node-options` y `--prefix`/`--workspace` hacia otra carpeta.
+  - F14 D6: `npm start` sin script lanza `node server.js`, un fichero del proyecto.
 
-- `defaultFsOps.realpath` usa `fs.realpathSync.native`. En Windows eso resuelve uniones, enlaces simbólicos, nombres 8.3 y `subst`. Si devuelve `null`, una ruta relativa o lanza una excepción, solo se excluye el cwd (R15, probado).
-- `excludedDirs` cubre a la vez `resolve` e `isTrustedPath`. `isTrustedPath` comprueba además la ruta real del fichero contra las carpetas excluidas.
-- No encuentro huecos nuevos. Los que quedan vienen de F14 y están documentados:
-  - Si la ruta real del cwd es un proyecto contenedor (raíz o carpeta personal), solo se excluye su raíz.
-  - Hay una ventana entre resolver y lanzar (TOCTOU) en la que se puede cambiar un enlace.
-  - Las carpetas del catálogo se resuelven una vez por instantánea (D6).
+### Conclusión
+
+No encuentro ningún subcomando que siga en `GIT_SAFE_SUBCOMMANDS` o en `NPM_SAFE_SUBCOMMANDS` que ejecute un programa
+indicado en la línea de órdenes, ni con opciones detrás, salvo las vías ya asignadas a #16, #18, #19 y la duda 5.
 
 ## Hallazgos
 
 ### Bloqueantes
 
-- **B1 — `cherry-pick` y `merge` en `GIT_SAFE_SUBCOMMANDS` ejecutan programas indicados en la línea de órdenes.**
-  - Dónde: `panel/lib/claude-cli.js` (`GIT_SAFE_SUBCOMMANDS`) y `specs/comandos-amplios-git-npm/design.md` §3.2 (lista y nota "merge -s … no se ejecutó").
-  - Requisitos afectados: R1 (la tabla clasifica implícitamente `git cherry-pick`/`git merge` como no amplios), R5, R6 y R7.
-  - Efecto:
-    - `isBroadCommand('git cherry-pick')` y `isBroadCommand('git merge')` devuelven `false`.
-    - Tras una denegación, el panel **propone** "Permitir `git cherry-pick` y reintentar".
-    - La regla `Bash(git cherry-pick *)` da ejecución de código arbitrario con `--strategy` + `-X` (más arriba).
-  - Reproducción (git 2.43.0, Linux; en un repo temporal con una rama `other`):
-    ```sh
-    mkdir 'git-merge-..'
-    git cherry-pick --strategy=../../../../../../../../usr/bin/env \
-      -X"split-string=sh -c 'touch /tmp/MARCA' sh" other      # crea /tmp/MARCA
-    PATH=/dir/con/git-merge-evilx:$PATH git merge -s evilx other   # ejecuta git-merge-evilx
-    ```
-  - Qué corregir (requiere cambiar la spec y que el humano la apruebe):
-    1. design §3.2: quitar `merge` y `cherry-pick` de `GIT_SAFE_SUBCOMMANDS`. Se recomienda quitar también `revert`: hoy no ejecuta la estrategia, pero acepta `--strategy` y ese comportamiento depende de la versión de git. Corregir la nota de `merge -s`.
-    2. design §3.4: añadir `merge`, `cherry-pick` (y `revert`) a `GIT_EXEC_SUBCOMMANDS` y estas filas a la tabla de evidencias.
-    3. requirements R1 y design §3.5: añadir `git merge` y `git cherry-pick` a la columna de amplios. R5: incluirlos en la lista mínima.
-    4. R6 (`hardening.test.js`): añadir los casos `cherry-pick --strategy=<ruta relativa>` (con una carpeta `git-merge-x` en el temporal) y `merge -s <nombre del PATH>`, con la misma evidencia de fichero de marca.
-    5. Tests y docs: la tabla de `[F15-R1]`, `[F15-R5]` (`deepEqual` de `GIT_EXEC_SUBCOMMANDS`), `docs/architecture.md` apartado 2 (mencionar `-s`/`--strategy`) y la fila de R6 en `docs/verification.md`.
-  - Nota: la regla por defecto de Claude Code del panel no incluye `merge` ni `cherry-pick`, así que el problema solo afecta a lo que se propone o se autoriza. En el PC del humano hay git 2.52: conviene repetir allí la comprobación de la lista (design §10.6).
+Ninguno.
 
 ### Mejoras
 
-- **M1 (baja) — Evidencias con versión de git distinta en Windows.**
-  - Las listas se comprobaron con git 2.43, pero el humano usa 2.52.0.windows.1 (T30 de F14).
-  - Propuesta: añadir a T16 una comprobación rápida en Windows: `git cherry-pick --strategy=…` y `git merge -s …`, después de corregir B1, para ver que piden la confirmación con aviso.
-- **M2 (baja) — Aislamiento de `[F15-R6]`.**
-  - El test fija `GIT_CONFIG_NOSYSTEM=1`, pero hereda `HOME` y, con él, el `~/.gitconfig` del usuario. Un alias o un `url.insteadOf` del humano podría cambiar el resultado.
-  - Propuesta: un `HOME` temporal, como en otros tests de `hardening.test.js`.
+Ninguna nueva. M1 sigue en T16 (humano, Windows, git 2.52).
 
 ### Notas
 
-- **N1.** En `docs/architecture.md`, apartado 1, el inciso queda mal colocado y la frase se lee mal: "Se descartan los candidatos (por ruta y por ruta real) (también la ruta real del cwd de la llamada, feature 15) del `cwd` de la llamada…". Es literal respecto a design §7.1, pero se leería mejor detrás de "del `cwd` de la llamada". Además, dos líneas superan el ancho del resto de la sección.
-- **N2.** `killProcessTree` confía en el `SystemRoot` del entorno del panel (ver más arriba). Es correcto según R10/R11. Si algún día se quiere más, se puede exigir que la ruta termine en `\System32\taskkill.exe` bajo una raíz de unidad.
-- **N3.** `git revert` acepta `--strategy` pero en 2.43 lo ignora (fusión interna). Si no se quita de la lista (B1, punto 1), conviene anotarlo en design §3.2 como comprobado.
+- **N4.** Algunas líneas nuevas pasan de 120 columnas:
+  - En `panel/lib/claude-cli.js`, dos líneas de comentario: la de `cherry-pick --strategy` (124) y la de `view`/`info`/`show`/`v` (122).
+  - Varias en los tests.
+  - `docs/conventions.md` no fija un ancho y los ficheros ya tenían líneas así. Es solo estético.
+- **N5.** En `[F15-R6]`, la función `run` se define antes que `const repo`. Funciona porque solo se llama después, pero se leería mejor detrás de la declaración. Es estético.
+- **N2** (de la primera revisión) sigue igual. No se pidió cambiarla.
 
 ## Regresiones y desviaciones declaradas
 
-- No se ha modificado, saltado ni debilitado ningún test anterior. El diff de los tests solo quita dos líneas de import, que se sustituyen por la misma línea con más nombres.
-- Las tablas `[F14-R14]`/`[F14-R15]`, `[F4-R28]`/`[F14-R10]` y `[F14-R31]`/`[F14-R32]` pasan sin cambios (§6.3).
-- Desde `347bd6d` solo ha cambiado `docs/verification.md`, para registrar la T30 de F14 superada. No hay cambios de código.
+- Tests anteriores a la feature 15: en todo el diff de la feature, los únicos cambios en tests de antes siguen siendo las dos líneas de import ampliadas.
+- La Enmienda 1 solo toca tests de esta feature, y son exactamente los que lista design §6.3: `[F15-R1]`, `[F15-R2]`, `[F15-R5]` y `[F15-R7]` (`claude-cli.test.js`), `[F15-R6]` (`hardening.test.js`) y `[F15-R16]` (`deploy.test.js`). Están declarados en `docs/verification.md`.
+- La comprobación de 120 columnas en `[F15-R16]` y el reajuste del apartado 2 están declarados como desviación.
+- `[F14-R14]`/`[F14-R15]`, `[F14-R31]`/`[F14-R32]` y `[F4-R28]`/`[F14-R10]` pasan sin cambios.
+- `specs/endurecimiento-ejecucion/tasks.md` (T30 de F14 marcada) cambió en `e5b7e80`. Ya estaba anotado en la primera revisión y no forma parte de esta feature.
 
 ## Portabilidad Windows
 
-- `taskkill` va por ruta absoluta, pasa por la guardia y lleva `NoDefaultCurrentDirectoryInExePath=1`. Si la guardia lo rechaza, se usa `child.kill()` y se avisa en la consola.
-- `commandBase` ignora `.exe`, `.cmd`, `.bat`, `.com` y `.ps1`.
-- La ruta real del cwd se obtiene con `realpathSync.native` (uniones y `subst`).
+- Sin cambios respecto a la primera revisión: `taskkill` con guardia, `NoDefaultCurrentDirectoryInExePath=1`, extensiones de Windows en `commandBase` y `realpathSync.native`.
+- `[F15-R6]` se salta en Windows. La evidencia con git 2.52.0.windows.1 es el paso 4 de T16.
 - Pendiente: R13/T16 (manual).

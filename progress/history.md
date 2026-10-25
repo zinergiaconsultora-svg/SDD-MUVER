@@ -126,3 +126,20 @@
   pasan a la feature 15) y `progress/review_endurecimiento-ejecucion_2.md` (MA1, cubierta por la 15; **MA2 alta:
   el sondeo sin clic ejecuta `gpg.program` con `log.showSignature` y filtros `clean` de `.git/config`**; M3 vectores
   de configuración en Commit y push; M4 UX: los campos de comando de tests y comandos autorizados se confunden).
+
+## 2026-10-25 · Feature 15: comandos-amplios-git-npm (seguridad, segunda parte)
+- **Qué se hizo:** `git` y `npm` se clasifican por lista permitida de subcomandos: el resto (fetch/push/pull,
+  ls-remote, clone, grep, hook, merge, cherry-pick, revert, npm install/ci/exec/view…) no se sugiere y añadirlo exige
+  la confirmación con aviso; el nombre base ignora `.exe/.cmd/.bat/.com/.ps1`; los comandos ya guardados que pasan a
+  ser amplios se avisan. `killProcessTree` comprueba `taskkill` con `isTrustedPath` y le pasa
+  `NoDefaultCurrentDirectoryInExePath=1` en Windows. El resolvedor excluye también la ruta real del `cwd`.
+- **Ficheros cambiados:** `panel/lib/{claude-cli,exec-utils,runs,trusted-bin}.js`, tests y docs.
+- **Requisitos cubiertos:** R1–R18 (`specs/comandos-amplios-git-npm/requirements.md`); R13 manual.
+- **Tests añadidos:** 18 (488 en total); suite en verde en Linux.
+- **Notas / decisiones:** Primera revisión RECHAZADA (B1: `git cherry-pick --strategy` y `git merge -s` ejecutan
+  programas y estaban en la lista permitida; fallo de la spec). Enmienda 1 aprobada por el humano: salen `merge`,
+  `cherry-pick`, `revert` y `npm view/info/show/v` (`--git=<programa>`). Segunda revisión: APROBADO sin bloqueantes
+  (`progress/review_comandos-amplios-git-npm.md`). T16 (prueba manual en Windows: cancelar un run, avisos de
+  `git push/merge/cherry-pick` y `npm view`, evidencia con git 2.52) pendiente del humano y no bloqueante. Riesgos
+  aceptados que pasan a las features 16, 17 y 18; duda 5 (variables de entorno delante de una regla Bash) a comprobar
+  con el CLI real.
