@@ -1,9 +1,43 @@
 # Revisión — Feature 2: `puesto-de-mando-acceso-web`
 
-**Veredicto: RECHAZADO** por un único defecto bloqueante, pequeño y acotado (ver B1). El resto de la feature está
-en orden: `init.sh` en verde (167 tests), trazabilidad R1–R50 completa, diseño respetado, sin bypass del middleware,
-sin fugas de secretos. Corregido B1 (con su test), la revisión pasa a APROBADO. T30/T31 (manuales del humano en
-Windows/Internet) quedan pendientes y no son motivo de rechazo.
+**Veredicto final: APROBADO** (segunda pasada, commit `4b11c40`). T30/T31 (manuales del humano en Windows/Internet)
+quedan pendientes y no son motivo de rechazo.
+
+## Re-revisión (commit `4b11c40` — correcciones a la primera pasada)
+
+Revisados solo los cambios de `git diff HEAD~1` (8 ficheros, +71/−16):
+
+- **B1 cerrado.** `panel/lib/http-utils.js:44-46,78-79`: `readJsonBody` rechaza con `400 Cuerpo JSON inválido` todo lo
+  que no sea un objeto plano (`null`, `""`, `0`, `[]`, `false`, cadenas). Comprobado contra la app real con cuerpos
+  `null`, `""`, `0`, `[]`, `false`, `"str"`, `[1,2]` en login, setup, change-password (con cookie) y
+  `POST /api/projects`: **400 inmediato en todos, ningún cuelgue**; `{}` y cuerpo vacío siguen dando los 400 de
+  campo (`Falta la contraseña`, `field: newPassword`, `El nombre es obligatorio`). Test nuevo
+  `[F2-R10][F2-R3][F2-R29]` en `panel/test/auth-api.test.js:258-283` cubre las cuatro rutas (setup sobre app sin
+  configurar), `projects.json`/`auth.json` intactos, servidor vivo y que los 400 no cuentan como fallos.
+- **M1 aplicado.** `panel/lib/app.js:112-116,174-178`: `change-password` pasa por `limiter.check(ip)` → 429 con
+  `Retry-After` (helper `sendTooManyAttempts` compartido con login). Verificado: 5 fallos de change-password →
+  tanto change-password con la contraseña correcta como login responden 429; la sesión actual sigue viva.
+  `design.md` §5.9 actualizado; test ampliado en `[F2-R28]`.
+- **M2 aplicado.** `panel/deploy/install-service.ps1:76-80,103`: `New-PanelAction` acepta `-extraEnv` y la tarea del
+  túnel lleva `set CLOUDFLARED_BIN=<ruta resuelta>&& ` antes de `node`. La línea resultante
+  `cmd /c "set PORT=4310&& set CLOUDFLARED_BIN=C:\...\cloudflared.exe&& "node" scripts/run-tunnel.js >> "log" 2>&1"`
+  sigue siendo válida en `cmd` (rutas con espacios y `(x86)` fuera de bloques entre paréntesis no necesitan
+  comillas en `set`; más de dos comillas → `cmd` quita solo la primera y la última). `deploy.test.js` lo exige.
+- **M4 (parte documental):** `docs/acceso-web.md` §6 avisa de la ventana sin contraseña tras `reset-password` y
+  recomienda parar la tarea del túnel.
+- `docs/verification.md` actualizado (R10, R28). `bash init.sh`: **168 tests, 0 fallos**, sdd-lint 0/0.
+- Sin cambios fuera de lo pedido; ficheros "NO tocar" siguen intactos.
+
+Quedan como mejoras futuras no bloqueantes: M3 (cabecera `CF-Connecting-IP` desde la LAN), M4 (cerrojo en memoria
+para `setup` concurrente), M5 (`uninstall` no cierra `cloudflared.exe`), M6 (`PUT`/`PATCH` sin anti-CSRF).
+
+---
+
+## Primera pasada (commit `d90c824`) — RECHAZADA por B1 (ya corregido)
+
+Veredicto entonces: RECHAZADO por un único defecto bloqueante, pequeño y acotado (ver B1). El resto de la feature
+estaba en orden: `init.sh` en verde (167 tests), trazabilidad R1–R50 completa, diseño respetado, sin bypass del
+middleware, sin fugas de secretos.
 
 ## Checklist
 
@@ -121,15 +155,10 @@ métodos (responden 401/404), pero si la fase 4 las añade conviene que `MUTATIN
   anote fecha y resultado tras T30/T31.
 - No existe `progress/impl_puesto-de-mando-acceso-web.md`; el estado está en `progress/current.md`. Sin impacto.
 
-## Para el implementer
+## Para el leader (tras la re-revisión)
 
-1. Corregir **B1** en `panel/lib/app.js` (`readBody` y sus cuatro llamantes) y añadir el test `[F2-R10]` descrito.
-2. Opcional pero recomendado en la misma pasada (son líneas sueltas): **M1** (`limiter.check` en change-password)
-   y **M2** (`set CLOUDFLARED_BIN=…` en `install-service.ps1`), actualizando `design.md` §5.9/§10 si se hace.
-3. Ejecutar `bash init.sh` y devolver a revisión.
-
-## Para el leader
-
-- No marcar `done` hasta que B1 esté corregido y `init.sh` siga en verde.
-- T30/T31 siguen a cargo del humano; sus resultados van a `docs/verification.md` (R47–R50) y, si M2 se materializa
-  en su PC, la causa está descrita arriba.
+- B1, M1 y M2 corregidos y verificados (ver "Re-revisión" arriba). **Marcar la feature como `done`**, registrar la
+  entrada en `progress/history.md` y actualizar `progress/current.md`.
+- T30/T31 siguen a cargo del humano; sus resultados van a `docs/verification.md` (R47–R50). Si la tarea S4U no
+  arranca en su PC, ver la nota sobre S4U/cuentas Microsoft más arriba.
+- Mejoras pendientes para una tarea `sdd: false` o fase posterior: M3, M4 (cerrojo), M5, M6, rotación de `panel.log`.

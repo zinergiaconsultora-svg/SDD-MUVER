@@ -38,3 +38,25 @@
   línea de "Bloqueos / esperando"; mensaje específico si `projects.json` está corrupto;
   subdirectorio de un repo padre muestra el repo padre. Revisión completa en
   `progress/review_puesto-de-mando-base.md`.
+
+## 2026-10-25 · Feature 2: puesto-de-mando-acceso-web (Puesto de Mando MUVER, fase 2)
+- **Qué se hizo:** Acceso al panel desde Internet con contraseña única (scrypt),
+  sesiones firmadas por cookie (30 días, renovación deslizante), límite de intentos
+  (5 fallos → 15 min), anti-CSRF por cabecera, toda la API protegida; pantallas de
+  creación de contraseña y login integradas en la UI; URL pública visible en el
+  encabezado; cambio de contraseña y `npm run reset-password`. Lanzador del túnel de
+  Cloudflare (URL temporal trycloudflare) que guarda la URL en `panel/data/`; scripts
+  PowerShell para arrancar panel y túnel con Windows; guía `docs/acceso-web.md`.
+- **Ficheros cambiados:** `panel/lib/{config,auth,sessions,rate-limit,public-url,tunnel}.js`,
+  `panel/scripts/`, `panel/deploy/`, `panel/public/*`, `panel/lib/{app,http-utils}.js`,
+  `panel/server.js`, `panel/test/*`, `.gitignore` (`panel/data/`), `docs/acceso-web.md`,
+  `docs/architecture.md`, `docs/verification.md`.
+- **Requisitos cubiertos:** R1–R50 (`specs/puesto-de-mando-acceso-web/requirements.md`);
+  R47–R50 son manuales (Windows/Internet), pendientes de anotar por el humano.
+- **Tests añadidos:** 85 (168 en total). `bash init.sh` en verde.
+- **Notas / decisiones:** Reviewer rechazó una primera vez por B1 (cuerpos JSON no-objeto
+  dejaban la petición colgada); corregido junto con M1 (límite de intentos en cambio de
+  contraseña) y M2 (ruta explícita de cloudflared en la tarea programada). Mejoras
+  futuras anotadas: CF-Connecting-IP falsificable desde la LAN, cerrojo en setup
+  concurrente, uninstall no cierra cloudflared.exe, PUT/PATCH sin anti-CSRF, rotación de
+  panel.log. Informe: `progress/review_puesto-de-mando-acceso-web.md`.
