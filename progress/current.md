@@ -5,10 +5,10 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #13 `vista-compacta-y-resumen` — lista compacta, resumen de cada proyecto, worktrees agrupados y filtros
-- **Estado:** `spec_ready` (54 requisitos, 25 tareas) — **esperando aprobación humana (puerta 1)**
+- **Estado:** `pending` — spec_author actualizando la spec con los ajustes del humano (selector de modelo, sin recortes, resúmenes fuera de «Te necesitan», base F4+F14)
 - **Tarea actual:** Revisión humana de `specs/vista-compacta-y-resumen/`; antes de implementar, el implementer debe partir del código de la feature 14
 - **Siguiente paso:** Humano aprueba la spec → `in_progress` → implementer → tests → reviewer → done; después la feature 15 (endurecimiento 2).
-- **Bloqueos / esperando:** aprobación humana de la spec de la feature 13
+- **Bloqueos / esperando:** —
 
 ## Decisiones tomadas con el humano
 
