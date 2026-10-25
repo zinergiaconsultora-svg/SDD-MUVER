@@ -5,10 +5,10 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #4 `puesto-de-mando-trabajar` — trabajar con Claude Code desde el panel (fase 4)
-- **Estado:** `in_progress` — implementación terminada y corregida tras la prueba real T36 (prompt por stdin; presentación de ejecuciones); 399 tests en verde; **el humano está haciendo T36 en su PC**
-- **Tarea actual:** T36/T37 (verificación manual del humano en Windows, móvil e Internet); T1–T35 y T38 hechas
-- **Siguiente paso:** humano termina T36/T37 y aprueba tests (puerta 2) → reviewer → done → aprobar spec de la feature 13 (ya en `spec_ready`).
-- **Bloqueos / esperando:** aprobación humana de los tests (puerta 2) y verificación manual T36/T37
+- **Estado:** `in_progress` — **puerta 2 aprobada por el humano** tras la prueba T36 real en Windows (Claude Code 2.1.307): 411 tests (410 pasan y 1 se omite en Windows, el previsto), chat, sesiones, permisos, cancelar sin procesos huérfanos, ejecutar tests y ver cambios; reviewer revisando
+- **Tarea actual:** Revisión final de la fase 4 por el reviewer. T37 (prueba por Internet) pendiente del humano, no bloqueante.
+- **Siguiente paso:** reviewer → done → aprobar spec de la feature 13 (ya en `spec_ready`) → implementer.
+- **Bloqueos / esperando:** —
 
 ## Decisiones tomadas con el humano
 
