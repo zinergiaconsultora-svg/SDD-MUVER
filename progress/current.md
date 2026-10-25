@@ -22,6 +22,9 @@
   ejecutar solo los comandos de una lista autorizada por proyecto; protección extra con
   **Cloudflare Access + contraseña** para las acciones que ejecutan cosas (requiere dominio
   propio en Cloudflare; mientras no lo haya, repetir contraseña en acciones críticas).
+- Dominio propio: el humano lo comprará más adelante (uso personal). Hasta entonces, URL
+  temporal + contraseña + reconfirmación. Revisar antes de la fase 5 (Web Push necesita
+  una URL fija).
 - Pendiente del humano: T27 (fase 1), T30/T31 (fase 2) y T27 (fase 3) manuales en Windows/móvil; rutas
   reales y `appUrl` en `panel/projects.json`; aportar `muver.html` para `panel/legacy/`.
 
