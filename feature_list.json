@@ -44,6 +44,13 @@
       "sdd": true
     },
     {
+      "id": 19,
+      "slug": "git-config-sin-clic",
+      "description": "Endurecimiento de seguridad, tercera parte (segunda revisión de la feature 14, progress/review_endurecimiento-ejecucion_2.md): MA2 (alta) que el sondeo del listado, el detalle y Ver cambios no ejecuten programas definidos en .git/config del proyecto — -c log.showSignature=false en GIT_SAFE_PREFIX (gpg.program) y anular los filtros clean/process en las lecturas (p. ej. --attr-source a un árbol vacío con git ≥ 2.42, o anular los filter.<n>.clean/process de git config --get-regexp), o documentarlo si no se puede; M3 vectores de configuración en Commit y push (gpg.program con commit.gpgsign, core.askPass, remote.<n>.receivepack, core.sshCommand frente a GIT_SSH): anularlos con -c o avisar y documentarlos en docs/architecture.md; M4 (UX, observado en la T30) separar visualmente en Ajustes de ejecución los campos Comandos que Claude puede ejecutar y Comando de tests, con un texto de ayuda bajo cada uno.",
+      "status": "pending",
+      "sdd": true
+    },
+    {
       "id": 16,
       "slug": "git-output-escritura",
       "description": "Endurecimiento (duda 2 de la feature 15): `git log`/`git diff` y otros subcomandos permitidos aceptan `--output=<ruta>` y escriben texto elegido en cualquier fichero (p. ej. ~/.bashrc), lo que equivale a ejecución diferida; afecta a las reglas por defecto de Claude `Bash(git log *)`/`Bash(git diff *)`. Decidir y aplicar: sustituir esas reglas por herramientas propias de solo lectura, tratar `--output` como amplio o mantener el riesgo documentado.",

@@ -7,8 +7,8 @@
 - **Feature en curso:** #15 `comandos-amplios-git-npm` — comandos amplios de git y npm, `taskkill` con guardia final y ruta real del `cwd` (mejoras del reviewer de la feature 14)
 - **Estado:** `in_progress` — implementación terminada (488 tests en verde, `init.sh` OK); **esperando revisión humana de los tests (puerta 2)**
 - **Tarea actual:** puerta 2; T1–T15 y T17 hechas; T16 (manual en Windows: cancelar un run y añadir `git push`) pendiente del humano. La T30 de la feature 14 ya está superada.
-- **Siguiente paso:** implementer → humano revisa tests (puerta 2) → reviewer → done. Después: 16, 17, 18 (riesgos de la 15) y la 13.
-- **Bloqueos / esperando:** aprobación humana de los tests de la feature 15 (puerta 2); propuesta al humano de una feature nueva para MA2 de `progress/review_endurecimiento-ejecucion_2.md`.
+- **Siguiente paso:** humano aprueba tests → reviewer → done. Después: 19 (git-config-sin-clic, alta), 16, 17, 18 y la 13.
+- **Bloqueos / esperando:** aprobación humana de los tests de la feature 15 (puerta 2).
 
 ## Decisiones tomadas con el humano
 
