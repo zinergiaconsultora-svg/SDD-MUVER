@@ -5,10 +5,10 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #2 `puesto-de-mando-acceso-web` — acceso web seguro (fase 2)
-- **Estado:** `spec_ready` (50 requisitos, 34 tareas; lint 0/0) — **esperando aprobación humana (puerta 1)**
-- **Tarea actual:** Revisión humana de `specs/puesto-de-mando-acceso-web/`
-- **Siguiente paso:** Humano aprueba la spec (puerta 1) → `in_progress` → implementer.
-- **Bloqueos / esperando:** aprobación humana de la spec de la fase 2
+- **Estado:** `in_progress` (spec aprobada por el humano; implementer trabajando)
+- **Tarea actual:** Implementación TDD de `specs/puesto-de-mando-acceso-web/tasks.md` (T1→T34)
+- **Siguiente paso:** Implementer termina → humano revisa tests (puerta 2) → reviewer → done.
+- **Bloqueos / esperando:** —
 
 ## Decisiones tomadas con el humano
 
