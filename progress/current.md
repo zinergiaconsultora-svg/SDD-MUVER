@@ -5,9 +5,9 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #4 `puesto-de-mando-trabajar` — trabajar con Claude Code desde el panel (fase 4)
-- **Estado:** `in_progress` — implementación terminada (389 tests en verde, `init.sh` OK); **esperando revisión humana (puerta 2)**
+- **Estado:** `in_progress` — implementación terminada y corregida tras la prueba real T36 (prompt por stdin; presentación de ejecuciones); 399 tests en verde; **el humano está haciendo T36 en su PC**
 - **Tarea actual:** T36/T37 (verificación manual del humano en Windows, móvil e Internet); T1–T35 y T38 hechas
-- **Siguiente paso:** Implementer termina → humano revisa tests (puerta 2) → reviewer → done.
+- **Siguiente paso:** humano termina T36/T37 y aprueba tests (puerta 2) → reviewer → done → aprobar spec de la feature 13 (ya en `spec_ready`).
 - **Bloqueos / esperando:** aprobación humana de los tests (puerta 2) y verificación manual T36/T37
 
 ## Decisiones tomadas con el humano
@@ -29,6 +29,10 @@
 - Dominio propio: el humano lo comprará más adelante (uso personal). Hasta entonces, URL
   temporal + contraseña + reconfirmación. Revisar antes de la fase 5 (Web Push necesita
   una URL fija).
+- T36 en curso: prueba (a) superada con Claude Code 2.1.307 real (resumen completo, estado Terminada). Texto real de
+  denegación: "This Bash command contains multiple operations. The following part requires approval: …".
+- Pendiente de diseño: `panel/projects.json` está versionado pero el panel lo modifica en el PC del humano
+  (fijados, ocultos, proyectos añadidos) → moverlo a `panel/data/` (ignorado por git) para evitar conflictos.
 - Pendiente del humano: T27 (fase 1), T30/T31 (fase 2) y T27 (fase 3) manuales en Windows/móvil; rutas
   reales y `appUrl` en `panel/projects.json`; aportar `muver.html` para `panel/legacy/`.
 
