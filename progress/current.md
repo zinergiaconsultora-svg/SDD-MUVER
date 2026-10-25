@@ -5,8 +5,8 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #14 `endurecimiento-ejecucion` — seguridad de la ejecución (hallazgos del reviewer de la fase 4)
-- **Estado:** `pending` → spec_author redactando la spec
-- **Tarea actual:** Redacción de `specs/endurecimiento-ejecucion/`
+- **Estado:** `spec_ready` (33 requisitos, 31 tareas; lint 0/0) — **esperando aprobación humana (puerta 1)**
+- **Tarea actual:** Revisión humana de `specs/endurecimiento-ejecucion/`
 - **Siguiente paso:** Humano aprueba la spec → implementer → tests → reviewer → done; después la feature 13 (vista compacta, ya en `spec_ready`).
 - **Bloqueos / esperando:** —
 
