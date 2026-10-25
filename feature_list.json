@@ -30,6 +30,13 @@
       "sdd": true
     },
     {
+      "id": 13,
+      "slug": "vista-compacta-y-resumen",
+      "description": "Vista compacta y comprensible del listado (feedback del humano con 86 proyectos reales): fila compacta por proyecto con nombre, resumen de una frase de qué va el proyecto, semáforo, última actividad relativa y nº de tareas en curso, con el detalle completo al pulsar; resumen obtenido de README/package.json/CLAUDE.md o generado por Claude en solo lectura bajo demanda, guardado y editable en Ajustes; worktrees agrupados bajo su repositorio principal (git common dir) como tareas en curso; buscador, filtros (activos esta semana, fijados, con atención) y proyectos sin actividad en 30 días plegados en Antiguos; opción de vista tarjetas/lista recordada por dispositivo.",
+      "status": "pending",
+      "sdd": true
+    },
+    {
       "id": 6,
       "slug": "agentes-endurecidos",
       "description": "Endurecer los 4 agentes del arnés con las capacidades oficiales de los subagentes de Claude Code: reviewer y leader sin herramientas de edición (disallowedTools: Edit, Write), modelo y esfuerzo por agente (spec_author y reviewer el más capaz; implementer equilibrado), implementer con isolation: worktree, descripciones que guíen la delegación. Probar que el reviewer no puede editar.",
