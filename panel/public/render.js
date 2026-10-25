@@ -36,6 +36,21 @@ export function relativeDate(isoDate, now = Date.now()) {
   return years === 1 ? 'hace 1 año' : `hace ${years} años`;
 }
 
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+/** Tiempo relativo fino (F3-R50): "ahora mismo", "hace N min", "hace N h" y, desde 24 h, relativeDate. */
+export function relativeTime(isoDate, now = Date.now()) {
+  const time = Date.parse(isoDate);
+  if (Number.isNaN(time)) return 'fecha desconocida';
+  const diffMs = now - time;
+  if (diffMs < MINUTE_MS) return 'ahora mismo';
+  if (diffMs < HOUR_MS) return `hace ${Math.floor(diffMs / MINUTE_MS)} min`;
+  if (diffMs < DAY_MS) return `hace ${Math.floor(diffMs / HOUR_MS)} h`;
+  return relativeDate(isoDate, now);
+}
+
 function statusBadge(status) {
   const safe = STATUS_LABELS[status] ? status : 'ok';
   return `<span class="badge status-${safe}">${escapeHtml(STATUS_LABELS[safe])}</span>`;
@@ -95,19 +110,64 @@ function renderOpenApp(appUrl) {
   return '<a class="btn primary" aria-disabled="true" title="Sin URL de la app configurada">Abrir app</a>';
 }
 
-/** Tarjeta de un proyecto del listado (R28, R29). */
+// ---------- Fase 3: proyectos de Claude Code (F3-R41, F3-R42) ----------
+
+/** Un proyecto sin `source` (datos de la fase 1) se trata como manual. */
+function isManual(project) {
+  return (project.source ?? 'manual') === 'manual';
+}
+
+function isFromClaude(project) {
+  return project.source === 'claude' || project.source === 'both';
+}
+
+function renderSourceBadge(project) {
+  return isFromClaude(project) ? '<span class="badge source-claude">Claude Code</span>' : '';
+}
+
+/** Línea "Última sesión: … · N sesiones" o "Sin sesiones"; '' sin datos de Claude. */
+function renderClaudeActivity(claude, now) {
+  if (!claude) return '';
+  const count = Number(claude.sessionCount) || 0;
+  if (count === 0) return '<p class="claude-activity">Sin sesiones</p>';
+  return `<p class="claude-activity">Última sesión: ${escapeHtml(relativeTime(claude.lastActivityAt, now))} · ${count} ${count === 1 ? 'sesión' : 'sesiones'}</p>`;
+}
+
+function renderPinButton(project, id) {
+  const pinned = project.pinned === true;
+  const label = pinned ? 'Desfijar' : 'Fijar';
+  return `<button type="button" class="btn icon" data-action="pin" data-id="${id}" aria-pressed="${pinned}" aria-label="${label}" title="${label}">📌</button>`;
+}
+
+function renderHideButton(project, id) {
+  return `<button type="button" class="btn" data-action="hide" data-id="${id}">${project.hidden === true ? 'Mostrar' : 'Ocultar'}</button>`;
+}
+
+function cardClasses(project) {
+  const classes = ['card', `status-${escapeHtml(project.status)}`];
+  if (project.pinned === true) classes.push('pinned');
+  if (project.hidden === true) classes.push('is-hidden');
+  return classes.join(' ');
+}
+
+/** Tarjeta de un proyecto del listado (R28, R29; fase 3: F3-R41, F3-R42). */
 export function renderProjectCard(project, now = Date.now()) {
   const id = escapeHtml(project.id);
+  const activity = isFromClaude(project) ? renderClaudeActivity(project.claude, now) : '';
   const body = project.exists === false
-    ? '<p class="missing">Ruta no encontrada</p>'
-    : `${renderGitBlock(project.git, now)}${renderSddBlock(project.sdd, project.progress)}`;
+    ? `${activity}<p class="missing">Ruta no encontrada</p>`
+    : `${activity}${renderGitBlock(project.git, now)}${renderSddBlock(project.sdd, project.progress)}`;
   const repoLink = project.repoUrl
     ? `<a class="btn link" href="${escapeHtml(project.repoUrl)}" target="_blank" rel="noopener">Repositorio</a>`
     : '';
+  const deleteButton = isManual(project)
+    ? `<button type="button" class="btn danger" data-action="delete" data-id="${id}">Eliminar</button>`
+    : '';
 
-  return `<article class="card status-${escapeHtml(project.status)}" data-id="${id}">
+  return `<article class="${cardClasses(project)}" data-id="${id}">
     <header class="card-header">
       <h2>${escapeHtml(project.name)}</h2>
+      ${renderSourceBadge(project)}
       ${statusBadge(project.status)}
     </header>
     ${renderTags(project.tags)}
@@ -116,9 +176,108 @@ export function renderProjectCard(project, now = Date.now()) {
       ${renderOpenApp(project.appUrl)}
       <button type="button" class="btn" data-action="detail" data-id="${id}">Detalle</button>
       ${repoLink}
-      <button type="button" class="btn danger" data-action="delete" data-id="${id}">Eliminar</button>
+      ${renderPinButton(project, id)}
+      ${renderHideButton(project, id)}
+      ${deleteButton}
     </footer>
   </article>`;
+}
+
+/** Enlace "Mostrar ocultos (N)" / "Ocultar ocultos" (F3-R43); '' si no hay ocultos y no se están mostrando. */
+export function renderHiddenToggle(hiddenCount, showing) {
+  const count = Number(hiddenCount) || 0;
+  if (!showing && count <= 0) return '';
+  const text = showing ? 'Ocultar ocultos' : `Mostrar ocultos (${count})`;
+  return `<button type="button" class="btn link" data-action="toggle-hidden">${text}</button>`;
+}
+
+/** Aviso discreto cuando el servidor no encuentra Claude Code (F3-R44). */
+export function renderClaudeNotice(status) {
+  if (!status || status.available !== false) return '';
+  return '<p class="notice" role="status">Claude Code no detectado en este equipo: solo se muestran los proyectos añadidos a mano.</p>';
+}
+
+/** URL del listado (F3-R49). */
+export function buildProjectsUrl(showHidden) {
+  return showHidden === true ? '/api/projects?includeHidden=1' : '/api/projects';
+}
+
+/** Separa los ocultos conservando el orden (F3-R49). */
+export function splitHidden(projects, showHidden) {
+  const list = Array.isArray(projects) ? projects : [];
+  const hiddenCount = list.filter((p) => p && p.hidden === true).length;
+  const visible = showHidden === true ? list.slice() : list.filter((p) => !(p && p.hidden === true));
+  return { visible, hiddenCount };
+}
+
+function renderSession(session, now) {
+  const branch = session.gitBranch ? ` · <span class="branch">${escapeHtml(session.gitBranch)}</span>` : '';
+  const count = session.messageCount === null || session.messageCount === undefined
+    ? '—'
+    : `${Number(session.messageCount)} ${Number(session.messageCount) === 1 ? 'mensaje' : 'mensajes'}`;
+  return `<li><strong class="session-title">${escapeHtml(session.title)}</strong> <time datetime="${escapeHtml(session.lastActivityAt)}">${escapeHtml(relativeTime(session.lastActivityAt, now))}</time>${branch} · <span class="session-count">${count}</span></li>`;
+}
+
+function renderSessionList(sessions, now) {
+  const list = Array.isArray(sessions) ? sessions : [];
+  if (list.length === 0) return '<p class="muted">Sin sesiones</p>';
+  return `<ol class="sessions">${list.map((s) => renderSession(s, now)).join('')}</ol>`;
+}
+
+/** Formulario de ajustes del detalle (F3-R46). */
+export function renderSettingsForm(project) {
+  const p = project || {};
+  const id = escapeHtml(p.id);
+  const tags = Array.isArray(p.tags) ? p.tags.join(', ') : '';
+  return `<form id="settings-form" data-id="${id}" class="settings-form" novalidate>
+    <div class="field">
+      <label for="settings-name">Nombre</label>
+      <input id="settings-name" name="name" type="text" required autocomplete="off" value="${escapeHtml(p.name)}">
+    </div>
+    <div class="field">
+      <label for="settings-appUrl">URL de la app</label>
+      <input id="settings-appUrl" name="appUrl" type="url" autocomplete="off" placeholder="http://localhost:3000" value="${escapeHtml(p.appUrl)}">
+    </div>
+    <div class="field">
+      <label for="settings-repoUrl">URL del repositorio</label>
+      <input id="settings-repoUrl" name="repoUrl" type="url" autocomplete="off" placeholder="https://github.com/usuario/repo" value="${escapeHtml(p.repoUrl)}">
+    </div>
+    <div class="field">
+      <label for="settings-tags">Etiquetas separadas por comas</label>
+      <input id="settings-tags" name="tags" type="text" autocomplete="off" placeholder="web, crm" value="${escapeHtml(tags)}">
+    </div>
+    <div id="settings-error" class="form-error-slot"></div>
+    <div class="form-actions">
+      <button type="submit" class="btn primary" id="settings-submit">Guardar ajustes</button>
+    </div>
+  </form>`;
+}
+
+/** Cuerpo del PATCH de ajustes: siempre los cuatro campos, para que vaciar uno lo borre (F3-R47). */
+export function buildSettingsPayload(formValues) {
+  const v = formValues || {};
+  const clean = (value) => (typeof value === 'string' ? value.trim() : '');
+  return {
+    name: clean(v.name),
+    appUrl: clean(v.appUrl),
+    repoUrl: clean(v.repoUrl),
+    tags: clean(v.tags).split(',').map((t) => t.trim()).filter(Boolean),
+  };
+}
+
+/** PATCH /api/projects/:id (F3-R48). */
+export async function patchProject(id, changes, { request }) {
+  return request('/api/projects/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(changes) });
+}
+
+/** Fija o desfija un proyecto (F3-R48). */
+export function togglePin(project, deps) {
+  return patchProject(project.id, { pinned: !project.pinned }, deps);
+}
+
+/** Oculta o muestra un proyecto (F3-R48). */
+export function toggleHidden(project, deps) {
+  return patchProject(project.id, { hidden: !project.hidden }, deps);
 }
 
 function renderFeatureRow(feature) {
@@ -151,13 +310,27 @@ export function renderProjectDetail(detail, now = Date.now()) {
     ? `<ul class="dirty-files">${dirtyFiles.map((f) => `<li><code>${escapeHtml(f)}</code></li>`).join('')}</ul>`
     : '<p class="muted">Sin cambios sin commitear</p>';
 
+  const claudeSection = detail.claude
+    ? `<section class="detail-section">
+      <h3>Sesiones de Claude Code</h3>
+      ${renderSessionList(detail.claude.sessions, now)}
+    </section>`
+    : '';
+  const settingsSection = `<section class="detail-section settings">
+      <h3>Ajustes</h3>
+      ${renderSettingsForm(detail)}
+    </section>`;
+
   return `<section class="detail status-${escapeHtml(detail.status)}" data-id="${escapeHtml(detail.id)}">
     <header class="detail-header">
       <button type="button" class="btn" data-action="back">Volver</button>
       <h2>${escapeHtml(detail.name)}</h2>
+      ${renderSourceBadge(detail)}
       ${statusBadge(detail.status)}
     </header>
+    <p class="muted detail-id">id: ${escapeHtml(detail.id)}</p>
     ${detail.exists === false ? '<p class="missing">Ruta no encontrada</p>' : ''}
+    ${detail.unresolved === true ? '<p class="missing">Ruta no resuelta</p>' : ''}
     <section class="detail-section">
       <h3>Features</h3>
       ${featuresHtml}
@@ -174,6 +347,8 @@ export function renderProjectDetail(detail, now = Date.now()) {
       <h3>Cambios sin commitear</h3>
       ${dirtyHtml}
     </section>
+    ${claudeSection}
+    ${settingsSection}
   </section>`;
 }
 

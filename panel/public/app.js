@@ -1,5 +1,6 @@
 // Lógica del panel en el navegador: autenticación (setup/login/logout/cambio de contraseña), carga, refresco,
-// detalle, alta y baja. Usa render.js (puro), api-client.js y app-config.js.
+// detalle, alta y baja; fase 3: proyectos de Claude Code (fijar, ocultar, ajustes, aviso). Usa render.js (puro),
+// api-client.js y app-config.js.
 import { REFRESH_INTERVAL_MS, API_BASE } from './app-config.js';
 import { createApiClient } from './api-client.js';
 import {
@@ -17,6 +18,14 @@ import {
   buildChangePasswordPayload,
   handleLogout,
   renderPublicUrl,
+  renderHiddenToggle,
+  renderClaudeNotice,
+  buildSettingsPayload,
+  patchProject,
+  togglePin,
+  toggleHidden,
+  buildProjectsUrl,
+  splitHidden,
 } from './render.js';
 
 const projectsEl = document.getElementById('projects');
@@ -33,11 +42,15 @@ const submitButton = document.getElementById('add-project-submit');
 const refreshButton = document.getElementById('refresh-button');
 const logoutButton = document.getElementById('logout-button');
 const changePasswordButton = document.getElementById('change-password-button');
+const claudeNoticeEl = document.getElementById('claude-notice');
+const hiddenToggleEl = document.getElementById('hidden-toggle');
 
 let projects = [];
 let loading = false;
 let authenticated = false;
 let refreshTimer = null;
+let showHidden = false;
+let claudeStatus = null;
 
 const timeFormatter = new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -85,6 +98,7 @@ function showPanel() {
   listView.hidden = false;
   sessionActions.hidden = false;
   load();
+  loadClaudeStatus();
   if (!refreshTimer) {
     refreshTimer = setInterval(() => {
       // No pisamos la vista de detalle mientras el usuario la está leyendo; el listado se refresca igualmente.
@@ -215,11 +229,28 @@ function setLastUpdated(date) {
 
 function renderList() {
   const now = Date.now();
-  if (projects.length === 0) {
-    projectsEl.innerHTML = '<p class="muted">No hay proyectos registrados. Añade el primero con el formulario de abajo.</p>';
+  // Se piden siempre todos (incluidos los ocultos) y se filtran aquí: así el recuento de ocultos es exacto.
+  const { visible, hiddenCount } = splitHidden(projects, showHidden);
+  hiddenToggleEl.innerHTML = renderHiddenToggle(hiddenCount, showHidden);
+  if (visible.length === 0) {
+    projectsEl.innerHTML = projects.length === 0
+      ? '<p class="muted">No hay proyectos registrados. Abre un proyecto en Claude Code o añade el primero con el formulario de abajo.</p>'
+      : '<p class="muted">Todos los proyectos están ocultos.</p>';
     return;
   }
-  projectsEl.innerHTML = projects.map((p) => renderProjectCard(p, now)).join('');
+  projectsEl.innerHTML = visible.map((p) => renderProjectCard(p, now)).join('');
+}
+
+/** Pide una vez el estado de Claude Code y pinta el aviso discreto si no se detecta (F3-R44). */
+async function loadClaudeStatus() {
+  if (claudeStatus) return;
+  try {
+    claudeStatus = await request(`${API_BASE}/claude/status`);
+    claudeNoticeEl.innerHTML = renderClaudeNotice(claudeStatus);
+  } catch (err) {
+    if (err && err.status === 401) return;
+    console.error('No se pudo consultar el estado de Claude Code:', err);
+  }
 }
 
 async function load() {
@@ -228,7 +259,7 @@ async function load() {
   projectsEl.setAttribute('aria-busy', 'true');
   refreshButton.disabled = true;
   try {
-    const data = await request(`${API_BASE}/projects`);
+    const data = await request(buildProjectsUrl(true));
     if (!Array.isArray(data)) throw new Error('Respuesta inesperada');
     projects = data;
     renderList();
@@ -268,14 +299,66 @@ async function showDetail(id) {
   }
 }
 
+/** Fijar / ocultar desde la tarjeta (F3-R42, F3-R48). */
+async function runCardToggle(id, action, button) {
+  const project = projects.find((p) => p.id === id);
+  if (!project) return;
+  if (button) button.disabled = true;
+  try {
+    if (action === 'pin') await togglePin(project, { request });
+    else await toggleHidden(project, { request });
+    await load();
+  } catch (err) {
+    if (err && err.status === 401) return;
+    console.error('No se pudo guardar el ajuste:', err);
+    window.alert(err && err.status === 404 ? 'El proyecto ya no está en el panel.' : 'No se pudo guardar el cambio.');
+    load();
+  } finally {
+    if (button && button.isConnected) button.disabled = false;
+  }
+}
+
+function setSettingsMessage(html) {
+  const slot = detailView.querySelector('#settings-error');
+  if (slot) slot.innerHTML = html;
+}
+
+/** Guarda el formulario de ajustes del detalle con PATCH (F3-R46, F3-R47). */
+async function submitSettings(event) {
+  if (!event.target || event.target.id !== 'settings-form') return;
+  event.preventDefault();
+  const settingsForm = event.target;
+  const id = settingsForm.dataset.id;
+  const payload = buildSettingsPayload(Object.fromEntries(new FormData(settingsForm).entries()));
+  setSettingsMessage('');
+  const button = settingsForm.querySelector('button[type="submit"]');
+  if (button) button.disabled = true;
+  try {
+    await patchProject(id, payload, { request });
+    await showDetail(id);
+    setSettingsMessage('<p class="form-status" role="status">Ajustes guardados</p>');
+    load();
+  } catch (err) {
+    if (err && err.status === 401) return;
+    if (err && err.status >= 400 && err.status < 500) {
+      setSettingsMessage(renderFormError(err.payload));
+      const field = err.payload && err.payload.field ? settingsForm.elements[err.payload.field] : null;
+      if (field && typeof field.focus === 'function') field.focus();
+    } else {
+      console.error('No se pudieron guardar los ajustes:', err);
+      setSettingsMessage(renderFormError({ error: 'No se pudo contactar con el servidor del panel' }));
+    }
+  } finally {
+    if (button && button.isConnected) button.disabled = false;
+  }
+}
+
 async function deleteProject(id) {
   try {
     const done = await handleDelete(id, { confirm: (msg) => window.confirm(msg), request });
     if (!done) return;
     projects = projects.filter((p) => p.id !== id);
-    const card = projectsEl.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
-    if (card) card.remove();
-    if (projects.length === 0) renderList();
+    renderList();
   } catch (err) {
     if (err && err.status === 401) return;
     console.error('No se pudo eliminar:', err);
@@ -308,7 +391,7 @@ async function submitForm(event) {
     // Pedimos el estado real del proyecto recién creado para pintar su tarjeta sin recargar la página.
     let summary;
     try {
-      const all = await request(`${API_BASE}/projects`);
+      const all = await request(buildProjectsUrl(true));
       summary = Array.isArray(all) ? all.find((p) => p.id === created.id) : null;
       if (Array.isArray(all)) projects = all;
     } catch {
@@ -344,7 +427,15 @@ function onProjectsClick(event) {
   const { action, id } = target.dataset;
   if (action === 'detail') showDetail(id);
   else if (action === 'delete') deleteProject(id);
+  else if (action === 'pin' || action === 'hide') runCardToggle(id, action, target);
   else if (action === 'retry') load();
+}
+
+function onHiddenToggleClick(event) {
+  const target = event.target.closest('[data-action="toggle-hidden"]');
+  if (!target) return;
+  showHidden = !showHidden;
+  renderList();
 }
 
 function onDetailClick(event) {
@@ -359,6 +450,8 @@ function onAuthClick(event) {
 
 projectsEl.addEventListener('click', onProjectsClick);
 detailView.addEventListener('click', onDetailClick);
+detailView.addEventListener('submit', submitSettings);
+hiddenToggleEl.addEventListener('click', onHiddenToggleClick);
 authView.addEventListener('submit', submitAuth);
 authView.addEventListener('click', onAuthClick);
 changePasswordView.addEventListener('submit', submitChangePassword);

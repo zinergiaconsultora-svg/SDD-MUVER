@@ -33,9 +33,11 @@
         <h2 id="projects-title">Proyectos</h2>
         <button type="button" class="btn" id="refresh-button">Actualizar</button>
       </div>
+      <div id="claude-notice" class="claude-notice"></div>
       <div id="projects" class="projects" aria-live="polite" aria-busy="true">
         <p class="muted" id="loading-message">Cargando el estado de los proyectos…</p>
       </div>
+      <div id="hidden-toggle" class="hidden-toggle"></div>
 
       <section class="add-project" aria-labelledby="add-project-title">
         <h2 id="add-project-title">Añadir proyecto</h2>
@@ -72,7 +74,7 @@
   </main>
 
   <footer class="footer">
-    <p>Acceso protegido por contraseña. Se actualiza automáticamente cada minuto.</p>
+    <p>Acceso protegido por contraseña. Los proyectos abiertos en Claude Code aparecen solos; se actualiza cada minuto.</p>
   </footer>
 
   <script type="module" src="/app.js"></script>

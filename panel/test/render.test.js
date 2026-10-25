@@ -1,4 +1,5 @@
-// Tests de public/render.js, public/app-config.js y public/api-client.js — R28–R35, F2-R37–R39, F2-R41, F2-R42
+// Tests de public/render.js, public/app-config.js y public/api-client.js — R28–R35, F2-R37–R39, F2-R41, F2-R42,
+// F3-R41–R50
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -20,6 +21,16 @@ import {
   buildChangePasswordPayload,
   handleLogout,
   renderPublicUrl,
+  renderHiddenToggle,
+  renderClaudeNotice,
+  renderSettingsForm,
+  buildSettingsPayload,
+  patchProject,
+  togglePin,
+  toggleHidden,
+  buildProjectsUrl,
+  splitHidden,
+  relativeTime,
 } from '../public/render.js';
 import { REFRESH_INTERVAL_MS, API_BASE, MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } from '../public/app-config.js';
 import { createApiClient } from '../public/api-client.js';
@@ -374,4 +385,176 @@ test('[F2-R39] 204 → null; 4xx → error con payload; cuerpo no JSON → paylo
 
   const broken = createApiClient({ fetch: fakeFetch({ status: 502, body: '<html>bad gateway</html>' }).fetch });
   await assert.rejects(broken('/api/projects'), (err) => err.status === 502 && typeof err.payload.error === 'string');
+});
+
+// ---------- Fase 3: proyectos de Claude Code en la interfaz (F3-R41–R50) ----------
+
+const HOUR = 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+
+const CLAUDE_BOTH = {
+  ...FULL_PROJECT,
+  id: 'app-flyder',
+  name: 'app-flyder',
+  source: 'both',
+  claude: { sessionCount: 3, lastActivityAt: new Date(NOW - DAY).toISOString(), lastPrompt: 'implementa' },
+  hidden: false,
+  pinned: false,
+  lastActivityAt: new Date(NOW - DAY).toISOString(),
+  unresolved: false,
+};
+
+test('[F3-R41] renderProjectCard: badge "Claude Code" y línea de última sesión en both/claude; nada en manual', () => {
+  const both = renderProjectCard(CLAUDE_BOTH, NOW);
+  assert.ok(both.includes('<span class="badge source-claude">Claude Code</span>'));
+  assert.ok(both.includes('<p class="claude-activity">Última sesión: ayer · 3 sesiones</p>'), both);
+
+  const claude = renderProjectCard({ ...CLAUDE_BOTH, source: 'claude', claude: { sessionCount: 0, lastActivityAt: null, lastPrompt: null } }, NOW);
+  assert.ok(claude.includes('<span class="badge source-claude">Claude Code</span>'));
+  assert.ok(claude.includes('<p class="claude-activity">Sin sesiones</p>'));
+
+  const one = renderProjectCard({ ...CLAUDE_BOTH, claude: { sessionCount: 1, lastActivityAt: new Date(NOW - 5 * MINUTE).toISOString(), lastPrompt: null } }, NOW);
+  assert.ok(one.includes('Última sesión: hace 5 min · 1 sesión<'));
+
+  const manual = renderProjectCard({ ...CLAUDE_BOTH, source: 'manual', claude: null }, NOW);
+  assert.ok(!manual.includes('source-claude'));
+  assert.ok(!manual.includes('claude-activity'));
+});
+
+test('[F3-R42] renderProjectCard: fijar/ocultar, clases pinned/is-hidden, "Eliminar" solo en manual y escapado', () => {
+  const pinned = renderProjectCard({ ...CLAUDE_BOTH, source: 'claude', pinned: true, name: '<b>x</b>' }, NOW);
+  assert.match(pinned, /<article class="card status-atencion pinned"/);
+  assert.match(pinned, /<button type="button" class="btn icon" data-action="pin" data-id="app-flyder" aria-pressed="true" aria-label="Desfijar"[^>]*>📌<\/button>/);
+  assert.match(pinned, /<button type="button" class="btn" data-action="hide" data-id="app-flyder">Ocultar<\/button>/);
+  assert.ok(!pinned.includes('data-action="delete"'), 'sin Eliminar en proyectos de Claude');
+  assert.ok(!pinned.includes('is-hidden'));
+  assert.ok(pinned.includes('&lt;b&gt;x&lt;/b&gt;') && !pinned.includes('<b>x</b>'));
+
+  const hidden = renderProjectCard({ ...CLAUDE_BOTH, source: 'manual', claude: null, hidden: true }, NOW);
+  assert.match(hidden, /<article class="card status-atencion is-hidden"/);
+  assert.match(hidden, /data-action="pin"[^>]*aria-pressed="false" aria-label="Fijar"/);
+  assert.match(hidden, /data-action="hide"[^>]*>Mostrar<\/button>/);
+  assert.ok(hidden.includes('data-action="delete"'), 'Eliminar en manual');
+
+  const both = renderProjectCard(CLAUDE_BOTH, NOW);
+  assert.ok(!both.includes('data-action="delete"'), 'sin Eliminar en both');
+});
+
+test('[F3-R43] renderHiddenToggle: (2,false), (2,true) y (0,false)', () => {
+  assert.equal(renderHiddenToggle(2, false), '<button type="button" class="btn link" data-action="toggle-hidden">Mostrar ocultos (2)</button>');
+  assert.equal(renderHiddenToggle(2, true), '<button type="button" class="btn link" data-action="toggle-hidden">Ocultar ocultos</button>');
+  assert.equal(renderHiddenToggle(0, true), '<button type="button" class="btn link" data-action="toggle-hidden">Ocultar ocultos</button>');
+  assert.equal(renderHiddenToggle(0, false), '');
+});
+
+test('[F3-R44] renderClaudeNotice: aviso discreto solo si Claude no está disponible', () => {
+  assert.equal(renderClaudeNotice({ available: false }), '<p class="notice" role="status">Claude Code no detectado en este equipo: solo se muestran los proyectos añadidos a mano.</p>');
+  assert.equal(renderClaudeNotice({ available: true }), '');
+  assert.equal(renderClaudeNotice(null), '');
+});
+
+const CLAUDE_DETAIL = {
+  ...DETAIL,
+  id: 'app-2',
+  source: 'claude',
+  hidden: false,
+  pinned: false,
+  unresolved: false,
+  claude: {
+    sessionCount: 2,
+    lastActivityAt: new Date(NOW - 3 * HOUR).toISOString(),
+    lastPrompt: null,
+    sessions: [
+      { id: 's1', title: 'Implementar <login>', startedAt: new Date(NOW - 4 * HOUR).toISOString(), lastActivityAt: new Date(NOW - 3 * HOUR).toISOString(), messageCount: 14, gitBranch: 'main', truncated: false },
+      { id: 's2', title: 'Sesión enorme', startedAt: new Date(NOW - 2 * DAY).toISOString(), lastActivityAt: new Date(NOW - 2 * DAY).toISOString(), messageCount: null, gitBranch: null, truncated: true },
+    ],
+  },
+};
+
+test('[F3-R45] renderProjectDetail: sesiones de Claude Code, sin sesiones, claude null y ruta no resuelta', () => {
+  const html = renderProjectDetail(CLAUDE_DETAIL, NOW);
+  assert.ok(html.includes('<h3>Sesiones de Claude Code</h3>'));
+  assert.ok(html.includes('<ol class="sessions">'));
+  assert.ok(html.includes('Implementar &lt;login&gt;'), 'título escapado');
+  assert.ok(html.includes(`<time datetime="${CLAUDE_DETAIL.claude.sessions[0].lastActivityAt}">hace 3 h</time>`));
+  assert.ok(html.includes('<span class="branch">main</span>'));
+  assert.ok(html.includes('14 mensajes'));
+  assert.ok(html.includes('<span class="session-count">—</span>'), 'messageCount null → —');
+  assert.equal((html.match(/<li>/g) || []).length >= 2, true);
+  const second = html.slice(html.indexOf('Sesión enorme'));
+  assert.ok(!second.slice(0, second.indexOf('</li>')).includes('class="branch"'), 'sin rama en la segunda');
+  assert.ok(html.indexOf('Cambios sin commitear') < html.indexOf('Sesiones de Claude Code'), 'tras "Cambios sin commitear"');
+  assert.ok(html.includes('id: app-2'), 'el id se muestra bajo el título');
+
+  const empty = renderProjectDetail({ ...CLAUDE_DETAIL, claude: { ...CLAUDE_DETAIL.claude, sessionCount: 0, sessions: [] } }, NOW);
+  assert.ok(empty.includes('Sesiones de Claude Code'));
+  assert.ok(empty.includes('<p class="muted">Sin sesiones</p>'));
+  assert.ok(!empty.includes('<ol class="sessions">'));
+
+  const manual = renderProjectDetail({ ...CLAUDE_DETAIL, source: 'manual', claude: null }, NOW);
+  assert.ok(!manual.includes('Sesiones de Claude Code'));
+  assert.ok(manual.includes('id="settings-form"'), 'los ajustes también en manuales');
+
+  const unresolved = renderProjectDetail({ ...CLAUDE_DETAIL, exists: false, unresolved: true }, NOW);
+  assert.ok(unresolved.includes('<p class="missing">Ruta no resuelta</p>'));
+  assert.ok(!html.includes('Ruta no resuelta'));
+});
+
+test('[F3-R46] renderSettingsForm: campos rellenos y escapados, hueco de error y botón "Guardar ajustes"', () => {
+  const html = renderSettingsForm({ id: 'app-2', name: 'A <b>', appUrl: 'http://localhost:5173', repoUrl: '', tags: ['web', 'crm'] });
+  assert.ok(html.startsWith('<form id="settings-form" data-id="app-2"'));
+  for (const name of ['name', 'appUrl', 'repoUrl', 'tags']) assert.ok(html.includes(`name="${name}"`), name);
+  assert.ok(html.includes('value="A &lt;b&gt;"'));
+  assert.ok(html.includes('value="http://localhost:5173"'));
+  assert.ok(html.includes('value="web, crm"'));
+  assert.ok(html.includes('<div id="settings-error" class="form-error-slot"></div>'));
+  assert.match(html, /<button type="submit"[^>]*>Guardar ajustes<\/button>/);
+  assert.ok(renderSettingsForm(CLAUDE_DETAIL).includes('data-id="app-2"'));
+});
+
+test('[F3-R47] buildSettingsPayload devuelve siempre los cuatro campos recortados', () => {
+  assert.deepEqual(buildSettingsPayload({ name: ' A ', appUrl: '', repoUrl: ' x ', tags: 'web, , crm ' }), { name: 'A', appUrl: '', repoUrl: 'x', tags: ['web', 'crm'] });
+  assert.deepEqual(buildSettingsPayload({ name: 'B' }), { name: 'B', appUrl: '', repoUrl: '', tags: [] });
+});
+
+test('[F3-R48] patchProject / togglePin / toggleHidden llaman a PATCH con el cuerpo esperado', async () => {
+  const calls = [];
+  const request = async (url, init) => {
+    calls.push({ url, method: init.method, body: JSON.parse(init.body) });
+    return { ok: true };
+  };
+  const result = await patchProject('mi proyecto', { name: 'X' }, { request });
+  assert.deepEqual(result, { ok: true });
+  await togglePin({ id: 'mi proyecto', pinned: false }, { request });
+  await toggleHidden({ id: 'mi proyecto', hidden: true }, { request });
+  const url = '/api/projects/' + encodeURIComponent('mi proyecto');
+  assert.deepEqual(calls, [
+    { url, method: 'PATCH', body: { name: 'X' } },
+    { url, method: 'PATCH', body: { pinned: true } },
+    { url, method: 'PATCH', body: { hidden: false } },
+  ]);
+  assert.ok(url.includes('mi%20proyecto'));
+});
+
+test('[F3-R49] buildProjectsUrl y splitHidden', () => {
+  assert.equal(buildProjectsUrl(true), '/api/projects?includeHidden=1');
+  assert.equal(buildProjectsUrl(false), '/api/projects');
+  assert.equal(buildProjectsUrl(undefined), '/api/projects');
+  const list = [{ id: 'a', hidden: false }, { id: 'b', hidden: true }, { id: 'c' }];
+  const hiddenMode = splitHidden(list, false);
+  assert.deepEqual(hiddenMode.visible.map((p) => p.id), ['a', 'c']);
+  assert.equal(hiddenMode.hiddenCount, 1);
+  const showing = splitHidden(list, true);
+  assert.deepEqual(showing.visible.map((p) => p.id), ['a', 'b', 'c']);
+  assert.equal(showing.hiddenCount, 1);
+});
+
+test('[F3-R50] relativeTime: ahora mismo, minutos, horas, días y fecha inválida', () => {
+  assert.equal(relativeTime(new Date(NOW - 30 * 1000).toISOString(), NOW), 'ahora mismo');
+  assert.equal(relativeTime(new Date(NOW - 5 * MINUTE).toISOString(), NOW), 'hace 5 min');
+  assert.equal(relativeTime(new Date(NOW - 3 * HOUR).toISOString(), NOW), 'hace 3 h');
+  const twoDays = new Date(NOW - 2 * DAY).toISOString();
+  assert.equal(relativeTime(twoDays, NOW), relativeDate(twoDays, NOW));
+  assert.equal(relativeTime(twoDays, NOW), 'hace 2 días');
+  assert.equal(relativeTime('basura', NOW), 'fecha desconocida');
 });

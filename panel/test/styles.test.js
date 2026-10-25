@@ -1,4 +1,4 @@
-// Tests estáticos sobre public/index.html y public/styles.css — R26, R36, R37, F2-R37, F2-R40, F2-R42, F2-R43
+// Tests estáticos sobre public/index.html y public/styles.css — R26, R36, R37, F2-R37, F2-R40, F2-R42, F2-R43, F3-R51
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -134,4 +134,37 @@ test('[F2-R43] .auth-card ocupa el ancho completo con inputs al 100 %, max-width
 test('[F2-R37][F2-R41] #session-actions arranca hidden y la CSS respeta hidden pese a display: flex', () => {
   assert.match(indexHtml, /<nav[^>]*id="session-actions"[^>]*\shidden[\s>]/, 'el contenedor de acciones del encabezado lleva hidden por defecto');
   assert.match(css, /\.topbar-actions\[hidden\]\s*\{[^}]*display:\s*none/s, 'sin esta regla, .topbar-actions { display: flex } anula el atributo hidden');
+});
+
+// ---------- Fase 3: huecos y estilos de Claude Code (F3-R51) ----------
+
+test('[F3-R51] index.html: #claude-notice antes de #projects y #hidden-toggle después, dentro de #list-view', () => {
+  const listStart = indexHtml.indexOf('id="list-view"');
+  const listEnd = indexHtml.indexOf('id="detail"');
+  const notice = indexHtml.indexOf('id="claude-notice"');
+  const projects = indexHtml.indexOf('id="projects"');
+  const toggle = indexHtml.indexOf('id="hidden-toggle"');
+  const addForm = indexHtml.indexOf('id="add-project-form"');
+  for (const [name, idx] of [['claude-notice', notice], ['hidden-toggle', toggle]]) {
+    assert.ok(idx > listStart && idx < listEnd, `#${name} dentro de #list-view`);
+  }
+  assert.ok(notice < projects, '#claude-notice antes de #projects');
+  assert.ok(toggle > projects, '#hidden-toggle después de #projects');
+  assert.ok(toggle < addForm, '#hidden-toggle antes del formulario de alta');
+  for (const name of ['name', 'path', 'appUrl', 'repoUrl', 'tags']) {
+    assert.ok(indexHtml.slice(addForm).includes(`name="${name}"`), `campo ${name} del alta`);
+  }
+  assert.ok(indexHtml.includes('Los proyectos abiertos en Claude Code aparecen solos'), 'pie actualizado');
+});
+
+test('[F3-R51] styles.css define .badge.source-claude, .card.pinned, .card.is-hidden, .sessions y .notice', () => {
+  for (const selector of ['.badge.source-claude', '.card.pinned', '.card.is-hidden', '.sessions', '.notice']) {
+    const escaped = selector.replace(/\./g, '\\.');
+    assert.match(css, new RegExp(`${escaped}[^{]*\\{[^}]*:`, 's'), `falta ${selector}`);
+  }
+  assert.match(css, /\.card\.is-hidden\s*\{[^}]*opacity:/s);
+  assert.match(css, /\.btn\.icon\s*\{[^}]*min-width:\s*44px/s, 'botón de icono con 44 px');
+  const base = baseCss(css);
+  assert.match(base, /:root\s*\{[^}]*--claude:/s, '--claude en tema claro');
+  assert.match(mediaBlock(css, '@media (prefers-color-scheme: dark)'), /--claude:/, '--claude en tema oscuro');
 });

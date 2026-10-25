@@ -80,17 +80,20 @@ export async function writeRegistry(file, projects) {
 /**
  * Arranca la app en puerto 0. Si no recibe `dataDir` crea uno temporal; si recibe `password`
  * escribe `auth.json` con esa contraseña antes de arrancar. Acepta `now`, `trustProxy`, `secureCookies`.
- * Devuelve { server, baseUrl, dataDir, close, login(password?) → cabecera Cookie }.
+ * Fase 3: `claudeHome` (por defecto un directorio temporal VACÍO, para que ningún test vea el ~/.claude real
+ * de la máquina → Claude no disponible) y `claudeCacheTtlMs` (por defecto 0: cada GET refleja los fixtures).
+ * Devuelve { server, baseUrl, dataDir, claudeHome, close, login(password?) → cabecera Cookie }.
  */
 export async function startApp(options = {}) {
   const { createApp } = await import('../lib/app.js');
-  const { password, dataDir: givenDataDir, ...rest } = options;
+  const { password, dataDir: givenDataDir, claudeHome: givenClaudeHome, claudeCacheTtlMs = 0, ...rest } = options;
   const dataDir = givenDataDir || (await makeTempDir('muver-data-'));
+  const claudeHome = givenClaudeHome || (await makeTempDir('muver-claude-vacio-'));
   if (password !== undefined) {
     const { createAuthRecord, saveAuth } = await import('../lib/auth.js');
     await saveAuth(path.join(dataDir, 'auth.json'), await createAuthRecord(password));
   }
-  const server = createApp({ publicDir: PUBLIC_DIR, dataDir, ...rest });
+  const server = createApp({ publicDir: PUBLIC_DIR, dataDir, claudeHome, claudeCacheTtlMs, ...rest });
   await new Promise((resolve) => server.listen(0, '0.0.0.0', resolve));
   const { port } = server.address();
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -98,7 +101,11 @@ export async function startApp(options = {}) {
     server,
     baseUrl,
     dataDir,
-    close: () => new Promise((resolve) => server.close(resolve)),
+    claudeHome,
+    close: async () => {
+      await new Promise((resolve) => server.close(resolve));
+      if (!givenClaudeHome) await fs.rm(claudeHome, { recursive: true, force: true });
+    },
     async login(pwd = password, init = {}) {
       const r = await request(baseUrl, '/api/auth/login', { method: 'POST', body: JSON.stringify({ password: pwd }), ...init });
       if (r.status !== 200 || !r.setCookie) throw new Error(`login falló: ${r.status} ${r.text}`);
@@ -114,13 +121,14 @@ export function cookieHeaderFromSetCookie(setCookie) {
 
 /**
  * Wrapper sobre fetch que devuelve status, headers, cuerpo (texto y JSON) y `setCookie`.
- * Añade `X-Requested-With: fetch` a POST/DELETE salvo `init.csrf === false`; `init.cookie` → cabecera Cookie.
+ * Añade `X-Requested-With: fetch` a toda mutación (método distinto de GET/HEAD: POST, DELETE, PATCH, PUT…; fase 3)
+ * salvo `init.csrf === false`; `init.cookie` → cabecera Cookie.
  */
 export async function request(baseUrl, urlPath, init = {}) {
   const { csrf, cookie, headers: givenHeaders, ...rest } = init;
   const headers = { ...(givenHeaders || {}) };
   const method = String(rest.method || 'GET').toUpperCase();
-  if ((method === 'POST' || method === 'DELETE') && csrf !== false) headers['X-Requested-With'] = 'fetch';
+  if (method !== 'GET' && method !== 'HEAD' && csrf !== false) headers['X-Requested-With'] = 'fetch';
   if (cookie) headers.Cookie = cookie;
   const res = await fetch(baseUrl + urlPath, { ...rest, headers, redirect: 'manual' });
   const text = await res.text();

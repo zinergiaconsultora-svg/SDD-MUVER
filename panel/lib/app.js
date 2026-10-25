@@ -1,10 +1,13 @@
 // Servidor HTTP del panel: autenticación por contraseña, sesiones firmadas, defensa CSRF, API JSON y estáticos.
+// Fase 3: catálogo fusionado con los proyectos de Claude Code (solo lectura de ~/.claude), ajustes por PATCH.
 // Sin listen (lo hace server.js o los tests).
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 
-import { loadRegistry, saveRegistry, validateNewProject, removeProject } from './registry.js';
-import { buildSummary, buildDetail } from './project-state.js';
+import { loadRegistry, saveRegistry, validateNewProject, removeProject, validatePatch, upsertSettings } from './registry.js';
+import { createClaudeDiscovery, DEFAULT_TTL_MS } from './claude-discovery.js';
+import { buildCatalog, findMerged, buildCatalogDetail, buildCatalogSummary } from './project-catalog.js';
 import {
   sendJson,
   sendEmpty,
@@ -24,7 +27,11 @@ import { readPublicUrl } from './public-url.js';
 const API_PREFIX = '/api/';
 const AUTH_PREFIX = '/api/auth/';
 const PROJECT_ROUTE = /^\/api\/projects\/([^/]+)$/;
-const MUTATING_METHODS = new Set(['POST', 'DELETE']);
+
+/** Mutación = cualquier método distinto de GET y HEAD (fase 3, D10): exige la cabecera anti-CSRF. */
+export function isMutation(req) {
+  return req.method !== 'GET' && req.method !== 'HEAD';
+}
 
 const ERRORS = Object.freeze({
   csrf: 'Cabecera X-Requested-With requerida',
@@ -37,14 +44,27 @@ const ERRORS = Object.freeze({
   wrongCurrentPassword: 'La contraseña actual no es correcta',
   tooManyAttempts: 'Demasiados intentos. Espera 15 minutos.',
   notFound: 'Ruta no encontrada',
+  projectNotFound: 'Proyecto no encontrado',
+  detectedByClaude: 'Este proyecto lo detecta Claude Code: no se puede eliminar, ocúltalo',
+  unresolvedSettings: 'No se puede guardar ajustes de un proyecto sin ruta resuelta',
 });
 
 /**
  * Crea la app HTTP.
  * @param {{ projectsFile: string, publicDir: string, dataDir: string, now?: () => number, runner?: Function,
- *           trustProxy?: boolean, secureCookies?: boolean }} options
+ *           trustProxy?: boolean, secureCookies?: boolean, claudeHome?: string, claudeCacheTtlMs?: number }} options
  */
-export function createApp({ projectsFile, publicDir, dataDir, now = () => Date.now(), runner, trustProxy = true, secureCookies = false } = {}) {
+export function createApp({
+  projectsFile,
+  publicDir,
+  dataDir,
+  now = () => Date.now(),
+  runner,
+  trustProxy = true,
+  secureCookies = false,
+  claudeHome = os.homedir(),
+  claudeCacheTtlMs = DEFAULT_TTL_MS,
+} = {}) {
   if (!projectsFile) throw new Error('createApp: falta projectsFile');
   if (!publicDir) throw new Error('createApp: falta publicDir');
   if (!dataDir) throw new Error('createApp: falta dataDir');
@@ -54,12 +74,13 @@ export function createApp({ projectsFile, publicDir, dataDir, now = () => Date.n
   const publicUrlFile = path.join(dataDir, 'public-url.txt');
   const cookieOptions = { trustProxy, secureCookies };
   const limiter = createRateLimiter({ now });
+  const discovery = createClaudeDiscovery({ claudeHome, now, ttlMs: claudeCacheTtlMs });
 
   let authState = null; // { state: 'missing' | 'ok' | 'corrupt', record? }
   let authLoading = null;
   let sessions = null;
 
-  const stateOptions = () => (runner ? { now, runner } : { now });
+  const catalogOptions = () => (runner ? { now, runner } : { now });
 
   // ---------- Estado de autenticación ----------
 
@@ -203,19 +224,24 @@ export function createApp({ projectsFile, publicDir, dataDir, now = () => Date.n
     return sendJson(res, 404, { error: ERRORS.notFound });
   }
 
-  // ---------- Rutas de proyectos (fase 1, sin cambios) ----------
+  // ---------- Rutas de proyectos (fase 1 + catálogo de la fase 3) ----------
 
-  async function listProjects(res) {
+  /** Registro (capa de ajustes) y último escaneo de Claude Code (con caché y TTL). */
+  async function loadSources() {
     const registry = await loadRegistry(projectsFile);
-    const summaries = await Promise.all(registry.projects.map((p) => buildSummary(p, stateOptions())));
-    sendJson(res, 200, summaries);
+    const scan = await discovery.scan();
+    return { registry, discovery: scan };
+  }
+
+  async function listProjects(res, { includeHidden }) {
+    const sources = await loadSources();
+    sendJson(res, 200, await buildCatalog({ ...sources, includeHidden, ...catalogOptions() }));
   }
 
   async function getProject(res, id) {
-    const registry = await loadRegistry(projectsFile);
-    const project = registry.projects.find((p) => p.id === id);
-    if (!project) return sendJson(res, 404, { error: 'Proyecto no encontrado' });
-    sendJson(res, 200, await buildDetail(project, stateOptions()));
+    const merged = findMerged(await loadSources(), id);
+    if (!merged) return sendJson(res, 404, { error: ERRORS.projectNotFound });
+    sendJson(res, 200, await buildCatalogDetail(merged, catalogOptions()));
   }
 
   async function createProject(req, res) {
@@ -229,18 +255,55 @@ export function createApp({ projectsFile, publicDir, dataDir, now = () => Date.n
     sendJson(res, 201, result.project);
   }
 
+  async function patchProject(req, res, id) {
+    const body = await readBody(req, res);
+    if (!body) return undefined;
+    const sources = await loadSources();
+    const merged = findMerged(sources, id);
+    if (!merged) return sendJson(res, 404, { error: ERRORS.projectNotFound });
+    const valid = validatePatch(body);
+    if (!valid.ok) return sendJson(res, valid.status, valid.field ? { error: valid.error, field: valid.field } : { error: valid.error });
+    if (merged.unresolved || !merged.path) return sendJson(res, 400, { error: ERRORS.unresolvedSettings });
+    const entry = merged.settingsEntry ?? {
+      id: merged.id,
+      name: merged.name,
+      path: merged.path,
+      appUrl: '',
+      repoUrl: '',
+      tags: [],
+      hidden: false,
+      pinned: false,
+    };
+    const next = { ...entry, ...valid.changes };
+    const registry = upsertSettings(sources.registry, next);
+    await saveRegistry(projectsFile, registry);
+    // Se recalcula la fusión con el registro nuevo (el proyecto pasa a "both" si era solo de Claude).
+    const updated = findMerged({ registry, discovery: sources.discovery }, id);
+    sendJson(res, 200, await buildCatalogSummary(updated, catalogOptions()));
+  }
+
   async function deleteProject(res, id) {
-    const registry = await loadRegistry(projectsFile);
-    const { removed, registry: next } = removeProject(registry, id);
-    if (!removed) return sendJson(res, 404, { error: 'Proyecto no encontrado' });
+    const sources = await loadSources();
+    const merged = findMerged(sources, id);
+    if (!merged) return sendJson(res, 404, { error: ERRORS.projectNotFound });
+    if (merged.source !== 'manual') return sendJson(res, 409, { error: ERRORS.detectedByClaude });
+    const { removed, registry: next } = removeProject(sources.registry, id);
+    if (!removed) return sendJson(res, 404, { error: ERRORS.projectNotFound });
     await saveRegistry(projectsFile, next);
     sendEmpty(res, 204);
   }
 
-  async function routeApi(req, res, pathname) {
+  async function claudeStatus(res) {
+    await discovery.scan();
+    sendJson(res, 200, discovery.status());
+  }
+
+  async function routeApi(req, res, url) {
+    const pathname = url.pathname;
     const method = req.method;
+    if (pathname === '/api/claude/status' && method === 'GET') return claudeStatus(res);
     if (pathname === '/api/projects') {
-      if (method === 'GET') return listProjects(res);
+      if (method === 'GET') return listProjects(res, { includeHidden: url.searchParams.get('includeHidden') === '1' });
       if (method === 'POST') return createProject(req, res);
       return sendJson(res, 404, { error: ERRORS.notFound });
     }
@@ -250,9 +313,10 @@ export function createApp({ projectsFile, publicDir, dataDir, now = () => Date.n
       try {
         id = decodeURIComponent(match[1]);
       } catch {
-        return sendJson(res, 404, { error: 'Proyecto no encontrado' });
+        return sendJson(res, 404, { error: ERRORS.projectNotFound });
       }
       if (method === 'GET') return getProject(res, id);
+      if (method === 'PATCH') return patchProject(req, res, id);
       if (method === 'DELETE') return deleteProject(res, id);
     }
     return sendJson(res, 404, { error: ERRORS.notFound });
@@ -265,20 +329,21 @@ export function createApp({ projectsFile, publicDir, dataDir, now = () => Date.n
     return String(Array.isArray(value) ? value[0] : value).trim().toLowerCase() === 'fetch';
   }
 
-  async function handleApi(req, res, pathname) {
-    if (MUTATING_METHODS.has(req.method) && !hasCsrfHeader(req)) return sendJson(res, 403, { error: ERRORS.csrf });
+  async function handleApi(req, res, url) {
+    const pathname = url.pathname;
+    if (isMutation(req) && !hasCsrfHeader(req)) return sendJson(res, 403, { error: ERRORS.csrf });
     if (pathname.startsWith(AUTH_PREFIX)) return routeAuth(req, res, pathname);
     const session = await currentSession(req);
     if (!session) return sendJson(res, 401, { error: ERRORS.unauthenticated });
     const { renewed } = await sessions.touch(session.id);
     if (renewed) setSessionCookie(req, res, sessionToken(req));
-    return routeApi(req, res, pathname);
+    return routeApi(req, res, url);
   }
 
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const pathname = url.pathname;
-    if (pathname === '/api' || pathname.startsWith(API_PREFIX)) return handleApi(req, res, pathname);
+    if (pathname === '/api' || pathname.startsWith(API_PREFIX)) return handleApi(req, res, url);
     if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 404, { error: ERRORS.notFound });
     return serveStatic(publicDir, pathname, res);
   }

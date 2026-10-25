@@ -1,8 +1,34 @@
 // Registro de proyectos (panel/projects.json): carga, guardado atómico y validación de altas/bajas.
+// Fase 3: projects.json es además la capa de ajustes (hidden, pinned) que se fusiona con los proyectos de Claude.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 export const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** Campos que admite PATCH /api/projects/:id (fase 3). */
+export const PATCHABLE_FIELDS = Object.freeze(['name', 'appUrl', 'repoUrl', 'tags', 'hidden', 'pinned']);
+
+const PATCH_ERRORS = Object.freeze({
+  name: 'El nombre es obligatorio',
+  appUrl: 'La URL de la app debe ser una cadena',
+  repoUrl: 'La URL del repositorio debe ser una cadena',
+  tags: 'Las etiquetas deben ser una lista de textos',
+  hidden: 'hidden debe ser true o false',
+  pinned: 'pinned debe ser true o false',
+});
+
+/** Normaliza una entrada de ajustes: hidden/pinned booleanos (false salvo true), tags de cadenas, URLs cadena. */
+export function normalizeSettings(entry) {
+  const source = entry && typeof entry === 'object' ? entry : {};
+  return {
+    ...source,
+    appUrl: typeof source.appUrl === 'string' ? source.appUrl : '',
+    repoUrl: typeof source.repoUrl === 'string' ? source.repoUrl : '',
+    tags: Array.isArray(source.tags) ? source.tags.filter((t) => typeof t === 'string') : [],
+    hidden: source.hidden === true,
+    pinned: source.pinned === true,
+  };
+}
 
 /** Carga el registro; si el fichero no existe devuelve { projects: [] }. */
 export async function loadRegistry(file) {
@@ -14,7 +40,7 @@ export async function loadRegistry(file) {
     throw err;
   }
   const parsed = JSON.parse(raw.replace(/^﻿/, ''));
-  const projects = Array.isArray(parsed && parsed.projects) ? parsed.projects : [];
+  const projects = Array.isArray(parsed && parsed.projects) ? parsed.projects.map(normalizeSettings) : [];
   return { projects };
 }
 
@@ -94,4 +120,40 @@ export async function validateNewProject(input, existing = [], { statFn = fs.sta
 export function removeProject(registry, id) {
   const projects = registry.projects.filter((p) => p.id !== id);
   return { removed: projects.length !== registry.projects.length, registry: { projects } };
+}
+
+function patchValue(field, value) {
+  if (field === 'name') return typeof value === 'string' && value.trim() ? { ok: true, value: value.trim() } : { ok: false };
+  if (field === 'appUrl' || field === 'repoUrl') return typeof value === 'string' ? { ok: true, value: value.trim() } : { ok: false };
+  if (field === 'tags') {
+    if (!Array.isArray(value) || !value.every((t) => typeof t === 'string')) return { ok: false };
+    return { ok: true, value: value.map((t) => t.trim()).filter(Boolean) };
+  }
+  return typeof value === 'boolean' ? { ok: true, value } : { ok: false };
+}
+
+/**
+ * Valida el cuerpo de un PATCH (design.md §5.4): solo PATCHABLE_FIELDS; el resto se ignora.
+ * Devuelve { ok: true, changes } o { ok: false, status: 400, error, field? }.
+ */
+export function validatePatch(body) {
+  const source = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const changes = {};
+  for (const field of PATCHABLE_FIELDS) {
+    if (source[field] === undefined) continue;
+    const result = patchValue(field, source[field]);
+    if (!result.ok) return reject(PATCH_ERRORS[field], field);
+    changes[field] = result.value;
+  }
+  if (Object.keys(changes).length === 0) return { ok: false, status: 400, error: 'Nada que actualizar' };
+  return { ok: true, changes };
+}
+
+/** Sustituye la entrada con el mismo id o la añade al final. No muta el registro recibido. */
+export function upsertSettings(registry, entry) {
+  const projects = registry.projects.slice();
+  const index = projects.findIndex((p) => p && p.id === entry.id);
+  if (index >= 0) projects[index] = entry;
+  else projects.push(entry);
+  return { projects };
 }

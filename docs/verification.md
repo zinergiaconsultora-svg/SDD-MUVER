@@ -16,7 +16,7 @@ automático. Si un requisito no se puede probar, está mal escrito.
 
 ## Cómo se ejecutan
 
-- Todo se lanza desde `init.sh` (paso 3: `(cd panel && npm test)`, que ejecuta `node --test` sobre `panel/test/*.test.js`; también puede lanzarse a mano con `cd panel && npm test`). Los tests de la fase 1 llevan el prefijo `[R<n>]` y los de la fase 2 `[F2-R<n>]`; los de la fase 1 que tocan la API se autentican con la cookie de sesión del `before()` (`F2-R16`).
+- Todo se lanza desde `init.sh` (paso 3: `(cd panel && npm test)`, que ejecuta `node --test` sobre `panel/test/*.test.js`; también puede lanzarse a mano con `cd panel && npm test`). Los tests de la fase 1 llevan el prefijo `[R<n>]`, los de la fase 2 `[F2-R<n>]` y los de la fase 3 `[F3-R<n>]` (siempre con un `claudeHome` temporal); los de la fase 1 que tocan la API se autentican con la cookie de sesión del `before()` (`F2-R16`).
 - Los requisitos **[MANUAL — Windows]** y **[MANUAL — Internet]** de la fase 2 no pueden ejecutarse en el entorno de tests (Linux, sin `cloudflared`): el humano los comprueba siguiendo `docs/acceso-web.md` y anota aquí el resultado.
 - El reviewer ejecuta `init.sh` y exige que esté **todo en verde** antes de aprobar.
 
@@ -120,6 +120,68 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R48 | **MANUAL — Windows — pendiente del humano** (T30): `uninstall-service.ps1`, `Get-ScheduledTask` ya no lista las tareas, tras reiniciar nada escucha en 4310. Resultado: _(anotar)_ |
 | R49 | **MANUAL — Windows — pendiente del humano** (T30): tras reiniciar, `panel\data\public-url.txt` con `https://….trycloudflare.com` en menos de 60 s y la misma URL en el encabezado del panel desde el móvil en la LAN. Resultado: _(anotar)_ |
 | R50 | **MANUAL — Internet — pendiente del humano** (T31): URL pública desde el móvil con datos → login, listado; cookie con `Secure` en DevTools de escritorio; `http://<ip-lan>:4310` sigue funcionando con su propia sesión. Resultado: _(anotar)_ |
+
+## Mapa de trazabilidad — Feature 3: `puesto-de-mando-descubrimiento-claude` (prefijo `[F3-R<n>]`)
+
+> Ficheros nuevos: `panel/test/claude-fixtures.js` (fixtures en temporales; nunca el `~/.claude` real), `path-key.test.js`, `claude-discovery.test.js`, `project-catalog.test.js`, `claude-api.test.js`; ampliados: `helpers.js` (`startApp` con `claudeHome` temporal vacío por defecto y `claudeCacheTtlMs: 0`; cabecera anti-CSRF en toda mutación), `registry.test.js`, `config.test.js`, `render.test.js`, `styles.test.js`, `deploy.test.js`, `api.test.js` (orden del listado tras un alta).
+
+| Requisito | Test que lo cubre |
+|-----------|-------------------|
+| R1 | `panel/test/config.test.js` → "[F3-R1] readConfig → claudeHome…" |
+| R2 | `panel/test/claude-api.test.js` → "[F3-R2] sin Claude: solo los proyectos de projects.json…"; `panel/test/claude-discovery.test.js` → "[F3-R2][F3-R4] sin .claude.json ni .claude/projects…" |
+| R3 | `panel/test/claude-api.test.js` → "[F3-R3] GET /api/claude/status disponible…"; `panel/test/claude-discovery.test.js` → "[F3-R21] dos scan() concurrentes comparten el mismo escaneo; status()…" |
+| R4 | `panel/test/claude-api.test.js` → "[F3-R4] GET /api/claude/status sin Claude…"; `panel/test/claude-discovery.test.js` → "[F3-R2][F3-R4] sin .claude.json…", "[F3-R4] constantes y resolveClaudePaths…" |
+| R5 | `panel/test/claude-discovery.test.js` → "[F3-R5] .claude.json roto…", "[F3-R5] readClaudeConfig…" |
+| R6 | `panel/test/claude-api.test.js` → "[F3-R6] sin cookie → 401…" |
+| R7 | `panel/test/claude-discovery.test.js` → "[F3-R7] solo subcarpetas directas…", "[F3-R7][F3-R8][F3-R9][F3-R10] fixture base completo…" |
+| R8 | `panel/test/claude-discovery.test.js` → "[F3-R8] path = primer cwd…", "[F3-R7][F3-R8][F3-R9][F3-R10] fixture base completo…" |
+| R9 | `panel/test/claude-discovery.test.js` → "[F3-R9] carpeta sin cwd casada con la clave Windows…", "[F3-R9] comparación laxa…"; `panel/test/path-key.test.js` → "[F3-R9] encodeProjectPath…", "[F3-R9] looseEncodedKey…"; datos reales: **MANUAL — Windows — pendiente del humano** (T27) |
+| R10 | `panel/test/claude-discovery.test.js` → "[F3-R10] carpeta sin cwd ni clave…"; `panel/test/claude-api.test.js` → "[F3-R10] proyecto no resuelto en el listado…" |
+| R11 | `panel/test/claude-discovery.test.js` → "[F3-R11] clave de configuración sin carpeta…" |
+| R12 | `panel/test/claude-discovery.test.js` → "[F3-R12] la misma ruta como clave y como carpeta…" |
+| R13 | `panel/test/claude-discovery.test.js` → "[F3-R13] lastPrompt…"; datos reales: **MANUAL — Windows — pendiente del humano** (T27) |
+| R14 | `panel/test/claude-discovery.test.js` → "[F3-R14] campos de la sesión…" |
+| R15 | `panel/test/claude-discovery.test.js` → "[F3-R15] título = summary…" |
+| R16 | `panel/test/claude-discovery.test.js` → "[F3-R16] título por primer user…", "[F3-R16] clipTitle y extractText…" |
+| R17 | `panel/test/claude-discovery.test.js` → "[F3-R17] líneas corruptas ignoradas…" |
+| R18 | `panel/test/claude-discovery.test.js` → "[F3-R18] fichero grande…" |
+| R19 | `panel/test/claude-discovery.test.js` → "[F3-R19] sesiones ordenadas por lastActivityAt desc…" |
+| R20 | `panel/test/claude-discovery.test.js` → "[F3-R20] caché por (ruta, mtime, tamaño)…" |
+| R21 | `panel/test/claude-discovery.test.js` → "[F3-R21] TTL de 30 s…", "[F3-R21] dos scan() concurrentes…" |
+| R22 | `panel/test/claude-discovery.test.js` → "[F3-R22] el fuente de claude-discovery.js no contiene llamadas de escritura…", "[F3-R22] tras un escaneo completo el árbol de claudeHome es idéntico…" |
+| R23 | `panel/test/path-key.test.js` → "[F3-R23] pathKey: los cuatro pares…", "[F3-R23] pathKey: valores no válidos…", "[F3-R23] isWindowsPath…" |
+| R24 | `panel/test/project-catalog.test.js` → "[F3-R24] mergeProjects: misma clave de ruta Windows…", "[F3-R24][F3-R31] toSummary…"; datos reales: **MANUAL — Windows — pendiente del humano** (T27) |
+| R25 | `panel/test/project-catalog.test.js` → "[F3-R25] mergeProjects: entrada sin coincidencia…", "[F3-R25][F3-R29] projectActivity…"; `panel/test/claude-api.test.js` → "[F3-R25] lastActivityAt de un manual…" |
+| R26 | `panel/test/project-catalog.test.js` → "[F3-R26] mergeProjects: descubierto sin ajustes…"; `panel/test/path-key.test.js` → "[F3-R26] lastSegment…" |
+| R27 | `panel/test/project-catalog.test.js` → "[F3-R27] assignIds: colisiones…", "[F3-R27] assignIds: nombre sin caracteres válidos…" |
+| R28 | `panel/test/claude-api.test.js` → "[F3-R28] campos nuevos presentes y sin path…" |
+| R29 | `panel/test/project-catalog.test.js` → "[F3-R29] sortCatalog…", "[F3-R25][F3-R29] projectActivity…"; `panel/test/claude-api.test.js` → "[F3-R29] orden del catálogo con fixtures…" |
+| R30 | `panel/test/claude-api.test.js` → "[F3-R30] includeHidden…" |
+| R31 | `panel/test/claude-api.test.js` → "[F3-R31] detalle: 22 sesiones → 20…"; `panel/test/project-catalog.test.js` → "[F3-R24][F3-R31] toSummary…" |
+| R32 | `panel/test/registry.test.js` → "[F3-R32] normalizeSettings y loadRegistry…", "[F3-R32] saveRegistry tras upsertSettings…" |
+| R33 | `panel/test/claude-api.test.js` → "[F3-R33] projects.json real copiado sin Claude…" |
+| R34 | `panel/test/claude-api.test.js` → "[F3-R34] PATCH sobre un proyecto both…"; `panel/test/registry.test.js` → "[F3-R34] upsertSettings…", "[F3-R34] validatePatch acepta…" |
+| R35 | `panel/test/claude-api.test.js` → "[F3-R35] PATCH sobre un proyecto solo de Claude…"; datos reales: **MANUAL — Windows — pendiente del humano** (T27) |
+| R36 | `panel/test/claude-api.test.js` → "[F3-R36] PATCH con cuerpos inválidos…"; `panel/test/registry.test.js` → "[F3-R36] validatePatch rechaza…" |
+| R37 | `panel/test/claude-api.test.js` → "[F3-R37] PATCH a id inexistente…" |
+| R38 | `panel/test/claude-api.test.js` → "[F3-R38] anti-CSRF en toda mutación…" |
+| R39 | `panel/test/claude-api.test.js` → "[F3-R39] DELETE: claude → 409…" |
+| R40 | `panel/test/claude-api.test.js` → "[F3-R40] POST con la ruta de un proyecto de Claude…" |
+| R41 | `panel/test/render.test.js` → "[F3-R41] renderProjectCard: badge "Claude Code"…"; flujo en navegador: ver fila T23/T27 |
+| R42 | `panel/test/render.test.js` → "[F3-R42] renderProjectCard: fijar/ocultar…"; flujo en navegador: ver fila T23/T27 |
+| R43 | `panel/test/render.test.js` → "[F3-R43] renderHiddenToggle…" |
+| R44 | `panel/test/render.test.js` → "[F3-R44] renderClaudeNotice…" |
+| R45 | `panel/test/render.test.js` → "[F3-R45] renderProjectDetail: sesiones de Claude Code…"; ver fila T23/T27 |
+| R46 | `panel/test/render.test.js` → "[F3-R46] renderSettingsForm…"; ver fila T23/T27 |
+| R47 | `panel/test/render.test.js` → "[F3-R47] buildSettingsPayload…" |
+| R48 | `panel/test/render.test.js` → "[F3-R48] patchProject / togglePin / toggleHidden…" |
+| R49 | `panel/test/render.test.js` → "[F3-R49] buildProjectsUrl y splitHidden…" |
+| R50 | `panel/test/render.test.js` → "[F3-R50] relativeTime…" |
+| R51 | `panel/test/styles.test.js` → "[F3-R51] index.html: #claude-notice…", "[F3-R51] styles.css define…" |
+| R52 | `panel/test/config.test.js` → "[F3-R52] buildStartupLines…" |
+| R53 | `panel/test/deploy.test.js` → "[F3-R53] docs/architecture.md documenta la fase 3…" |
+| T23 (UI) | Comprobación automatizada en Linux por el implementer con Chromium headless (Playwright) a 360×640 en tema claro y oscuro sobre fixtures: sin scroll horizontal, badge y línea de sesión, fijar reordena, "Mostrar ocultos (1)" / "Ocultar ocultos", formulario de ajustes → "Ajustes guardados", sin errores de consola. |
+| T27 | **MANUAL — Windows — pendiente del humano**: arrancar el panel en el PC con Claude Code; comprobar que aparecen solos los proyectos abiertos en Claude Code, que las sesiones recientes y sus títulos son reconocibles, que la línea de arranque dice `Claude Code: detectado en C:\Users\…`, poner las rutas reales de los 4 proyectos iniciales en `projects.json` (o fijarlas con el formulario de ajustes) y verificar que se fusionan como un único proyecto con distintivo "Claude Code" (`both`). Confirmar además los supuestos de design.md §9 (orden de `history` y codificación de carpetas). Resultado: _(anotar fecha y resultado)_ |
 
 ## Qué NO se considera verificado
 

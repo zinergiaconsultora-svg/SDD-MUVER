@@ -131,3 +131,15 @@ test('[F2-R45] docs/acceso-web.md tiene la estructura exigida y la opción avanz
     last = idx;
   }
 });
+
+// ---------- Fase 3: documentación del arnés (F3-R53) ----------
+
+test('[F3-R53] docs/architecture.md documenta la fase 3 y docs/verification.md tiene la tabla [F3-R', async () => {
+  const architecture = await read(path.join(REPO_DIR, 'docs', 'architecture.md'));
+  for (const needle of ['lib/claude-discovery.js', 'lib/project-catalog.js', '/api/claude/status', 'CLAUDE_HOME_DIR', 'PATCH /api/projects/:id']) {
+    assert.ok(architecture.includes(needle), `docs/architecture.md debe mencionar ${needle}`);
+  }
+  const verification = await read(path.join(REPO_DIR, 'docs', 'verification.md'));
+  assert.ok(verification.includes('[F3-R'), 'docs/verification.md debe tener la tabla con prefijo [F3-R');
+  for (let n = 1; n <= 53; n++) assert.match(verification, new RegExp(`^\\| R${n} \\|.*\\[F3-R`, 'm'), `fila F3 de R${n}`);
+});

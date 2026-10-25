@@ -13,15 +13,26 @@
   (misma red Wi-Fi). Muestra el estado real de todos los proyectos desarrollados con Claude
   Code (app-flyder, appcc-real, crm-zinergia, app-finanzas-restaurante y los que se añadan).
 - Se construye en fases (ver `feature_list.json`): fase 1 lectura + alta/baja de proyectos (hecha);
-  fase 2 acceso web seguro desde Internet con contraseña y Cloudflare Tunnel (esta); después
-  descubrimiento de proyectos, acciones de desarrollo con confirmación y visual/avisos.
+  fase 2 acceso web seguro desde Internet con contraseña y Cloudflare Tunnel (hecha); fase 3 descubrimiento
+  automático de los proyectos abiertos en Claude Code (esta); después acciones de desarrollo con confirmación
+  y visual/avisos.
 
 ## Piezas principales (a alto nivel)
 > Ej: una base de datos, un servidor/backend, una interfaz/frontend, integraciones externas.
 
 - **Base de datos:** no hay. El registro de proyectos es un fichero `panel/projects.json`
-  (`id`, `name`, `path` local absoluta, `appUrl`, `repoUrl` opcional, `tags` opcional),
-  editable a mano. El estado de cada proyecto no se guarda: se lee de su disco en cada petición.
+  (`id`, `name`, `path` local absoluta, `appUrl`, `repoUrl` opcional, `tags` opcional y, desde la fase 3,
+  `hidden` y `pinned` opcionales), editable a mano. Desde la fase 3 es una **capa de ajustes**: se fusiona por
+  ruta con los proyectos detectados en Claude Code y sigue admitiendo proyectos manuales. El estado de cada
+  proyecto no se guarda: se lee de su disco en cada petición.
+- **Datos de Claude Code (fase 3, SOLO LECTURA):** `<claudeHome>/.claude.json` (claves `projects` → rutas y
+  `history` → último prompt) y `<claudeHome>/.claude/projects/<ruta codificada>/<sesión>.jsonl` (título, fechas,
+  rama y recuentos de cada sesión; nunca el contenido completo). `claudeHome` = `CLAUDE_HOME_DIR` o la carpeta
+  del usuario (`%USERPROFILE%`). El panel **nunca escribe** en `~/.claude` ni en `~/.claude.json`:
+  `lib/claude-discovery.js` solo importa funciones de lectura y un test estático lo comprueba.
+- **Caché en memoria (fase 3, excepción a "sin caché"):** solo para los datos de Claude Code. Por fichero de
+  sesión (clave ruta + `mtime` + tamaño, sin releer lo que no cambia) y TTL de 30 s para el escaneo completo.
+  El estado de disco de cada proyecto (SDD, progreso, git) se sigue leyendo en cada petición.
 - **Directorio de datos (fase 2):** `panel/data/` (o `PANEL_DATA_DIR`), ignorado por git, con escritura
   atómica (`.tmp` + `rename`). Contiene `auth.json` (hash scrypt de la contraseña única, `salt`, `params`,
   `sessionSecret` para firmar cookies), `sessions.json` (lista blanca de sesiones con `createdAt`,
@@ -34,12 +45,16 @@
   y expone una API JSON. En fase 2 añade autenticación (`lib/auth.js` scrypt, `lib/sessions.js` cookies
   firmadas HMAC-SHA256, `lib/rate-limit.js` 5 fallos/15 min por IP, `lib/config.js` variables de entorno,
   `lib/public-url.js` y `lib/tunnel.js` para Cloudflare Tunnel) y los scripts `scripts/reset-password.js`
-  y `scripts/run-tunnel.js`.
+  y `scripts/run-tunnel.js`. En fase 3: `lib/path-key.js` (claves de ruta Windows/POSIX sin `path.resolve`),
+  `lib/claude-discovery.js` (descubrimiento de solo lectura con caché) y `lib/project-catalog.js` (fusión con
+  `projects.json`, ids estables `slug`/`slug-2`, ocultos y orden: fijados → actividad → nombre).
 - **Interfaz / frontend:** `panel/public/` (index.html, styles.css, app.js, render.js, api-client.js,
   app-config.js) en vanilla JS, mobile-first (usable a 360 px), tema claro/oscuro automático
   (`prefers-color-scheme`), `manifest.webmanifest` para "añadir a pantalla de inicio". Pantallas de
   creación de contraseña, login y cambio de contraseña integradas con los mismos estilos; botones
-  "Salir" y "Cambiar contraseña"; URL pública visible en el encabezado (también sin sesión).
+  "Salir" y "Cambiar contraseña"; URL pública visible en el encabezado (también sin sesión). Fase 3: distintivo
+  "Claude Code", línea de última sesión, botones fijar/ocultar, enlace "Mostrar ocultos (N)", sesiones recientes
+  y formulario de ajustes en el detalle, y aviso discreto si no se detecta Claude Code.
 - **Servicios externos:** `git` del sistema se invoca localmente con argumentos fijos. GitHub solo
   como enlace (`repoUrl`). Para el acceso desde Internet se usa **Cloudflare Tunnel** (`cloudflared`):
   camino principal con URL temporal gratuita `*.trycloudflare.com` (sin cuenta ni dominio) y opción
@@ -60,7 +75,9 @@
   (variable `PORT`) e imprime las URLs de acceso (localhost e IP de la red local), el directorio de datos,
   si la contraseña está configurada y la URL pública si existe. Publicación HTTPS mediante Cloudflare
   Tunnel y arranque con el PC mediante tareas programadas (ver `docs/acceso-web.md`). Variables:
-  `PORT`, `PANEL_DATA_DIR`, `PANEL_SECURE_COOKIES`, `PANEL_TRUST_PROXY`, `CLOUDFLARED_BIN`.
+  `PORT`, `PANEL_DATA_DIR`, `PANEL_SECURE_COOKIES`, `PANEL_TRUST_PROXY`, `CLOUDFLARED_BIN` y (fase 3)
+  `CLAUDE_HOME_DIR` (carpeta que contiene `.claude.json` y `.claude/`; por defecto la del usuario). Al arrancar
+  imprime también `Claude Code: detectado en … (N proyectos, M sesiones)` o `Claude Code: no detectado en …`.
 
 ## Cómo se comunican las piezas
 > Una frase o un esquema simple. Ej: "el frontend pide datos al backend por una API; el backend guarda en la base de datos".
@@ -68,19 +85,26 @@
 - El navegador (PC o móvil) carga `panel/public/` desde el servidor (estáticos públicos) y pide JSON a la API:
   `GET /api/auth/status` (público: `configured`, `authenticated`, `publicUrl`), `POST /api/auth/setup`
   (primera contraseña), `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/change-password`;
-  `GET /api/projects` (listado con estado resumido), `GET /api/projects/:id` (detalle),
-  `POST /api/projects` (alta, valida que la ruta exista), `DELETE /api/projects/:id` (baja).
+  `GET /api/projects` (listado con estado resumido; fase 3: catálogo fusionado, ordenado y sin ocultos salvo
+  `?includeHidden=1`), `GET /api/projects/:id` (detalle; fase 3: con las 20 sesiones de Claude más recientes),
+  `POST /api/projects` (alta, valida que la ruta exista), `DELETE /api/projects/:id` (baja; fase 3: solo
+  proyectos manuales, `409` si lo detecta Claude Code), `PATCH /api/projects/:id` (fase 3: ajustes parciales
+  `name`, `appUrl`, `repoUrl`, `tags`, `hidden`, `pinned`; sobre un proyecto solo de Claude crea su entrada en
+  `projects.json`) y `GET /api/claude/status` (fase 3: si se detecta Claude Code, dónde y cuántos proyectos y
+  sesiones).
 - **Sesión y defensa CSRF:** la autenticación viaja en la cookie `muver_session=<id>.<firma HMAC>`
   (`HttpOnly; SameSite=Lax; Path=/; Max-Age=30 días`, más `Secure` cuando la petición entra por HTTPS a través
-  de Cloudflare — `X-Forwarded-Proto: https` — o con `PANEL_SECURE_COOKIES=1`). Toda mutación (`POST`/`DELETE`)
-  a `/api/*` debe llevar `X-Requested-With: fetch`, si no → `403`. Orden del middleware: estáticos → cabecera
+  de Cloudflare — `X-Forwarded-Proto: https` — o con `PANEL_SECURE_COOKIES=1`). Toda mutación a `/api/*` (desde la
+  fase 3, cualquier método distinto de `GET`/`HEAD`: `POST`, `DELETE`, `PATCH`, `PUT`…) debe llevar
+  `X-Requested-With: fetch`, si no → `403`. Orden del middleware: estáticos → cabecera
   anti-CSRF → `/api/auth/*` → el resto exige sesión válida (`401 No autenticado`).
 - **Cabeceras del proxy:** con `PANEL_TRUST_PROXY` activo (por defecto) el servidor cree `CF-Connecting-IP`
   (IP del cliente para el límite de intentos) y `X-Forwarded-Proto` (para el atributo `Secure`); con `0` usa
   `remoteAddress` e ignora ambas.
 - El servidor, por cada proyecto registrado, lee del disco `feature_list.json`,
   `progress/current.md` y ejecuta `git` (`execFile`, sin shell) en la carpeta del proyecto, y
-  devuelve el resultado. Sin caché: cada petición refleja el estado real.
+  devuelve el resultado. Sin caché: cada petición refleja el estado real (salvo los datos de Claude Code,
+  cacheados en memoria como se describe arriba).
 
 ```
 [Móvil con datos / PC remoto] --HTTPS--> [Cloudflare] --túnel saliente (cloudflared)--+
@@ -88,6 +112,8 @@
 [Móvil / PC en la Wi-Fi] --HTTP (LAN)----------------------------------------> [panel/server.js] --fs/git--> [carpeta de cada proyecto]
                                                                                      |
                                                                  panel/projects.json + panel/data/ (auth.json, sessions.json, public-url.txt)
+                                                                                     |
+                                                     solo lectura --> ~/.claude.json + ~/.claude/projects/*/*.jsonl (Claude Code)
 ```
 
 ## Restricciones y decisiones de arquitectura

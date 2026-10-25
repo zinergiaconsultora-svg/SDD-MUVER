@@ -129,7 +129,9 @@ test('[R17] POST /api/projects válido → 201, id derivado, persistencia y apar
   assert.equal(saved.projects.at(-1).id, 'mi-proyecto', 'se añade al final');
 
   const list = await authed('/api/projects');
-  assert.deepEqual(list.json.map((p) => p.id), ['con-arnes', 'sin-arnes', 'mi-proyecto']);
+  // Fase 3 (F3-R29): el listado ya no sigue el orden del fichero sino el del catálogo (fijados, actividad desc con
+  // null al final, nombre): 'Mi Proyecto' (sin actividad) va entre 'Con arnés' y 'Sin arnés'.
+  assert.deepEqual(list.json.map((p) => p.id), ['con-arnes', 'mi-proyecto', 'sin-arnes']);
   await removeDir(dir);
 });
 
