@@ -8,6 +8,25 @@
 > que no ejecuta un programa indicado en la línea de órdenes**; todo lo demás es amplio (no se propone y exige la
 > confirmación con aviso de F14 §6.1).
 
+> **Enmienda 1 (2026-10-25)** — por el bloqueante B1 de `progress/review_comandos-amplios-git-npm.md` (veredicto
+> RECHAZADO sobre la implementación `347bd6d`).
+> - **Qué estaba mal.** `GIT_SAFE_SUBCOMMANDS` incluía `merge` y `cherry-pick`, y la nota de §3.2 decía que
+>   `merge -s` solo buscaba la estrategia en la carpeta de ejecución de git. Es falso con git 2.43.0:
+>   `git merge -s <nombre>` ejecuta `git-merge-<nombre>` del `PATH` en un merge que no es fast-forward, y
+>   `git cherry-pick --strategy=<s>` ejecuta `git-merge-<s>` sin validar el nombre (una ruta relativa al cwd; con una
+>   carpeta `git-merge-..` en el repo, cualquier programa del disco, y con `-X` sus argumentos).
+> - **Revisión completa.** Se han vuelto a comprobar con el git y el npm reales (temporal, `HOME` temporal,
+>   `GIT_CONFIG_NOSYSTEM=1`) todos los subcomandos de las dos listas permitidas (§3.2, §3.3 y filas nuevas de §3.4).
+>   Aparece un caso más: `npm view`/`info`/`show`/`v` con un paquete git ejecutan el programa de `--git=<programa>`.
+> - **Qué cambia.** Salen de `GIT_SAFE_SUBCOMMANDS` `merge`, `cherry-pick` y `revert` (por prudencia: acepta
+>   `--strategy` aunque en 2.43 no la usa, nota N3), y de `NPM_SAFE_SUBCOMMANDS` `view`, `info`, `show` y `v`; todos
+>   pasan a `GIT_EXEC_SUBCOMMANDS`/`NPM_EXEC_SUBCOMMANDS` (§3.4). Cambian la tabla de §3.5, el fixture de R6 (casos
+>   nuevos y entorno aislado con `HOME` temporal, mejora M2, §6.1), los cambios declarados (§6.3), la comprobación
+>   manual (§6.4, mejora M1), los textos de `docs/architecture.md` (§7.1, apartado 1 con la nota N1 y apartado 2) y la
+>   fila de R6 de `docs/verification.md` (§7.2). Las tareas nuevas son T18–T23 de `tasks.md`.
+> - **Qué no cambia.** El algoritmo de `isBroadCommand` (§3.5), las sugerencias (§3.6), `taskkill` (§4), la ruta
+>   real del `cwd` (§5) y los ficheros que no se tocan (§9).
+
 ## 1. Decisiones técnicas (resumen)
 
 | # | Decisión | Por qué |
@@ -72,35 +91,65 @@ mantienen las reglas de F14 §3.5, que no dependen de subcomandos.
 ### 3.2 `GIT_SAFE_SUBCOMMANDS` (en `lib/claude-cli.js`)
 
 ```js
-/** git <sub> comprobados (git 2.43, `git <sub> -h` y prueba en temporales): ninguna opción ejecuta un programa indicado en la línea de órdenes. */
+/** git <sub> comprobados (git 2.43, `git <sub> -h` y prueba en temporales; revisados en la Enmienda 1): ninguna opción ejecuta un programa indicado en la línea de órdenes. */
 export const GIT_SAFE_SUBCOMMANDS = Object.freeze([
   'status', 'diff', 'log', 'show', 'rev-list', 'rev-parse', 'describe', 'ls-files', 'ls-tree', 'cat-file', 'show-ref',
   'for-each-ref', 'branch', 'tag', 'add', 'restore', 'switch', 'checkout', 'reset', 'rm', 'mv', 'stash', 'commit',
-  'merge', 'cherry-pick', 'revert', 'blame', 'shortlog', 'reflog', 'cherry', 'merge-base', 'name-rev', 'count-objects',
+  'blame', 'shortlog', 'reflog', 'cherry', 'merge-base', 'name-rev', 'count-objects',
   'version', 'check-ignore', 'check-attr', 'diff-tree', 'diff-index', 'diff-files', 'whatchanged',
 ]);
 ```
 
+Son 37 subcomandos: la lista aprobada sin `merge`, `cherry-pick` ni `revert` (Enmienda 1).
+
 Notas de la comprobación (para el reviewer):
-- `commit`, `merge`, `cherry-pick`, `revert`, `checkout`, `switch` y `reset` ejecutan hooks y filtros, pero salen de
-  `.git/` (configuración), no de la línea de órdenes.
-- `merge -s <estrategia>` busca `git-merge-<estrategia>` solo en la carpeta de ejecución de git. Se comprobó con un
-  `git-merge-evilx` en el `PATH` y no se ejecutó.
-- `commit --gpg-sign`, `tag -s` y `log --show-signature` usan `gpg.program` de la configuración.
-- `diff`, `log`, `show`, `rev-list`, `shortlog`, `reflog`, `whatchanged`, `diff-tree`, `diff-index`, `diff-files`,
-  `blame`, `cherry-pick` y `revert` aceptan `--output=<fichero>`, que **escribe** un fichero en cualquier ruta, y
+- **Enmienda 1 — estrategias de fusión.** La nota anterior ("`merge -s <estrategia>` busca `git-merge-<estrategia>`
+  solo en la carpeta de ejecución de git; se comprobó con un `git-merge-evilx` en el `PATH` y no se ejecutó") era
+  **falsa**: con un merge fast-forward no se usa estrategia, y así no se ve. Con git 2.43.0 (evidencias en §3.4):
+  - `git merge -s <nombre>` ejecuta `git-merge-<nombre>` de la carpeta de ejecución de git **o del `PATH`** en un merge
+    que no es fast-forward. Con una barra en el nombre (`-s p/ev`, `-s ../…`) responde "Could not find merge strategy"
+    y no ejecuta nada.
+  - `git cherry-pick --strategy=<s>` ejecuta `git-merge-<s>` **sin validar el nombre**: un nombre del `PATH`, una ruta
+    relativa al cwd (`--strategy=p/ev` con el fichero `git-merge-p/ev` en el repo) o, con una carpeta vacía
+    `git-merge-..` en el repo, cualquier programa del disco (`--strategy=../…/usr/bin/env`), al que `-X<opción>` pasa
+    `--<opción>` como primer argumento (`-X"split-string=sh -c '…' sh"` ejecuta código de shell escrito en la línea de
+    órdenes).
+  - `git revert --strategy=<s>` existe (`git revert -h`) pero en 2.43 no ejecutó nada en ninguna de las tres variantes:
+    el secuenciador hace la fusión interna en los revert. Sale de la lista **por prudencia** (es el mismo código que
+    `cherry-pick` y su comportamiento puede cambiar con la versión de git; nota N3 del reviewer).
+  - `git rebase --strategy=<s>` también lo ejecuta, pero `rebase` ya era amplio.
+- **Enmienda 1 — revisión del resto.** Con `HOME` temporal y `GIT_CONFIG_NOSYSTEM=1` se revisó `git <sub> -h` de los
+  37 subcomandos que quedan buscando `strategy`, `program`, `command`, `cmd`, `exec`, `editor`, `tool`, `pager`,
+  `filter`, `textconv`, `helper`, `gpg`, `sign`, `output`, `upload`, `receive`, `hook`, `template` y `shell`, y se probó
+  la estrategia falsa del `PATH` con `stash apply` y `checkout -m` (no la invocan: fusión interna). Ninguna opción
+  ejecuta un programa indicado en la línea de órdenes. Lo que aparece y por qué no cuenta:
+  - `commit -S`/`--gpg-sign[=<key-id>]`, `tag -s`/`-u <key-id>` y `log --show-signature`: el programa es
+    `gpg.program`/`gpg.format` de la configuración; `<key-id>` es un argumento para ese programa, no un programa.
+  - Editor (`commit`, `tag -a`, `branch --edit-description`, `add -e`), paginador, `--ext-diff`, `--textconv`,
+    `cat-file --textconv`/`--filters`, los drivers de `-m`/`--merge` (`checkout`, `switch`, `restore`) y el filtro de
+    `-p` (`interactive.diffFilter`): salen de la configuración, de `.gitattributes` + `.git/config` (feature 19) o del
+    entorno (§10, duda 5), no de la línea de órdenes.
+  - `--recurse-submodules` (`checkout`, `switch`, `restore`, `reset`): solo lanza el propio git en los submódulos.
+  - `-p`/`--paginate`, `-c`, `-C` y `--exec-path` son opciones **globales** (van antes del subcomando), así que el
+    comando ya es amplio por la regla de F14 (`t1` empieza por `-`).
+  - `commit -t`/`--template` y `-F`, `--pathspec-from-file`, `blame --contents`/`--ignore-revs-file` y
+    `ls-files -X`: leen ficheros; no ejecutan nada.
+- `commit`, `checkout`, `switch` y `reset` ejecutan hooks y filtros, pero salen de `.git/` (configuración), no de la
+  línea de órdenes.
+- `diff`, `log`, `show`, `rev-list`, `shortlog`, `reflog`, `whatchanged`, `diff-tree`, `diff-index`, `diff-files` y
+  `blame` aceptan `--output=<fichero>`, que **escribe** un fichero en cualquier ruta, y
   `log --format` permite elegir su contenido. No ejecuta nada por sí mismo, así que no entra en el criterio de §3.1,
   pero es un riesgo conocido que afecta también a las reglas por defecto `git diff` y `git log` (§10, duda 2).
-- Quedan fuera a propósito: `grep` (`-O`), `apply` (`--unsafe-paths` escribe fuera del árbol), `format-patch`
+- Quedan fuera a propósito: `merge`, `cherry-pick` y `revert` (estrategias, Enmienda 1), `grep` (`-O`), `apply` (`--unsafe-paths` escribe fuera del árbol), `format-patch`
   (`-o` a cualquier carpeta), `am`, `notes`, `worktree`, `clean`, `remote`, `init`, `help` y `gc`. No hacen falta para
   el trabajo normal de Claude o abren caminos que no se han estudiado.
 
 ### 3.3 `NPM_SAFE_SUBCOMMANDS` y `NPM_RUN_SUBCOMMANDS`
 
 ```js
-/** npm <sub> que no son amplios: ejecutan solo scripts de package.json (riesgo de F14 D6) o solo leen (npm 10.9). */
+/** npm <sub> que no son amplios: ejecutan solo scripts de package.json (riesgo de F14 D6) o solo leen (npm 10.9; revisados en la Enmienda 1). */
 export const NPM_SAFE_SUBCOMMANDS = Object.freeze([
-  'test', 't', 'tst', 'start', 'stop', 'restart', 'ls', 'list', 'll', 'la', 'outdated', 'view', 'info', 'show', 'v',
+  'test', 't', 'tst', 'start', 'stop', 'restart', 'ls', 'list', 'll', 'la', 'outdated',
   'explain', 'why', 'query', 'prefix', 'root',
 ]);
 /** npm <sub> <script>: no amplio solo con un nombre de script que no empieza por "-". */
@@ -116,23 +165,35 @@ Quedan fuera (amplios), entre otros:
 - `edit` y `config edit` (`--editor=<programa>`), y `repo`/`docs`/`bugs`/`help`/`fund` (`--browser=<programa>`).
 - `config`/`c`/`set`/`get`: escriben en `~/.npmrc`, fuera del proyecto.
 - `publish`, `pack`, `version`, `doctor`, `login`.
+- **(Enmienda 1)** `view` y sus alias `info`, `show` y `v`: con un paquete git (`npm view git+file://<repo>`) npm
+  ejecuta el programa de `--git=<programa>` para `ls-remote` y `clone` (comprobado, también con `--offline`, §3.4).
+
+Revisión de la Enmienda 1 (npm 10.9.4, `HOME` temporal, un proyecto con una dependencia git instalada, con y sin
+`--offline`): `outdated`, `ls`, `explain`, `why`, `query`, `prefix`, `root`, `test`, `start`, `stop`, `restart` y
+`run build` con `--git`, `--browser`, `--editor`, `--viewer`, `--shell` y `--node-gyp` apuntando a un programa de
+marca no lo ejecutan. `--script-shell`, `--node-options` y `--prefix` detrás de un comando de scripts son la feature 18.
 
 ### 3.4 Listas de referencia y evidencias
 
 ```js
-/** git <sub> que ejecutan programas o cambian la configuración (referencia; isBroadCommand usa GIT_SAFE_SUBCOMMANDS). */
+/** git <sub> que ejecutan programas, cambian la configuración o aceptan una estrategia de fusión (referencia; isBroadCommand usa GIT_SAFE_SUBCOMMANDS). */
 export const GIT_EXEC_SUBCOMMANDS = Object.freeze([
   'config', 'submodule', 'bisect', 'rebase', 'filter-branch', 'difftool', 'mergetool', 'daemon', 'instaweb',
   'web--browse', 'credential', 'upload-pack', 'receive-pack', 'archive',
   'fetch', 'pull', 'push', 'clone', 'ls-remote', 'grep', 'hook', 'send-email', 'fetch-pack', 'send-pack',
   'remote-ext', 'upload-archive', 'shell', 'maintenance',
+  'merge', 'cherry-pick', 'revert',
 ]);
 /** npm <sub> que ejecutan programas o paquetes indicados en la línea de órdenes (referencia). */
 export const NPM_EXEC_SUBCOMMANDS = Object.freeze([
   'exec', 'x', 'explore', 'init', 'create', 'innit', 'install', 'i', 'add', 'ci', 'install-test', 'it',
   'install-ci-test', 'cit', 'update', 'rebuild', 'link', 'edit', 'config', 'c', 'repo', 'docs', 'help', 'fund',
+  'view', 'info', 'show', 'v',
 ]);
 ```
+
+La Enmienda 1 añade al final la línea `'merge', 'cherry-pick', 'revert'` (git) y `'view', 'info', 'show', 'v'` (npm);
+el orden del resto no cambia (el test de R5 compara con `deepEqual`).
 
 `run-script`, `rum`, `urn` y `run` **sin script** también son amplios (R2), pero no van en `NPM_EXEC_SUBCOMMANDS`
 porque con script son normales (la lista debe ser disjunta de las permitidas, R5).
@@ -157,8 +218,21 @@ fichero de marca:
 | `npm edit <dep> --editor=P`, `npm config edit --editor=P` | ejecutado |
 | `npm exec`/`x`, `npm explore`, `npm init <paquete>`, `npm install <paquete>` (scripts de ciclo de vida), `--browser` de `repo`/`docs`/`bugs`/`help`/`fund` | documentado en `npm help` |
 | `npm test --script-shell=P` y `npm test --node-options="--import=data:text/javascript,…"` | ejecutado (riesgo residual: §10, duda 1) |
+| **Enmienda 1** (git 2.43.0 y npm 10.9.4, `HOME` temporal, `GIT_CONFIG_NOSYSTEM=1`, repo con dos ramas que divergen) | |
+| `git merge -s evilx otra` (no fast-forward) con `git-merge-evilx` en el `PATH` | ejecutado |
+| `git merge -s evilx` fast-forward o ya actualizado; `git merge -s p/ev`, `-s ../…/usr/bin/env` | no ejecutado (fast-forward no usa estrategia; con `/`: "Could not find merge strategy") |
+| `git cherry-pick --strategy=evilx otra` con `git-merge-evilx` en el `PATH` | ejecutado |
+| `git cherry-pick --strategy=p/ev otra` con el fichero `git-merge-p/ev` en el repo (ruta relativa al cwd) | ejecutado |
+| `git cherry-pick --strategy=../…/usr/bin/env -X"split-string=sh -c 'touch M' sh" otra` con una carpeta vacía `git-merge-..` en el repo | ejecutado (código de shell escrito en la línea de órdenes) |
+| `git revert --strategy=…` con las mismas tres variantes | no ejecutado en 2.43 (fusión interna); sale por prudencia (§3.2) |
+| `git rebase --strategy=evilx otra` | ejecutado (ya era amplio) |
+| `git stash apply`, `git checkout -m otra` con `git-merge-evilx` en el `PATH` | no ejecutado (fusión interna) |
+| `npm view git+file://<repo> --git=P` (también `info`, `show`, `v`, y con `--offline`) | ejecutado (P recibe `ls-remote` y `clone`) |
+| `npm outdated`/`ls`/`explain`/`why`/`query`/`prefix`/`root`/`test`/`start`/`stop`/`restart`/`run build` con `--git`, `--browser`, `--editor`, `--viewer`, `--shell` o `--node-gyp` = P | no ejecutado |
 
-R6 automatiza las seis primeras filas de git (las del reviewer) en `hardening.test.js`.
+R6 automatiza en `hardening.test.js` las seis primeras filas de git (las del reviewer de la feature 14) y, desde la
+Enmienda 1, `cherry-pick --strategy=<ruta relativa>`, `merge -s <nombre del PATH>` en un merge que no es
+fast-forward y `npm view <paquete git> --git=<programa>` (§6.1).
 
 ### 3.5 Algoritmo de `isBroadCommand` (cambios sobre F14 §3.5)
 
@@ -183,12 +257,13 @@ function commandBase(token) {
 Los casos 3 y 4 solo se evalúan cuando `t1` existe y no empieza por `-` ni `/`, porque el caso 2 ya devuelve `true`
 en los demás.
 
-Tabla de los tests (R1–R4), además de la tabla de F14, que se mantiene:
+Tabla de los tests (R1–R4), además de la tabla de F14, que se mantiene (Enmienda 1: `git merge`, `git cherry-pick`,
+`git revert` y `npm view`/`info`/`show`/`v` pasan a la columna de amplios):
 
 | Amplios | No amplios |
 |---|---|
-| `git fetch`, `git pull`, `git push`, `git clone`, `git ls-remote`, `git grep`, `git hook`, `git submodule`, `git bisect`, `git rebase`, `git difftool`, `git mergetool`, `git filter-branch`, `git send-email`, `git maintenance`, `git help`, `git init`, `git worktree`, `git apply`, `git co`, `git evilsub`, `git STATUS`, `git -C x` | `git status`, `git diff`, `git log`, `git show`, `git rev-list`, `git commit`, `git add`, `git checkout`, `git branch`, `git stash`, `git blame` |
-| `npm install`, `npm i`, `npm add`, `npm ci`, `npm exec`, `npm x`, `npm explore`, `npm init`, `npm create`, `npm innit`, `npm run-script`, `npm rum`, `npm urn`, `npm run`, `npm run -s`, `npm config`, `npm c`, `npm set`, `npm edit`, `npm repo`, `npm docs`, `npm help`, `npm fund`, `npm publish`, `npm pack`, `npm rebuild`, `npm update`, `npm audit`, `npm desconocido` | `npm test`, `npm t`, `npm tst`, `npm start`, `npm stop`, `npm restart`, `npm run build`, `npm run-script build`, `npm rum build`, `npm urn build`, `npm ls`, `npm list`, `npm outdated`, `npm view`, `npm explain`, `npm why`, `npm query`, `npm prefix`, `npm root` |
+| `git fetch`, `git pull`, `git push`, `git clone`, `git ls-remote`, `git grep`, `git hook`, `git submodule`, `git bisect`, `git rebase`, `git difftool`, `git mergetool`, `git filter-branch`, `git send-email`, `git maintenance`, `git help`, `git init`, `git worktree`, `git apply`, `git merge`, `git cherry-pick`, `git revert`, `git co`, `git evilsub`, `git STATUS`, `git -C x` | `git status`, `git diff`, `git log`, `git show`, `git rev-list`, `git commit`, `git add`, `git checkout`, `git branch`, `git stash`, `git blame` |
+| `npm install`, `npm i`, `npm add`, `npm ci`, `npm exec`, `npm x`, `npm explore`, `npm init`, `npm create`, `npm innit`, `npm run-script`, `npm rum`, `npm urn`, `npm run`, `npm run -s`, `npm config`, `npm c`, `npm set`, `npm edit`, `npm repo`, `npm docs`, `npm help`, `npm fund`, `npm publish`, `npm pack`, `npm rebuild`, `npm update`, `npm audit`, `npm view`, `npm info`, `npm show`, `npm v`, `npm desconocido` | `npm test`, `npm t`, `npm tst`, `npm start`, `npm stop`, `npm restart`, `npm run build`, `npm run-script build`, `npm rum build`, `npm urn build`, `npm ls`, `npm list`, `npm outdated`, `npm explain`, `npm why`, `npm query`, `npm prefix`, `npm root` |
 | `pnpm dlx x`, `yarn create app`, `bun x y`, `pnpm run`, `yarn run -s` | `yarn test`, `bun run build`, `pnpm run lint`, `pnpm install` |
 | `npm.cmd exec x`, `NPM.CMD install`, `git.exe fetch`, `npx.cmd`, `node.bat -e`, `pnpm.ps1 dlx x`, `C:/tools/Git/cmd/git.exe push` | `npm.cmd test`, `git.exe status`, `node.cmd build.js` |
 
@@ -211,7 +286,8 @@ if (runAlias && t2 !== undefined && !t2.startsWith('-')) parts.push(t2);
 
 ### 3.7 Efectos visibles
 
-- Tras una denegación de `git push`, `git fetch`, `git pull`, `npm install`… ya no aparece "Permitir en este proyecto
+- Tras una denegación de `git push`, `git fetch`, `git pull`, `git merge`, `git cherry-pick`, `npm install`,
+  `npm view`… ya no aparece "Permitir en este proyecto
   y reintentar" con ese comando: la tarjeta de la denegación muestra el detalle sin propuesta, igual que hoy con `node -e`.
 - En "Ajustes de ejecución", añadir a mano `git push` muestra el diálogo `broadConfirm` de F14 §6.1.
 - Un proyecto que ya tenía `git push` o `npm install` guardado ve el aviso `broadSaved` (D8).
@@ -297,6 +373,28 @@ function realDir(dir) {
   (contra el propio repo `.`), `clone -u` (a una carpeta temporal) y `grep -O` (con un fichero que contiene `hola`).
   Se lanzan con `execFile` del git del sistema (`shell: false`, `timeout` de 10 s) y se ignora el código de salida.
   Se salta en Windows y sin git, como el resto de `hardening.test.js`.
+- R6, casos de la **Enmienda 1** (en el mismo test, después de los seis anteriores):
+  - Ramas: desde el commit anterior a `HEAD` se crea la rama `f15-otra` con un commit que añade `otra.txt`, y se vuelve
+    a la rama de partida. Así `merge f15-otra` no es fast-forward y `cherry-pick f15-otra` tiene que fusionar.
+  - Programas de marca: `marca.sh` no sirve aquí, porque git pasa a la estrategia la base y las cabezas, no una ruta.
+    Se escriben dos scripts `#!/bin/sh` con la ruta de su marca fija dentro (`: > '<marca>'` y `exit 2`):
+    `<tools>/git-merge-f15path` (para `merge`) y `<repo>/git-merge-f15/marca` (para `cherry-pick`, ruta relativa), los
+    dos con modo `0o755`.
+  - `merge`: `git merge -s f15path f15-otra` con `PATH` = `<tools>` + el `PATH` del entorno aislado. Base
+    `git merge`, comando completo `git merge -s x f15-otra`.
+  - `cherry-pick`: `git cherry-pick --strategy=f15/marca f15-otra` (sin tocar el `PATH`). Base `git cherry-pick`,
+    comando completo `git cherry-pick --strategy=x f15-otra`.
+  - Tras cada uno, `git merge --abort`/`git cherry-pick --abort` y `git reset -q --hard <commit de partida>`, ignorando
+    los errores, para que el caso siguiente parta de un repo limpio.
+  - `npm view`: solo si `npm` está en el `PATH` (con `findOnSystemPath('npm')`; si no, ese caso se salta con un `if`
+    comentado y los demás siguen). Un script `<tools>/git-falso` (`: > '<marca>'`, `exit 1`) y
+    `npm view git+file://<repo> --git=<tools>/git-falso --offline` lanzado con `execFile` desde una carpeta temporal
+    vacía (`timeout` de 30 s). Base `npm view`, comando completo `npm view x --git=y`.
+- R6, **entorno aislado** (mejora M2, para todos los casos): se parte de `process.env`, se quitan las variables cuyo
+  nombre empieza por `GIT_` o por `npm_config_` (sin distinguir mayúsculas; `init.sh` lanza los tests con `npm test`,
+  que añade estas últimas) y se fijan `HOME` y `XDG_CONFIG_HOME` a carpetas temporales nuevas, `GIT_CONFIG_NOSYSTEM=1`
+  y `GIT_TERMINAL_PROMPT=0`. Así no influyen el `~/.gitconfig` (alias, `url.insteadOf`), el `~/.npmrc` ni la caché de
+  npm del usuario. La identidad de los commits ya está en la configuración local del repo (`makeProjectDir`).
 - R14 de integración: `fs.symlinkSync(proyecto, enlace)`, un `git` falso en `proyecto` y un `PATH` con `proyecto` y la
   carpeta del git real. `createBinaryResolver({ env: { PATH } })` (con `defaultFsOps`) y
   `resolve('git', { cwd: enlace })` no devuelve el falso.
@@ -317,7 +415,16 @@ function realDir(dir) {
 
 ### 6.3 Cambios declarados en tests anteriores
 
-**Ninguno previsto.** Las tablas de F14 (`[F14-R14]`, `[F14-R15]`) siguen valiendo con §3.5, porque
+**Ninguno previsto** en tests de fases o features anteriores. **Enmienda 1:** cambian tests de esta misma feature,
+ya implementados en `347bd6d`, y se declaran en `docs/verification.md`:
+- `[F15-R1]` y `[F15-R2]` (`claude-cli.test.js`): las tablas de §3.5 (`git merge`, `git cherry-pick`, `git revert`,
+  `npm view`, `npm info`, `npm show`, `npm v` pasan a amplios; `npm view` sale de los no amplios).
+- `[F15-R5]`: el `deepEqual` de las dos listas de referencia de §3.4 y la lista mínima de R5.
+- `[F15-R6]` (`hardening.test.js`): casos nuevos, entorno aislado y nombre nuevo del test (§6.1).
+- `[F15-R7]`: casos nuevos de R7.
+- `[F15-R16]` (`deploy.test.js`): cadenas `--strategy` y `--git` del apartado 2 y comprobación de la nota N1.
+
+Las tablas de F14 (`[F14-R14]`, `[F14-R15]`) siguen valiendo con §3.5, porque
 `GIT_EXEC_SUBCOMMANDS` conserva sus elementos y `PKG_EXEC_SUBCOMMANDS` no cambia. Los tests `[F4-R28]`/`[F14-R10]`
 de `killProcessTree` no pasan resolvedor ni `cwd` y siguen obteniendo una sola llamada con la misma ruta, los mismos
 argumentos y `windowsHide`. El test `[F14-R31]` de `deploy.test.js` sigue encontrando todas sus cadenas (§7.1 solo
@@ -331,7 +438,16 @@ Junto con la comprobación T30 de la feature 14, que sigue pendiente:
    "Cancelar". Antes de 10 s, `Get-Process claude,node,bash -ErrorAction SilentlyContinue` no debe mostrar procesos del
    run, y en la consola del panel no debe aparecer `No se lanza taskkill`.
 2. En "Ajustes de ejecución", añadir `git push`: debe aparecer el diálogo "Autorizar de todos modos".
-3. Anotar la fecha, la versión de Windows, de Node y de git y el resultado en la fila de R13 de `docs/verification.md`.
+3. **(Enmienda 1, mejora M1)** En "Ajustes de ejecución", añadir `git merge`, `git cherry-pick` y `npm view`: los tres
+   deben mostrar el diálogo "Autorizar de todos modos" (se cancela sin guardar).
+4. **(Enmienda 1, mejora M1)** Repetir la evidencia con el git del PC (2.52.0.windows.1), en Git Bash y en una carpeta
+   temporal fuera de los proyectos: un repo con dos ramas que divergen (`otra` y la de partida), un script
+   `git-merge-evilx` (`#!/bin/sh` + `touch "$HOME/MARCA-merge"`) en una carpeta temporal que se pone delante del `PATH`
+   solo en esa terminal, y `git merge -s evilx otra`; luego, con `mkdir -p git-merge-p` y una copia del script como
+   `git-merge-p/ev` (cambiando la marca a `MARCA-cp`), `git cherry-pick --strategy=p/ev otra`. Anotar si aparecen
+   las marcas (se espera que sí; si no aparece alguna, anotarlo: la lista sigue siendo correcta, porque salir de la
+   lista solo pide una confirmación de más). Borrar después la carpeta temporal y las marcas.
+5. Anotar la fecha, la versión de Windows, de Node y de git y el resultado en la fila de R13 de `docs/verification.md`.
 
 ## 7. Documentación
 
@@ -344,12 +460,25 @@ Junto con la comprobación T30 de la feature 14, que sigue pendiente:
   todos esos hijos reciben `NoDefaultCurrentDirectoryInExePath=1`; si la ruta de `taskkill` no es de confianza, no se
   lanza y se termina solo el hijo (`taskkillUntrusted`, feature 15)." Y tras "por ruta y por ruta real" se añade
   "(también la ruta real del cwd de la llamada, feature 15)".
+  - **Enmienda 1 (nota N1).** El inciso quedó delante de "del `cwd` de la llamada" y la frase se lee mal. La frase
+    pasa a ser: "Se descartan los candidatos (por ruta y por ruta real) del `cwd` de la llamada y de la ruta real del
+    cwd (feature 15), y de las carpetas del catálogo (registro + Claude Code); de un **proyecto contenedor** (raíz,
+    carpeta personal o un ancestro suyo) solo se excluye su raíz." Se reajusta el párrafo del apartado 1 para que
+    ninguna línea pase de 120 columnas, como el resto de la sección (hoy se pasan la línea del inciso y la de "Única
+    excepción"). El resto del texto del apartado no cambia.
 - **Apartado 2**: tras la lista de F14 se añade: "Desde la feature 15, `git <sub>` y `npm <sub>` usan una **lista
   permitida** (`GIT_SAFE_SUBCOMMANDS`, `NPM_SAFE_SUBCOMMANDS` y `npm run`/`run-script`/`rum`/`urn` con script): todo
   subcomando que no esté en ella es amplio (`git fetch`/`pull`/`push`/`clone`/`ls-remote`/`grep`/`hook`…, que ejecutan
   programas con `--upload-pack`, `--receive-pack`, `-O`…; `npm install`, `ci`, `audit`, `edit`…). `pnpm`, `yarn` y
   `bun` siguen con la lista de denegación de la feature 14, que no es exhaustiva. El nombre base ignora `.exe`, `.cmd`,
   `.bat`, `.com` y `.ps1`."
+  - **Enmienda 1.** En esa frase, la lista de ejemplos pasa a ser "(`git fetch`/`pull`/`push`/`clone`/`ls-remote`/
+    `grep`/`hook`…, que ejecutan programas con `--upload-pack`, `--receive-pack`, `-O`…, y `git merge`/`cherry-pick`/
+    `revert`, porque `-s`/`--strategy` ejecuta `git-merge-<estrategia>` del `PATH` o de una ruta relativa;
+    `npm install`, `ci`, `audit`, `edit`… y `npm view`/`info`/`show`/`v`, que con un paquete git ejecutan el programa
+    de `--git`)". La frase final del apartado pasa a decir "Las listas se comprobaron con git 2.43.0 y npm 10.9.4
+    (revisadas de nuevo en la Enmienda 1 de la feature 15): se revisan cuando se actualice git o npm en la máquina del
+    panel."
 - **Apartado 6** (riesgos conocidos), se añade al final:
   - "Una regla `Bash(<comando> *)` admite cualquier opción detrás: `npm test --node-options=…` o `--script-shell=…`
     ejecuta código indicado en la línea de órdenes, y `git log`/`diff`/`show --output=<fichero>` (también las reglas
@@ -363,6 +492,10 @@ los mapas (tras la de la feature 14):
 - Una nota con el entorno de los tests de integración (§6.1) y los cambios declarados (§6.3: ninguno previsto).
 - Una tabla `| R<n> | test |` con una fila por requisito R1–R18. La fila de R13 dice "MANUAL — Windows, pendiente del
   humano" y la de R18 dice `./init.sh`.
+- **Enmienda 1:** la nota de entorno describe los casos nuevos de `[F15-R6]` y su entorno aislado (§6.1); la fila de
+  R6 cita el nombre nuevo del test; la fila de R13 añade los pasos 3 y 4 de §6.4; y la frase "Cambios declarados en
+  tests anteriores (design.md §6.3): ninguno" se sustituye por la lista de la Enmienda 1 de §6.3 (el bloque sigue
+  citando `§6.3`, que el test de R17 busca).
 
 El test de R17 sigue el modelo del test `[F14-R32]`: filas `^\| R<n> \|`, cada etiqueta no manual en la fila y en
 `panel/test/`, salvo R18.
@@ -410,9 +543,20 @@ El test de R17 sigue el modelo del test `[F14-R32]`: filas `^\| R<n> \|`, cada e
 5. **Supuesto**: el comportamiento de Claude Code con reglas `Bash(<prefijo> *)` es el de su documentación de
    permisos: la regla cubre cualquier continuación del comando. Si Claude Code analiza además las opciones, la
    protección es mayor, nunca menor.
-6. Las listas se comprobaron con git 2.43.0 y npm 10.9.4. Una versión futura puede añadir una opción que ejecute
+6. Las listas se comprobaron con git 2.43.0 y npm 10.9.4 (y otra vez, completas, en la Enmienda 1). Una versión futura puede añadir una opción que ejecute
    programas a un subcomando permitido. La lista permitida se revisa cuando se actualice git o npm en la máquina del
    panel; se anota en `docs/architecture.md`.
+
+7. **Duda 5 (Enmienda 1): variables de entorno delante del comando.** Varios subcomandos permitidos (y las reglas
+   por defecto `git diff`/`git log`) lanzan un programa que sale del entorno: `GIT_EXTERNAL_DIFF=P git diff`,
+   `GIT_EDITOR=P git commit`, `GIT_PAGER`, o `PATH=<carpeta> git commit -S` (busca `gpg` en ese `PATH`). Que esto
+   quede cubierto por `Bash(git diff *)` depende de cómo Claude Code compara una regla con un comando que empieza por
+   asignaciones de variables, y no se ha comprobado en esta enmienda. No es la clase de fallo de B1 (opción de la
+   línea de órdenes), pero da el mismo resultado. Propuesta: que el leader lo compruebe con el CLI real y, si la regla
+   cubre esos comandos, abrir una feature aparte (afecta también a las reglas por defecto).
+8. **Supuesto (Enmienda 1):** `npm view` deja de ser normal y pide confirmación con aviso, aunque casi siempre se use
+   para consultar el registro. Se acepta el coste (como en el supuesto 4) porque la regla `Bash(npm view *)` permite
+   `--git=<programa>`.
 
 ### Decisiones del humano (2026-10-25, aprobación de la spec)
 
@@ -423,6 +567,11 @@ El test de R17 sigue el modelo del test `[F14-R32]`: filas `^\| R<n> \|`, cada e
   cada una se trata en su propia feature: #16 (`--output` de git), #17 (`pnpm`/`yarn`/`bun`) y #18 (`npm test` con
   opciones detrás).
 
+### Enmienda 1 (2026-10-25)
+
+- Pendiente de la aprobación del humano (puerta 1 de nuevo): lista permitida corregida (§3.2, §3.3), evidencias
+  (§3.4), tareas T18–T23 y los puntos 7 y 8 de §10.
+
 ## 11. Alternativas consideradas y descartadas
 
 | Alternativa | Por qué no |
@@ -431,4 +580,6 @@ El test de R17 sigue el modelo del test `[F14-R32]`: filas `^\| R<n> \|`, cada e
 | Prohibir `git`/`npm` fuera de la lista permitida, en vez de pedir confirmación | F14 D6 eligió "aviso, no prohibición": el humano puede necesitar `git fetch` en un proyecto de confianza. |
 | Corregir solo `docs/architecture.md` para `taskkill` (M2 opción "b") | Dejaría una excepción a la regla de la guardia final que habría que recordar y documentar para siempre. El código necesario es mínimo (D5). |
 | Resolver la ruta real de todas las carpetas del catálogo en cada llamada (M3) | `app.js` ya lo hace una vez por instantánea, y hacerlo en cada llamada cuesta N² `realpath` por sondeo (D6). |
+| (Enmienda 1) Mantener `merge`/`cherry-pick` y declarar amplias solo las variantes con `-s`/`--strategy` | La regla que se genera es `Bash(git merge *)`, que cubre cualquier opción detrás (§3.1); clasificar el comando completo no protege la regla. |
+| (Enmienda 1) Mantener `revert` porque 2.43 ignora la estrategia | Acepta `--strategy`, comparte código con `cherry-pick` y el humano usa otra versión de git (2.52); un falso amplio solo cuesta una confirmación. |
 | Un texto de aviso distinto para "no comprobado" y para "ejecución libre" | Cambia la interfaz y sus tests sin cambiar la decisión del humano (D7). |

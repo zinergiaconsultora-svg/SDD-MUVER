@@ -5,8 +5,8 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #15 `comandos-amplios-git-npm` — comandos amplios de git y npm, `taskkill` con guardia final y ruta real del `cwd` (mejoras del reviewer de la feature 14)
-- **Estado:** `in_progress` — puerta 2 aprobada; **reviewer: RECHAZADO** por B1 (`progress/review_comandos-amplios-git-npm.md`): `git cherry-pick --strategy` (y `merge -s`) ejecutan programas y están en la lista permitida; fallo de la spec (design §3.2)
-- **Tarea actual:** enmienda de la spec (spec_author) para quitar `merge`, `cherry-pick` y `revert` de la lista permitida; después nueva aprobación del humano → implementer → puerta 2 → reviewer.
+- **Estado:** `spec_ready` (enmienda 1 de la spec tras el rechazo del reviewer por B1, `progress/review_comandos-amplios-git-npm.md`); **esperando aprobación humana de la enmienda**
+- **Tarea actual:** aprobación de la enmienda 1; luego T18–T23 (implementer), puerta 2 y reviewer. T16 manual pendiente del humano.
 - **Siguiente paso:** reviewer → done. Después: 19 (git-config-sin-clic, alta), 16, 17, 18 y la 13.
 - **Bloqueos / esperando:** — (pendiente del humano, no bloqueante: T16 en Windows)
 

@@ -6,6 +6,11 @@
 > Reglas de oro: **no se modifica ningún test anterior** (§6.3: si fuera imprescindible, se declara en
 > `docs/verification.md`), **ningún `shell: true`**, y los ejecutables y scripts de prueba solo escriben ficheros de
 > marca en temporales. No se tocan los ficheros de design.md §9.
+>
+> **Enmienda 1 (2026-10-25):** el reviewer rechazó la implementación por el bloqueante B1
+> (`progress/review_comandos-amplios-git-npm.md`). T1–T15 y T17 siguen hechas; las correcciones son la fase 6
+> (T18–T23), con TDD, y la comprobación manual T16 añade los pasos de la mejora M1. Los únicos tests que cambian son
+> los de esta feature que lista design.md §6.3 (Enmienda 1).
 
 ## Fase 0 — Preparación
 
@@ -39,5 +44,14 @@
 
 ## Fase 5 — Comprobación manual y verificación final
 
-- [ ] T16. [MANUAL — Windows] El humano sigue design.md §6.4 (cancelar un run y añadir `git push` a mano), junto con la T30 pendiente de la feature 14, y el leader anota la fecha, las versiones y el resultado en la fila de R13 de `docs/verification.md` (R13).
+- [ ] T16. [MANUAL — Windows] El humano sigue design.md §6.4 (cancelar un run y añadir `git push` a mano; desde la Enmienda 1 también los pasos 3 y 4: añadir `git merge`, `git cherry-pick` y `npm view` y ver el diálogo de aviso, y repetir con git 2.52.0.windows.1 la evidencia de `git merge -s <nombre del PATH>` y `git cherry-pick --strategy=<ruta relativa>`, mejora M1), y el leader anota la fecha, las versiones y el resultado en la fila de R13 de `docs/verification.md` (R13, R1, R6).
 - [x] T17. Verificar con `./init.sh` (todo en verde, sin cambios en tests anteriores salvo los declarados según design.md §6.3) y `node sdd-lint.js` con 0 errores (R18).
+
+## Fase 6 — Enmienda 1: corrección del bloqueante B1 y mejoras del reviewer
+
+- [ ] T18. Tests en `panel/test/claude-cli.test.js` (fallan antes de T19): `[F15-R1]` y `[F15-R2]` con la tabla nueva de design.md §3.5 (`git merge`, `git cherry-pick`, `git revert`, `npm view`, `npm info`, `npm show` y `npm v` amplios; `npm view` fuera de los no amplios), `[F15-R5]` con el `deepEqual` de las listas de §3.4 y la lista mínima nueva de R5, y `[F15-R7]` con los casos nuevos (`git cherry-pick --strategy=x otra`, `git merge -s x otra`, `git revert HEAD`, `npm view x --git=y` → `null`) (R1, R2, R5, R7).
+- [ ] T19. Implementar en `panel/lib/claude-cli.js` las listas de design.md §3.2–§3.4 de la Enmienda 1: quitar `merge`, `cherry-pick` y `revert` de `GIT_SAFE_SUBCOMMANDS` y `view`, `info`, `show` y `v` de `NPM_SAFE_SUBCOMMANDS`, añadirlos al final de `GIT_EXEC_SUBCOMMANDS`/`NPM_EXEC_SUBCOMMANDS` y actualizar los comentarios (sin la nota falsa de `merge -s`); sin cambiar `isBroadCommand` ni `suggestAllowedCommand`; T18 y las tablas `[F14-R14]`/`[F14-R15]` pasan (R1, R2, R5, R7).
+- [ ] T20. Ampliar `[F15-R6]` en `panel/test/hardening.test.js` según design.md §6.1 (Enmienda 1): ramas que divergen, casos `merge -s <nombre del PATH>` (no fast-forward) y `cherry-pick --strategy=<ruta relativa>` con scripts de marca de ruta fija, caso `npm view git+file://<repo> --git=<programa> --offline` (se salta sin npm), abort + reset entre casos, entorno aislado con `HOME`/`XDG_CONFIG_HOME` temporales y sin variables `GIT_*`/`npm_config_*` heredadas (mejora M2), y nombre nuevo del test; primero se comprueba la marca y después la clasificación; pasa con T19 (R6).
+- [ ] T21. Ampliar `[F15-R16]` en `panel/test/deploy.test.js` (cadenas `--strategy` y `--git` en el apartado 2, y que la sección no contiene `(por ruta y por ruta real) (también`) y actualizar `docs/architecture.md`, sección "Seguridad de la ejecución", con los textos de design.md §7.1 de la Enmienda 1: apartado 1 con la frase corregida y reajustado a 120 columnas como máximo (nota N1), y apartado 2 con `merge`/`cherry-pick`/`revert` (`-s`/`--strategy`) y `npm view` (`--git`); `[F15-R16]` y `[F14-R31]` pasan (R16).
+- [ ] T22. Actualizar la sección Feature 15 de `docs/verification.md` según design.md §7.2 (Enmienda 1): nota de entorno de `[F15-R6]`, fila de R6 con el nombre nuevo del test, fila de R13 con los pasos 3 y 4 de §6.4 y lista de cambios declarados de §6.3 (Enmienda 1); `[F15-R17]` pasa (R17).
+- [ ] T23. Verificar con `./init.sh` (todo en verde; los únicos tests cambiados son los de design.md §6.3, Enmienda 1) y `node sdd-lint.js` con 0 errores (R18).
