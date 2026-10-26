@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { GIT_ACTION_ARGS, GIT_STEP_ENV, parsePorcelainZ, planCommitPush, getFileDiff, listActiveHooks } from '../lib/git-actions.js';
+import { GIT_ACTION_ARGS, GIT_STEP_ENV, GIT_ERRORS, parsePorcelainZ, planCommitPush, getChanges, getFileDiff, listActiveHooks } from '../lib/git-actions.js';
+import { GIT_SAFE_PREFIX } from '../lib/git-info.js';
 import { PANEL_DIR } from './helpers.js';
 
 test('[F4-R55] parsePorcelainZ: modificado, nuevo, renombrado (salta el origen) y nombres con espacios', () => {
@@ -42,11 +43,12 @@ test('[F4-R60] planCommitPush: el mensaje "--amend; rm -rf /" llega intacto como
   const calls = [];
   const plan = await planCommitPush('/repo', '--amend; rm -rf /', { runner: fakeRunner({ calls }), env: {} });
   assert.equal(plan.ok, true);
-  // Feature 14 (ajuste declarado, design.md §8.3): los pasos empiezan por -c core.fsmonitor=false.
+  // Feature 14 (ajuste declarado, design.md §8.3) + feature 19 (§3.1, cambio declarado §7.3): el prefijo añade
+  // log.showSignature=false y protocol.ext.allow=never.
   assert.deepEqual(plan.steps.map((s) => [s.file, ...s.args]), [
-    ['git', '-c', 'core.fsmonitor=false', '--no-optional-locks', 'add', '-A'],
-    ['git', '-c', 'core.fsmonitor=false', '--no-optional-locks', 'commit', '-m', '--amend; rm -rf /'],
-    ['git', '-c', 'core.fsmonitor=false', '--no-optional-locks', 'push'],
+    ['git', '-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', '-c', 'protocol.ext.allow=never', '--no-optional-locks', 'add', '-A'],
+    ['git', '-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', '-c', 'protocol.ext.allow=never', '--no-optional-locks', 'commit', '-m', '--amend; rm -rf /'],
+    ['git', '-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', '-c', 'protocol.ext.allow=never', '--no-optional-locks', 'push'],
   ]);
   for (const step of plan.steps.slice(0, 2)) assert.deepEqual(step.env, { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' });
   // Feature 14 (ajuste declarado): el push lleva además GIT_SSH_COMMAND con BatchMode.
@@ -61,7 +63,8 @@ test('[F4-R60] planCommitPush: el mensaje "--amend; rm -rf /" llega intacto como
 
 test('[F4-R58] planCommitPush sin upstream → push -u origin <rama>', async () => {
   const plan = await planCommitPush('/repo', 'Mensaje', { runner: fakeRunner({ upstream: false, branch: 'feature/x' }) });
-  assert.deepEqual(plan.steps[2].args, ['-c', 'core.fsmonitor=false', '--no-optional-locks', 'push', '-u', 'origin', 'feature/x']); // ajuste declarado F14
+  // Ajuste declarado F14 + feature 19 (§7.3): prefijo ampliado.
+  assert.deepEqual(plan.steps[2].args, ['-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', '-c', 'protocol.ext.allow=never', '--no-optional-locks', 'push', '-u', 'origin', 'feature/x']);
   assert.equal(plan.display, 'git add -A → git commit -m "Mensaje" → git push -u origin feature/x');
 });
 
@@ -108,10 +111,11 @@ test('[F4-R60] estático: git-actions.js solo usa argumentos fijos, sin forzar n
 // ---------- Feature 14 ----------
 
 test('[F14-R23] GIT_ACTION_ARGS: diff con --literal-pathspecs, --no-ext-diff y --no-textconv; stat sin drivers; hooksDir y hooksPathConfig', () => {
-  assert.deepEqual(GIT_ACTION_ARGS.diffHead, ['--no-optional-locks', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--']);
-  assert.deepEqual(GIT_ACTION_ARGS.diffWorktree, ['--no-optional-locks', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--']);
-  assert.deepEqual(GIT_ACTION_ARGS.statHead, ['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--stat']);
-  assert.deepEqual(GIT_ACTION_ARGS.statCached, ['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--cached', '--stat']);
+  // Feature 19 (§3.4, cambio declarado §7.3): status/diff llevan --ignore-submodules=dirty.
+  assert.deepEqual(GIT_ACTION_ARGS.diffHead, ['--no-optional-locks', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', 'HEAD', '--']);
+  assert.deepEqual(GIT_ACTION_ARGS.diffWorktree, ['--no-optional-locks', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', '--']);
+  assert.deepEqual(GIT_ACTION_ARGS.statHead, ['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', 'HEAD', '--stat']);
+  assert.deepEqual(GIT_ACTION_ARGS.statCached, ['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', '--cached', '--stat']);
   assert.deepEqual(GIT_ACTION_ARGS.hooksDir, ['--no-optional-locks', 'rev-parse', '--git-path', 'hooks']);
   assert.deepEqual(GIT_ACTION_ARGS.hooksPathConfig, ['--no-optional-locks', 'config', '--get', 'core.hooksPath']);
 });
@@ -188,4 +192,94 @@ test('[F14-R25] estático: git-actions.js no desactiva los hooks (sin --no-verif
   const source = await fs.readFile(path.join(PANEL_DIR, 'lib', 'git-actions.js'), 'utf8');
   assert.ok(!source.includes('--no-verify'), 'sin --no-verify');
   assert.ok(!source.includes('core.hooksPath='), 'sin -c core.hooksPath=');
+});
+
+// ---------- Feature 19: configuración de git sin ejecución en las lecturas ----------
+
+/**
+ * Runner falso que además responde a la lectura de la configuración local (feature 19). `config` = salida de
+ * `git config --show-scope --name-only --get-regexp`; el resto se comporta como fakeRunner.
+ */
+function cfgFakeRunner({ config = '', status = ' M a.js\0', branch = 'main', upstream = true, calls = [] } = {}) {
+  const base = fakeRunner({ status, branch, upstream });
+  return async (file, args, opts) => {
+    calls.push({ file, args, opts });
+    if (args.includes('--get-regexp')) return { stdout: config };
+    // status/diff: pueden llevar delante la anulación de filtros; se compara por el sufijo conocido.
+    const key = JSON.stringify(args);
+    if (key.endsWith(JSON.stringify(GIT_ACTION_ARGS.status).slice(1))) return { stdout: status };
+    if (key.endsWith(JSON.stringify(GIT_ACTION_ARGS.statHead).slice(1))) return { stdout: 'stat\n' };
+    if (key.endsWith(JSON.stringify(GIT_ACTION_ARGS.statCached).slice(1))) return { stdout: 'stat\n' };
+    return base(file, args, opts);
+  };
+}
+
+const PREFIX = [...GIT_SAFE_PREFIX];
+const OVERRIDE_B_LFS = [
+  '-c', 'filter.b.clean=', '-c', 'filter.b.smudge=', '-c', 'filter.b.process=', '-c', 'filter.b.required=false',
+  '-c', 'filter.lfs.clean=', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.process=', '-c', 'filter.lfs.required=false',
+];
+
+test('[F19-R1] planCommitPush: los tres pasos empiezan por GIT_SAFE_PREFIX ampliado y el display no cambia', async () => {
+  const plan = await planCommitPush('/repo', 'Mensaje', { runner: cfgFakeRunner(), env: {} });
+  for (const step of plan.steps) assert.deepEqual(step.args.slice(0, PREFIX.length), PREFIX);
+  assert.equal(plan.display, 'git add -A → git commit -m "Mensaje" → git push');
+});
+
+test('[F19-R5] getChanges, getFileDiff y planCommitPush: anulación de filtros (b antes que lfs) en status/diff y nunca en add/commit/push', async () => {
+  const config = 'local\tfilter.lfs.process\nlocal\tfilter.b.clean\n';
+  const calls = [];
+  const changes = await getChanges('/repo', { runner: cfgFakeRunner({ config, status: ' M a.js\0', calls }) });
+  assert.equal(changes.ok, true);
+  const statusLike = calls.map((c) => c.args).filter((a) => a.includes('status') || (a.includes('diff') && a.includes('--stat')));
+  assert.ok(statusLike.length >= 2, 'status y stat');
+  for (const a of statusLike) assert.deepEqual(a.slice(0, OVERRIDE_B_LFS.length), OVERRIDE_B_LFS, a.join(' '));
+
+  const diffCalls = [];
+  await getFileDiff('/repo', 'a.js', { runner: cfgFakeRunner({ config, status: ' M a.js\0', calls: diffCalls }) });
+  const diff = diffCalls.map((c) => c.args).find((a) => a.includes('diff') && a.includes('--') && !a.includes('--stat'));
+  assert.deepEqual(diff.slice(0, OVERRIDE_B_LFS.length), OVERRIDE_B_LFS, 'el diff del fichero lleva la anulación');
+
+  const plan = await planCommitPush('/repo', 'Mensaje', { runner: cfgFakeRunner({ config }), env: {} });
+  for (const step of plan.steps) {
+    assert.ok(!step.args.some((a) => a.startsWith('filter.')), 'los pasos no llevan anulación de filtros');
+  }
+});
+
+test('[F19-R6] un filtro de nombre no admitido: getChanges, getFileDiff y planCommitPush devuelven 409 unsafeFilter y no ejecutan status ni diff', async () => {
+  const config = 'local\tfilter.a=b.clean\n';
+  for (const fn of [
+    (calls) => getChanges('/repo', { runner: cfgFakeRunner({ config, calls }) }),
+    (calls) => getFileDiff('/repo', 'a.js', { runner: cfgFakeRunner({ config, calls }) }),
+    (calls) => planCommitPush('/repo', 'Mensaje', { runner: cfgFakeRunner({ config, calls }), env: {} }),
+  ]) {
+    const calls = [];
+    const r = await fn(calls);
+    assert.deepEqual(r, { ok: false, status: 409, error: GIT_ERRORS.unsafeFilter });
+    assert.ok(!calls.some((c) => c.args.includes('status') || c.args.includes('diff')), 'no se ejecuta status ni diff');
+  }
+});
+
+test('[F19-R8] GIT_ACTION_ARGS: status, statHead, statCached, diffHead y diffWorktree llevan --ignore-submodules=dirty', () => {
+  assert.ok(GIT_ACTION_ARGS.status.includes('--ignore-submodules=dirty'));
+  for (const k of ['statHead', 'statCached', 'diffHead', 'diffWorktree']) {
+    assert.ok(GIT_ACTION_ARGS[k].includes('--ignore-submodules=dirty'), k);
+  }
+});
+
+test('[F19-R13] planCommitPush: pasos exactos con el prefijo ampliado, sin anulación de filtros ni anulación de gpg/askPass/credential/sshCommand/hooksPath; estático sin --no-verify ni hooksPath=', async () => {
+  const plan = await planCommitPush('/repo', 'Mensaje', { runner: cfgFakeRunner({ config: 'local\tfilter.b.clean\nlocal\tgpg.program\n' }), env: {} });
+  assert.deepEqual(plan.steps.map((s) => s.args), [
+    [...PREFIX, '--no-optional-locks', 'add', '-A'],
+    [...PREFIX, '--no-optional-locks', 'commit', '-m', 'Mensaje'],
+    [...PREFIX, '--no-optional-locks', 'push'],
+  ]);
+  for (const step of plan.steps) {
+    for (const needle of ['filter.', 'gpg.', 'askPass', 'askpass', 'credential.helper', 'sshCommand', 'sshcommand', 'hooksPath']) {
+      assert.ok(!step.args.some((a) => a.includes(needle)), `${needle} no se anula en los pasos`);
+    }
+  }
+  const source = await fs.readFile(path.join(PANEL_DIR, 'lib', 'git-actions.js'), 'utf8');
+  assert.ok(!source.includes('--no-verify'));
+  assert.ok(!source.includes('hooksPath='));
 });

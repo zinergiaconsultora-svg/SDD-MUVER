@@ -102,18 +102,31 @@ function renderActions(work, canExec) {
   return `<div class="work-actions">${buttons.join('')}</div>${testsHint}`;
 }
 
-/** Formulario "Ajustes de ejecución": comandos autorizados (uno por línea) y comando de tests. */
+/**
+ * Formulario "Ajustes de ejecución" (feature 19, M4, design.md §5.3): dos grupos separados —"Permisos de Claude"
+ * (con el hueco #exec-broad-slot para el aviso de comandos amplios) y "Tests del panel"— cada campo con su ayuda.
+ */
 export function renderExecSettingsForm(work) {
   const commands = Array.isArray(work.allowedCommands) ? work.allowedCommands.join('\n') : '';
+  const testCommand = work.testCommand || '';
   return `<form id="exec-settings-form" class="exec-settings" novalidate>
-      <div class="field">
-        <label for="exec-allowed">Comandos que Claude puede ejecutar (uno por línea; además de git status, git diff y git log)</label>
-        <textarea id="exec-allowed" name="allowedCommands" rows="4" autocomplete="off" placeholder="npm test">${escapeHtml(commands)}</textarea>
-      </div>
-      <div class="field">
-        <label for="exec-test">Comando de tests (vacío = bash init.sh si existe)</label>
-        <input id="exec-test" name="testCommand" type="text" autocomplete="off" placeholder="npm test" value="${escapeHtml(work.testCommand || '')}">
-      </div>
+      <fieldset class="exec-group" id="exec-allowed-group">
+        <legend>Permisos de Claude</legend>
+        <div id="exec-broad-slot"></div>
+        <div class="field">
+          <label for="exec-allowed">Comandos que Claude puede ejecutar (uno por línea; además de git status, git diff y git log)</label>
+          <textarea id="exec-allowed" name="allowedCommands" rows="4" autocomplete="off" placeholder="npm run lint" aria-describedby="exec-allowed-help">${escapeHtml(commands)}</textarea>
+          <p id="exec-allowed-help" class="field-help">Reglas de lo que Claude puede ejecutar por su cuenta mientras trabaja en este proyecto. Esto NO es el comando de tests: el panel no ejecuta nada de esta lista.</p>
+        </div>
+      </fieldset>
+      <fieldset class="exec-group" id="exec-test-group">
+        <legend>Tests del panel</legend>
+        <div class="field">
+          <label for="exec-test">Comando de tests (vacío = bash init.sh si existe)</label>
+          <input id="exec-test" name="testCommand" type="text" autocomplete="off" placeholder="npm test" aria-describedby="exec-test-help" value="${escapeHtml(testCommand)}">
+          <p id="exec-test-help" class="field-help">Lo que ejecuta el botón «Ejecutar tests» del panel (por ejemplo, npm test). No da ningún permiso a Claude.</p>
+        </div>
+      </fieldset>
       <div id="exec-settings-error" class="form-error-slot"></div>
       <div class="form-actions">
         <button type="submit" class="btn">Guardar ajustes de ejecución</button>
@@ -208,6 +221,17 @@ export const BROAD_TEXTS = Object.freeze({
 export function renderBroadWarning(cmds) {
   if (!Array.isArray(cmds) || cmds.length === 0) return '';
   return `<p class="warning" role="status">${BROAD_TEXTS.broadSaved(cmds)}</p>`;
+}
+
+/** Textos del aviso de configuración local en "Commit y push" (feature 19, §4.1). */
+export const CONFIG_TEXTS = Object.freeze({
+  configWarning: (keys) => `Atención: la configuración local de este repositorio (.git/config) define programas que git puede ejecutar al hacer commit y push: ${keys.map((k) => escapeHtml(k)).join(', ')}. Revísalos si no los has configurado tú.`,
+});
+
+/** Aviso del diálogo de "Commit y push" con las claves locales que ejecutan programas ('' si no hay). */
+export function renderConfigWarning(keys) {
+  if (!Array.isArray(keys) || keys.length === 0) return '';
+  return `<p class="warning" role="status">${CONFIG_TEXTS.configWarning(keys)}</p>`;
 }
 
 /** Aviso del diálogo de "Commit y push" si el repo tiene hooks activos ('' si no hay). */

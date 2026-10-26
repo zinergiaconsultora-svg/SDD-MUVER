@@ -387,6 +387,8 @@ export function createWorkApi({
       truncated: changes.truncated,
       hooks: changes.hooks || [],
       hooksPathCustom: changes.hooksPathCustom === true,
+      // Feature 19 (§5.4): claves locales que ejecutan programas, para avisar en "Commit y push" ([] si no hay).
+      execConfig: Array.isArray(changes.execConfig) ? changes.execConfig : [],
     });
   }
 

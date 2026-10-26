@@ -315,3 +315,55 @@ test('[F15-R17] docs/verification.md: sección Feature 15 con una fila por requi
   }
   assert.match(section, /^\| R13 \|.*MANUAL.*pendiente del humano/m, 'R13 es manual y está pendiente del humano');
 });
+
+// ---------- Feature 19: documentación (R18, R19) ----------
+
+test('[F19-R18] docs/architecture.md, "Seguridad de la ejecución": apartado 3 ampliado y apartado 7 de la configuración local', async () => {
+  const architecture = await read(path.join(REPO_DIR, 'docs', 'architecture.md'));
+  const start = architecture.indexOf('## Seguridad de la ejecución');
+  assert.ok(start >= 0, 'título de la sección');
+  const section = architecture.slice(start, architecture.indexOf('\n## ', start + 1));
+  const item = (n) => {
+    const from = section.indexOf(`\n${n}. **`);
+    assert.ok(from >= 0, `apartado ${n}`);
+    const to = section.indexOf(`\n${n + 1}. **`, from + 1);
+    return section.slice(from, to < 0 ? undefined : to);
+  };
+  for (const needle of ['log.showSignature=false', 'protocol.ext.allow=never', 'GIT_NO_LAZY_FETCH', '--ignore-submodules=dirty', 'filter.<n>.clean=', 'unsafeFilter']) {
+    assert.ok(item(3).includes(needle), `el apartado 3 debe mencionar ${needle}`);
+  }
+  for (const needle of ['execConfig', 'configWarning', 'gpg.program', 'core.askPass', 'remote.<n>.receivepack', 'core.sshCommand', 'GIT_SSH', '2.45', '--attr-source', 'core.pager', 'core.editor']) {
+    assert.ok(item(7).includes(needle), `el apartado 7 debe mencionar ${needle}`);
+  }
+  assert.ok(!section.includes('pueden ejecutarse en `git status`'), 'se quita la frase antigua del apartado 6');
+  for (const n of [3, 7]) {
+    for (const line of item(n).split('\n')) assert.ok(line.length <= 120, `línea del apartado ${n} de más de 120 columnas: ${line}`);
+  }
+});
+
+test('[F19-R19] docs/verification.md: sección Feature 19 con una fila por requisito y cada [F19-R<n>] no manual en panel/test/', async () => {
+  const verification = await read(path.join(REPO_DIR, 'docs', 'verification.md'));
+  const start = verification.indexOf('## Mapa de trazabilidad — Feature 19: `git-config-sin-clic` (prefijo `[F19-R<n>]`)');
+  assert.ok(start >= 0, 'título de la sección');
+  const end = verification.indexOf('\n## ', start + 1);
+  const section = verification.slice(start, end < 0 ? undefined : end);
+  assert.ok(section.includes('§7.3'), 'cambios declarados en tests anteriores');
+  assert.ok(section.includes('git 2.43'), 'versión de git con la que pasaron las evidencias');
+  const testsText = [];
+  for (const entry of await fs.readdir(path.join(PANEL_DIR, 'test'))) {
+    if (entry.endsWith('.js')) testsText.push(await read(path.join(PANEL_DIR, 'test', entry)));
+  }
+  const allTests = testsText.join('\n');
+  for (let n = 1; n <= 21; n++) {
+    const rows = section.match(new RegExp(`^\\| R${n} \\|.*$`, 'gm')) || [];
+    assert.equal(rows.length, 1, `una sola fila F19 de R${n}`);
+    if (rows[0].includes('MANUAL')) continue;
+    if (n === 21) {
+      assert.ok(rows[0].includes('init.sh'), 'R21 = ./init.sh');
+      continue;
+    }
+    assert.ok(rows[0].includes(`[F19-R${n}]`), `la fila de R${n} cita [F19-R${n}]`);
+    assert.ok(allTests.includes(`[F19-R${n}]`), `[F19-R${n}] aparece en panel/test/`);
+  }
+  assert.match(section, /^\| R20 \|.*MANUAL.*pendiente del humano/m, 'R20 es manual y está pendiente del humano');
+});

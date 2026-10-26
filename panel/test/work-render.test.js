@@ -2,6 +2,9 @@
 // F4: R80–R89. Feature 14: F14-R19 y F14-R25 (avisos de comandos amplios y de hooks).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { PUBLIC_DIR } from './helpers.js';
 
 import {
   STATE_LABELS,
@@ -25,6 +28,9 @@ import {
   BROAD_TEXTS,
   renderBroadWarning,
   renderHooksWarning,
+  CONFIG_TEXTS,
+  renderConfigWarning,
+  renderExecSettingsForm,
 } from '../public/work.js';
 import { createApiClient } from '../public/api-client.js';
 
@@ -430,4 +436,54 @@ test('[F14-R25] renderHooksWarning: texto exacto, variante core.hooksPath, escap
   assert.equal(renderHooksWarning(undefined), '');
   const html = renderHooksWarning({ hooks: ['<script>'] });
   assert.ok(!html.includes('<script>') && html.includes('&lt;script&gt;'));
+});
+
+// ---------- Feature 19: aviso de configuración y Ajustes de ejecución en dos grupos ----------
+
+test('[F19-R12] renderConfigWarning y CONFIG_TEXTS.configWarning: texto exacto, escapado y lista vacía/ausente → cadena vacía', () => {
+  assert.equal(
+    CONFIG_TEXTS.configWarning(['gpg.program', 'core.askpass']),
+    'Atención: la configuración local de este repositorio (.git/config) define programas que git puede ejecutar al hacer commit y push: gpg.program, core.askpass. Revísalos si no los has configurado tú.',
+  );
+  assert.equal(
+    renderConfigWarning(['gpg.program', 'core.askpass']),
+    '<p class="warning" role="status">Atención: la configuración local de este repositorio (.git/config) define programas que git puede ejecutar al hacer commit y push: gpg.program, core.askpass. Revísalos si no los has configurado tú.</p>',
+  );
+  assert.equal(renderConfigWarning([]), '');
+  assert.equal(renderConfigWarning(undefined), '');
+  const xss = renderConfigWarning(['<script>x</script>']);
+  assert.ok(!xss.includes('<script>') && xss.includes('&lt;script&gt;x&lt;/script&gt;'));
+});
+
+test('[F19-R15] renderExecSettingsForm: dos fieldset con leyendas, ayudas y aria-describedby exactos, exec-broad-slot dentro del primer grupo y valores escapados', () => {
+  const html = renderExecSettingsForm({ allowedCommands: ['npm run lint', '<b>x</b>'], testCommand: '<i>t</i>' });
+  // Dos grupos con sus leyendas.
+  assert.equal((html.match(/<fieldset class="exec-group"/g) || []).length, 2);
+  assert.ok(html.includes('<legend>Permisos de Claude</legend>'));
+  assert.ok(html.includes('<legend>Tests del panel</legend>'));
+  // El hueco del aviso de comandos amplios va dentro del primer grupo (antes del segundo fieldset).
+  const slot = html.indexOf('id="exec-broad-slot"');
+  const allowedGroup = html.indexOf('id="exec-allowed-group"');
+  const testGroup = html.indexOf('id="exec-test-group"');
+  assert.ok(allowedGroup >= 0 && slot > allowedGroup && slot < testGroup, 'exec-broad-slot dentro del grupo de permisos');
+  // Campos con su id/name y su ayuda enlazada por aria-describedby.
+  assert.ok(html.includes('id="exec-allowed" name="allowedCommands"'));
+  assert.ok(html.includes('aria-describedby="exec-allowed-help"'));
+  assert.ok(html.includes('id="exec-allowed-help" class="field-help"'));
+  assert.ok(html.includes('Esto NO es el comando de tests: el panel no ejecuta nada de esta lista.'));
+  assert.ok(html.includes('id="exec-test" name="testCommand"'));
+  assert.ok(html.includes('aria-describedby="exec-test-help"'));
+  assert.ok(html.includes('id="exec-test-help" class="field-help"'));
+  assert.ok(html.includes('No da ningún permiso a Claude.'));
+  assert.ok(html.includes('id="exec-settings-form"'));
+  assert.ok(html.includes('Guardar ajustes de ejecución'));
+  // Valores escapados.
+  assert.ok(html.includes('&lt;b&gt;x&lt;/b&gt;') && html.includes('value="&lt;i&gt;t&lt;/i&gt;"'));
+  assert.ok(!html.includes('<b>x</b>') && !html.includes('<i>t</i>'));
+});
+
+test('[F19-R16] public/app.js pinta el aviso de comandos amplios en #exec-broad-slot y ya no con afterbegin sobre el formulario', async () => {
+  const source = await fs.readFile(path.join(PUBLIC_DIR, 'app.js'), 'utf8');
+  assert.ok(source.includes('#exec-broad-slot'), 'usa #exec-broad-slot');
+  assert.ok(!source.includes("settingsForm.insertAdjacentHTML('afterbegin'"), 'ya no inserta encima del formulario');
 });

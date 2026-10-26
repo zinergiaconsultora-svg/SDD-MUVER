@@ -213,9 +213,14 @@
    `bun` siguen con la lista de denegación de la feature 14, que no es exhaustiva. El nombre base ignora `.exe`, `.cmd`,
    `.bat`, `.com` y `.ps1`. Las listas se comprobaron con git 2.43.0 y npm 10.9.4 (revisadas de nuevo en la Enmienda 1
    de la feature 15): se revisan cuando se actualice git o npm en la máquina del panel.
-3. **Configuración del repositorio**: toda llamada git del panel lleva `-c core.fsmonitor=false` (lecturas por el
-   runner central y pasos de "Commit y push"); el diff usa `--literal-pathspecs` (un fichero llamado `*` es solo ese
-   fichero) y `--no-ext-diff --no-textconv` (no ejecuta drivers de diff del repo).
+3. **Configuración del repositorio**: toda llamada git del panel lleva `-c core.fsmonitor=false`,
+   `-c log.showSignature=false` y `-c protocol.ext.allow=never` (lecturas por el runner central y pasos de "Commit y
+   push"). Las lecturas llevan además `GIT_NO_LAZY_FETCH=1` (no descargan nada de un clon parcial) y, en
+   `status`/`diff`, `--ignore-submodules=dirty` (no entran en la configuración local de los submódulos) y la
+   anulación `-c filter.<n>.clean= -c filter.<n>.smudge= -c filter.<n>.process= -c filter.<n>.required=false` de los
+   filtros de la configuración local (un nombre de filtro no admitido → `unsafeFilter`: no se lee el estado). El diff
+   sigue con `--literal-pathspecs` (un fichero llamado `*` es solo ese fichero) y `--no-ext-diff --no-textconv` (no
+   ejecuta drivers de diff del repo).
 4. **Hooks**: se ejecutan en "Commit y push" (sin `--no-verify` ni `core.hooksPath` vacío), porque suelen ser del
    humano (lint, tests) y desactivarlos cambiaría el resultado respecto a la terminal; `GET /changes` devuelve
    `hooks` y `hooksPathCustom` y el diálogo de confirmación avisa con sus nombres.
@@ -226,8 +231,8 @@
 6. **Riesgos conocidos**: (N5) el CLI de Claude aplica también `~/.claude/settings.json` y los
    `.claude/settings*.json` del proyecto, que pueden ampliar los permisos de `--allowedTools`; (N6) desde la red local
    basta la sesión y el panel escucha en `0.0.0.0`: una cookie robada en la LAN da ejecución sin reconfirmar; los
-   filtros `clean`/`smudge` de `.gitattributes` + `.git/config` pueden ejecutarse en `git status`/`git add`, y los
-   `credential.helper` y hooks en el push (requieren que alguien escriba en `.git/`, que Claude Code protege);
+   filtros `clean`/`smudge` locales, los `credential.helper` y los hooks se ejecutan en "Commit y push" (se avisa,
+   apartado 7); requieren que alguien escriba en `.git/`, que Claude Code protege;
    `cloudflared` se arranca por nombre desde `scripts/` (fuera de la feature 14); los nietos que lance Claude por
    nombre siguen sus propias reglas de búsqueda. Además, el run tiene un límite de salida de 5 MB que cuenta todos los
    eventos (salvo `state`/`end`) y guarda como mucho 50 denegaciones de permiso.
@@ -235,6 +240,19 @@
      ejecuta código indicado en la línea de órdenes, y `git log`/`diff`/`show --output=<fichero>` (también las reglas
      por defecto) escribe en cualquier ruta (feature 15, pendiente de decisión: features 18 y 16).
    - `pnpm`, `yarn` y `bun` ejecutan scripts y binarios por nombre (`yarn <script>`, `bun <fichero>`) (feature 17).
+7. **Configuración local del repositorio** (feature 19): una lectura git del panel no ejecuta ningún programa que
+   venga de `.git/config`, sus `include`, `config.worktree`, sus submódulos ni sus ficheros de atributos. En las
+   lecturas se anulan la verificación de firmas de `git log` (`gpg.program`), los filtros `clean`/`smudge`/`process`
+   locales (por nombre, venga el atributo de donde venga), el transporte `ext::` y la descarga perezosa de un clon
+   parcial, y no se entra en los submódulos. "Commit y push" sí ejecuta la configuración local como la terminal del
+   humano, pero avisa: `GET /changes` devuelve `execConfig` con las claves locales que ejecutan programas
+   (`gpg.program`, `core.askPass`, `credential.helper`, `core.sshCommand`, `remote.<n>.receivepack`, filtros…) y el
+   diálogo muestra `configWarning`. Nota: con el `GIT_SSH_COMMAND` del panel un `core.sshCommand` local no actúa en el
+   push, pero si el humano define solo `GIT_SSH`, el `core.sshCommand` local gana. No aplican al panel `core.pager`
+   (sin terminal, se usa tubería) ni `core.editor` (el commit es `-m`). Versión mínima: con git < 2.45 la descarga
+   perezosa de un clon parcial puede ejecutar programas en las lecturas (riesgo documentado; el PC del humano, 2.52,
+   está cubierto). No se usa `--attr-source` porque no cubre `.git/info/attributes` ni un `core.attributesFile` local
+   y fallaría con git < 2.42; anular el driver del filtro cubre todas las fuentes y todas las versiones.
 
 ## Restricciones y decisiones de arquitectura
 > Cosas que condicionan: "debe funcionar en móvil", "un solo usuario admin", "tiene que integrarse con X"…

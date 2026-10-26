@@ -199,6 +199,17 @@ test('[F4-R57] diff de un fichero no listado (../secreto.txt, sin cambios, sin p
   assert.ok(!calls.some((args) => args.includes('diff') && args.includes('--')), 'no se ejecutó git diff');
 });
 
+test('[F19-R6] GET /changes de un repo con un filtro local de nombre no admitido → 409 unsafeFilter', { skip: skipNoGit }, async () => {
+  const { dir } = await makeRepo();
+  await git(dir, ['config', 'filter.a=b.clean', '/bin/true']);
+  await git(dir, ['config', 'filter.a=b.required', 'true']);
+  await fs.writeFile(path.join(dir, 'commit-1.txt'), 'cambiado\n');
+  const ctx = await setup({ dir });
+  const r = await ctx.authed('/api/projects/proy/changes');
+  assert.equal(r.status, 409, r.text);
+  assert.deepEqual(r.json, { error: 'El repositorio define un filtro de git con un nombre no admitido en su configuración local (.git/config); el panel no lee sus cambios' });
+});
+
 // ---------- R58–R60: commit y push ----------
 
 test('[F4-R58] commit-push con upstream: add, commit y push al remoto --bare con el mensaje exacto', { skip: skipNoGit }, async () => {

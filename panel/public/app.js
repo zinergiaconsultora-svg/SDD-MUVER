@@ -47,6 +47,7 @@ import {
   withReauth,
   renderBroadWarning,
   renderHooksWarning,
+  renderConfigWarning,
   STATE_LABELS,
   ACTIVE_STATES,
   MAX_LOG_EVENTS,
@@ -580,9 +581,9 @@ async function openWork({ runId = null } = {}) {
     const [work, runs] = await Promise.all([request(projectUrl('/work')), request(projectUrl('/runs'))]);
     currentWork = work;
     container.innerHTML = renderWorkView(work, { runs, now: Date.now() });
-    // Feature 14 (R19): aviso mientras haya comandos de ejecución libre guardados, encima de la lista.
-    const settingsForm = container.querySelector('#exec-settings-form');
-    if (settingsForm) settingsForm.insertAdjacentHTML('afterbegin', renderBroadWarning(work.broadCommands));
+    // Feature 14 (R19) / feature 19 (R16): aviso de comandos de ejecución libre dentro del grupo de permisos de Claude.
+    const broadSlot = container.querySelector('#exec-broad-slot');
+    if (broadSlot) broadSlot.innerHTML = renderBroadWarning(work.broadCommands);
     const target = runId || (work.activeRun && work.activeRun.runId);
     if (target) await openRun(target);
   } catch (err) {
@@ -819,8 +820,8 @@ async function commitPushAction() {
     return;
   }
   const message = suggestCommitMessage(currentWork);
-  // Feature 14 (R25): aviso de hooks activos (se ejecutan con el commit y el push).
-  const extraHtml = `${renderHooksWarning(changes)}<div class="field"><label for="commit-message">Mensaje del commit (puedes editarlo)</label><textarea id="commit-message" name="message" maxlength="2000" rows="3">${escapeHtml(message)}</textarea></div>`;
+  // Feature 14 (R25) / feature 19 (R12): aviso de hooks y, detrás, aviso de la configuración local que ejecuta programas.
+  const extraHtml = `${renderHooksWarning(changes)}${renderConfigWarning(changes.execConfig)}<div class="field"><label for="commit-message">Mensaje del commit (puedes editarlo)</label><textarea id="commit-message" name="message" maxlength="2000" rows="3">${escapeHtml(message)}</textarea></div>`;
   const { confirmed, values } = await confirmAction(describeAction('commit-push', runContext({ message, branch })), { extraHtml });
   if (!confirmed) return;
   try {

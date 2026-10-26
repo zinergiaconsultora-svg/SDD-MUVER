@@ -916,6 +916,29 @@ code {
   gap: 10px;
 }
 
+/* Feature 19 (M4): "Ajustes de ejecución" en dos grupos con ayuda atenuada bajo cada campo. */
+.exec-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.exec-group legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.field-help {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 .prompt-form textarea,
 .exec-settings textarea,
 .field select,

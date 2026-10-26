@@ -5,8 +5,8 @@
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
 - **Feature en curso:** #19 `git-config-sin-clic` — programas de `.git/config` sin clic, avisos en Commit y push y campos de Ajustes de ejecución
-- **Estado:** `in_progress` — spec aprobada por el humano (2026-10-26); implementer trabajando
-- **Tarea actual:** T1 en adelante de `specs/git-config-sin-clic/tasks.md`
+- **Estado:** `in_progress` — implementación terminada (514 tests en verde, `init.sh` OK); **esperando aprobación humana de los tests (puerta 2)**
+- **Tarea actual:** puerta 2; T1–T17 y T19 hechas; T18 (manual en Windows) pendiente del humano.
 - **Siguiente paso:** implementer → humano revisa tests (puerta 2) → reviewer → done. Después: 16, 17, 18 y la 13.
 - **Bloqueos / esperando:** — (pendiente del humano, no bloqueante: T16 de la feature 15 en Windows; duda 5 de la 15 a comprobar con el CLI real)
 

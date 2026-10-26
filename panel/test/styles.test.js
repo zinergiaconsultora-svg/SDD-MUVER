@@ -215,3 +215,16 @@ test('[F4-R91] styles.css define los selectores de la fase 4 con colores en vari
   }
   assert.match(css, /\.prompt-form textarea[^{]*\{[^}]*width:\s*100%/s, 'caja de mensaje a todo el ancho');
 });
+
+test('[F19-R17] .exec-group y .field-help: borde, radio, relleno y texto atenuado; los anchos fijos siguen ≤ 360', () => {
+  assert.match(css, /\.exec-group\s*\{[^}]*border:\s*1px solid var\(--border\)/s, '.exec-group con borde');
+  assert.match(css, /\.exec-group\s*\{[^}]*border-radius:\s*8px/s, '.exec-group con radio');
+  assert.match(css, /\.exec-group\s*\{[^}]*padding:\s*12px/s, '.exec-group con relleno');
+  assert.match(css, /\.field-help\s*\{[^}]*color:\s*var\(--muted\)/s, '.field-help atenuada');
+  assert.match(css, /\.field-help\s*\{[^}]*font-size:\s*0\.85rem/s, '.field-help con tamaño reducido');
+  // Sin anchos fijos en píxeles mayores que 360 (se reusa la comprobación de [R36]).
+  const declarationsOnly = css.replace(/@media[^{]*\{/g, '').replace(/[^{}]*\{/g, (m) => m.replace(/width/g, '_w_'));
+  for (const m of [...declarationsOnly.matchAll(/(?:^|[^-\w])(?:min-)?width\s*:\s*(\d+(?:\.\d+)?)px/g)]) {
+    assert.ok(Number(m[1]) <= 360, `ancho fijo demasiado grande: ${m[0].trim()}`);
+  }
+});

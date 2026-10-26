@@ -7,20 +7,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { defaultRunner, GIT_SAFE_PREFIX } from './git-info.js';
+import { defaultRunner, GIT_SAFE_PREFIX, readRepoExecConfig, filterOverrideArgs } from './git-info.js';
 
 export const GIT_ACTION_ARGS = Object.freeze({
   isRepo: Object.freeze(['--no-optional-locks', 'rev-parse', '--is-inside-work-tree']),
-  status: Object.freeze(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all']),
+  // Feature 19 (§3.4, D4): --ignore-submodules=dirty en status/diff para no entrar en la configuración de los submódulos.
+  status: Object.freeze(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=dirty']),
   hasHead: Object.freeze(['--no-optional-locks', 'rev-parse', '--verify', '-q', 'HEAD']),
   branch: Object.freeze(['--no-optional-locks', 'rev-parse', '--abbrev-ref', 'HEAD']),
   symbolicBranch: Object.freeze(['--no-optional-locks', 'symbolic-ref', '--short', '-q', 'HEAD']),
   upstream: Object.freeze(['--no-optional-locks', 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']),
-  statHead: Object.freeze(['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--stat']),
-  statCached: Object.freeze(['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--cached', '--stat']),
+  statHead: Object.freeze(['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', 'HEAD', '--stat']),
+  statCached: Object.freeze(['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', '--cached', '--stat']),
   // + ruta validada; --literal-pathspecs: un fichero llamado "*" o ":(glob)…" es solo ese fichero (N3).
-  diffHead: Object.freeze(['--no-optional-locks', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--']),
-  diffWorktree: Object.freeze(['--no-optional-locks', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--']), // repo sin commits
+  diffHead: Object.freeze(['--no-optional-locks', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', 'HEAD', '--']),
+  diffWorktree: Object.freeze(['--no-optional-locks', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', '--']), // repo sin commits
   hooksDir: Object.freeze(['--no-optional-locks', 'rev-parse', '--git-path', 'hooks']),
   hooksPathConfig: Object.freeze(['--no-optional-locks', 'config', '--get', 'core.hooksPath']),
   add: Object.freeze(['--no-optional-locks', 'add', '-A']),
@@ -48,7 +49,11 @@ const GIT_ERRORS = Object.freeze({
   messageTooLong: 'El mensaje del commit supera los 2000 caracteres',
   nothingToCommit: 'No hay cambios que commitear',
   detachedHead: 'No se puede hacer push sin rama (HEAD separado)',
+  // Feature 19 (§4.1, D3): un nombre de filtro no admitido no se puede anular por línea de órdenes; no se lee el estado.
+  unsafeFilter: 'El repositorio define un filtro de git con un nombre no admitido en su configuración local (.git/config); el panel no lee sus cambios',
 });
+
+export { GIT_ERRORS };
 
 function git(dir, args, { runner = defaultRunner } = {}) {
   return runner('git', [...args], { cwd: dir, timeout: GIT_ACTION_TIMEOUT_MS, windowsHide: true, maxBuffer: MAX_BUFFER });
@@ -130,15 +135,19 @@ export async function listActiveHooks(dir, { runner, readdir = fs.promises.readd
   }
 }
 
-/** Lista de cambios (contrato §4.3) o { ok: false, status: 409, error } si no es un repo. */
+/** Lista de cambios (contrato §4.3) o { ok: false, status, error } si no es un repo o tiene un filtro no admitido. */
 export async function getChanges(dir, { runner } = {}) {
   const options = { runner };
   if (!(await isRepo(dir, options))) return { ok: false, status: 409, error: GIT_ERRORS.notRepo };
-  const status = await tryGit(dir, GIT_ACTION_ARGS.status, options);
+  // Feature 19 (§5.2): la configuración local una sola vez; con un nombre de filtro no admitido no se lee el estado.
+  const cfg = await readRepoExecConfig(dir, options);
+  if (cfg.unsafeFilters.length) return { ok: false, status: 409, error: GIT_ERRORS.unsafeFilter };
+  const filterArgs = filterOverrideArgs(cfg.filters);
+  const status = await tryGit(dir, [...filterArgs, ...GIT_ACTION_ARGS.status], options);
   const all = parsePorcelainZ(status.stdout);
   const branch = await currentBranch(dir, options);
   const head = await hasHead(dir, options);
-  const stat = await tryGit(dir, head ? GIT_ACTION_ARGS.statHead : GIT_ACTION_ARGS.statCached, options);
+  const stat = await tryGit(dir, [...filterArgs, ...(head ? GIT_ACTION_ARGS.statHead : GIT_ACTION_ARGS.statCached)], options);
   return {
     ok: true,
     branch,
@@ -146,6 +155,9 @@ export async function getChanges(dir, { runner } = {}) {
     stat: clipBytes(stat.stdout, MAX_STAT_BYTES).text,
     truncated: all.length > MAX_CHANGED_FILES,
     hasHead: head,
+    // execConfig: claves locales que ejecutan programas (aviso en "Commit y push"); filterArgs: uso interno, no en la API.
+    execConfig: cfg.execKeys,
+    filterArgs,
     ...(await listActiveHooks(dir, options)),
   };
 }
@@ -158,7 +170,8 @@ export async function getFileDiff(dir, file, { runner, maxBytes = MAX_DIFF_BYTES
   const entry = changes.files.find((f) => f.path === file);
   if (!entry) return { ok: false, status: 400, error: GIT_ERRORS.fileNotChanged };
   if (entry.status === '??') return { ok: true, file, diff: null, untracked: true, truncated: false };
-  const args = [...(changes.hasHead ? GIT_ACTION_ARGS.diffHead : GIT_ACTION_ARGS.diffWorktree), entry.path];
+  const base = changes.hasHead ? GIT_ACTION_ARGS.diffHead : GIT_ACTION_ARGS.diffWorktree;
+  const args = [...(changes.filterArgs || []), ...base, entry.path];
   const result = await tryGit(dir, args, { runner });
   const clipped = clipBytes(result.stdout, maxBytes);
   return { ok: true, file, diff: clipped.text, untracked: false, truncated: clipped.truncated };
@@ -188,7 +201,10 @@ export async function planCommitPush(dir, message, { runner, env: panelEnv = pro
   if (!text || text.includes('\0')) return { ok: false, status: 400, error: GIT_ERRORS.messageRequired, field: 'message' };
   if ([...text].length > MAX_COMMIT_MESSAGE_CHARS) return { ok: false, status: 400, error: GIT_ERRORS.messageTooLong, field: 'message' };
   if (!(await isRepo(dir, options))) return { ok: false, status: 409, error: GIT_ERRORS.notRepo };
-  const status = await tryGit(dir, GIT_ACTION_ARGS.status, options);
+  // Feature 19 (§5.2): con un nombre de filtro no admitido no se lee el estado; el `status` previo lleva la anulación.
+  const cfg = await readRepoExecConfig(dir, options);
+  if (cfg.unsafeFilters.length) return { ok: false, status: 409, error: GIT_ERRORS.unsafeFilter };
+  const status = await tryGit(dir, [...filterOverrideArgs(cfg.filters), ...GIT_ACTION_ARGS.status], options);
   if (parsePorcelainZ(status.stdout).length === 0) return { ok: false, status: 409, error: GIT_ERRORS.nothingToCommit };
   const branch = await currentBranch(dir, options);
   if (!branch || branch === 'HEAD' || branch.startsWith('-') || !BRANCH_RE.test(branch)) {

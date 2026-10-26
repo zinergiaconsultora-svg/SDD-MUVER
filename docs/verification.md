@@ -431,6 +431,56 @@ automático. Si un requisito no se puede probar, está mal escrito.
 | R17 | `panel/test/deploy.test.js` → "[F15-R17] docs/verification.md: sección Feature 15…" |
 | R18 | `./init.sh` completo en verde (fases 1–4 y features 14 y 15) y `node sdd-lint.js` con 0 errores (T17) |
 
+## Mapa de trazabilidad — Feature 19: `git-config-sin-clic` (prefijo `[F19-R<n>]`)
+
+> Tests en `panel/test/` (`node --test`, sin dependencias). **Entorno de los tests de evidencia** (`git-config.test.js`,
+> design.md §7.1, como `[F15-R6]`): repo git temporal real y un script de marca que solo crea un fichero dentro de un
+> temporal (los de filtro hacen `cat`, los demás `exit 1`); entorno aislado sin variables `GIT_*` heredadas, con `HOME`
+> y `XDG_CONFIG_HOME` temporales, `GIT_CONFIG_NOSYSTEM=1` y `GIT_TERMINAL_PROMPT=0`, pasado también a `startApp({ env })`
+> con un runner que lee con ese mismo entorno. Cada caso demuestra PRIMERO que la llamada git del vector ejecuta la
+> marca sin la protección y DESPUÉS que las peticiones del panel no la ejecutan. Se saltan sin git y en Windows
+> (scripts `#!/bin/sh`). **Las evidencias pasaron con git 2.43.0 (Linux).** La segunda parte de `[F19-R10]` (el `GET
+> /diff` del panel en un clon parcial) se salta con el motivo «git < 2.45 no admite GIT_NO_LAZY_FETCH» porque 2.43 es
+> anterior a 2.45; el PC del humano (git 2.52.0.windows.1) la cubre en la tarea manual R20.
+>
+> **Cambios declarados en tests anteriores (design.md §7.3).** Son los únicos tests de fases o features anteriores que
+> cambian (el resto solo recibe tests nuevos `[F19-R<n>]` y líneas de cabecera):
+> - `git-info.test.js`: `[R12] runner espía…` y `[R12][F4-R61] GIT_COMMANDS…` (lista cerrada con el `status` de §3.4 y
+>   las dos lecturas de config), `[F4-R61] getGitInfo…status…` (status con `--ignore-submodules=dirty`),
+>   `[F14-R7][F14-R21] createGitRunner…` (`GIT_SAFE_PREFIX` ampliado y entorno `process.env` + `GIT_NO_LAZY_FETCH=1`;
+>   la aserción «en Linux no se añade entorno» pasa a comprobar `GIT_NO_LAZY_FETCH`) y `[F14-R13]` de `win32`/`linux`
+>   (el `deepEqual` de `opts.env` añade `GIT_NO_LAZY_FETCH: '1'`).
+> - `git-actions.test.js`: `[F4-R60]` y `[F4-R58]` (prefijo ampliado en los pasos) y `[F14-R23]` (listas de §3.4 con
+>   `--ignore-submodules=dirty`).
+> - **Desviación declarada:** `[F14-R7][F14-R21]` ya no afirma «en Linux no se añade NoDefaultCurrentDirectoryInExePath»
+>   en la llamada sin `env` explícito, porque el contenedor de los tests trae esa variable en `process.env` (base del
+>   entorno); la distinción linux/win32 de esa variable se comprueba igualmente en `[F14-R13]` y `[F19-R2]` con un
+>   `env` explícito.
+
+| Requisito | Test(s) que lo verifican |
+|-----------|--------------------------|
+| R1 | `panel/test/git-info.test.js` → "[F19-R1] GIT_SAFE_PREFIX es la constante congelada exacta y el runner la antepone entera"; `panel/test/git-actions.test.js` → "[F19-R1] planCommitPush: los tres pasos empiezan por GIT_SAFE_PREFIX ampliado y el display no cambia" |
+| R2 | `panel/test/git-info.test.js` → "[F19-R2] createGitRunner: entorno con GIT_NO_LAZY_FETCH en linux y win32, conserva lo recibido, NoDefault solo en win32" |
+| R3 | `panel/test/git-config.test.js` → "[F19-R3] log.showSignature + gpg.program: git log ejecuta gpg.program; el listado y el detalle del panel no" |
+| R4 | `panel/test/git-info.test.js` → "[F19-R4] readRepoExecConfig: solo local/worktree, alternativa sin --show-scope (129), sin coincidencias (1), error, duplicados y tope 20" y "[F19-R4] FILTER_NAME_RE y filterOverrideArgs: ocho opciones por filtro en orden" |
+| R5 | `panel/test/git-info.test.js` → "[F19-R5] getGitInfo antepone la anulación de filtros locales (orden alfabético) al status"; `panel/test/git-actions.test.js` → "[F19-R5] getChanges, getFileDiff y planCommitPush: anulación de filtros (b antes que lfs)…" |
+| R6 | `panel/test/git-info.test.js` → "[F19-R6] getGitInfo con un filtro de nombre no admitido…"; `panel/test/git-actions.test.js` → "[F19-R6] un filtro de nombre no admitido: getChanges, getFileDiff y planCommitPush devuelven 409 unsafeFilter…"; `panel/test/work-api.test.js` → "[F19-R6] GET /changes de un repo con un filtro local de nombre no admitido → 409 unsafeFilter" |
+| R7 | `panel/test/git-config.test.js` → "[F19-R7] filter.clean con .gitattributes: git lo ejecuta; el panel no" y "[F19-R7] filter.process con .git/info/attributes: git lo ejecuta; el panel no" |
+| R8 | `panel/test/git-info.test.js` → "[F19-R8] GIT_COMMANDS: el status del listado lleva --ignore-submodules=dirty…"; `panel/test/git-actions.test.js` → "[F19-R8] GIT_ACTION_ARGS: status, statHead, statCached, diffHead y diffWorktree llevan --ignore-submodules=dirty" |
+| R9 | `panel/test/git-config.test.js` → "[F19-R9] filtro en un submódulo: git status recursivo lo ejecuta; el panel no (--ignore-submodules=dirty)" |
+| R10 | `panel/test/git-config.test.js` → "[F19-R10] clon parcial: git diff HEAD descarga el blob ausente y ejecuta remote.origin.uploadpack" (la parte del panel se salta con git < 2.45, aquí 2.43) |
+| R11 | `panel/test/git-config.test.js` → "[F19-R11] GET /changes devuelve execConfig con las claves locales que ejecutan programas (y [] en un repo recién creado)" |
+| R12 | `panel/test/work-render.test.js` → "[F19-R12] renderConfigWarning y CONFIG_TEXTS.configWarning: texto exacto, escapado y lista vacía/ausente → cadena vacía" (el orden en el diálogo se comprueba en R20) |
+| R13 | `panel/test/git-actions.test.js` → "[F19-R13] planCommitPush: pasos exactos con el prefijo ampliado, sin anulación de filtros ni anulación de gpg/askPass/credential/sshCommand/hooksPath; estático sin --no-verify ni hooksPath=" |
+| R14 | `panel/test/git-config.test.js` → "[F19-R14] protocol.ext.allow=always + URL ext::: git push ejecuta el programa; el push del panel no (run failed)" |
+| R15 | `panel/test/work-render.test.js` → "[F19-R15] renderExecSettingsForm: dos fieldset con leyendas, ayudas y aria-describedby exactos, exec-broad-slot dentro del primer grupo y valores escapados" |
+| R16 | `panel/test/work-render.test.js` → "[F19-R16] public/app.js pinta el aviso de comandos amplios en #exec-broad-slot y ya no con afterbegin sobre el formulario" |
+| R17 | `panel/test/styles.test.js` → "[F19-R17] .exec-group y .field-help: borde, radio, relleno y texto atenuado; los anchos fijos siguen ≤ 360" |
+| R18 | `panel/test/deploy.test.js` → "[F19-R18] docs/architecture.md, "Seguridad de la ejecución": apartado 3 ampliado y apartado 7 de la configuración local" |
+| R19 | `panel/test/deploy.test.js` → "[F19-R19] docs/verification.md: sección Feature 19 con una fila por requisito y cada [F19-R<n>] no manual en panel/test/" |
+| R20 | **MANUAL — Windows, pendiente del humano** (T18, design.md §7.4, git 2.52.0.windows.1): en Git Bash, fuera del catálogo, preparar un repo con los vectores (firma falsa, `log.showSignature`+`gpg.program`, `filter.marca.clean`, `core.askPass`, `.gitattributes`), comprobar primero sin el panel que `git log`/`status`/`diff --stat` crean las marcas; registrar el repo y ver que el listado, el detalle, "Ver cambios" y el diff no crean marcas; "Commit y push" muestra el aviso de configuración (`core.askpass`, `filter.marca.clean`, `gpg.program`) y se cancela; "Ajustes de ejecución" muestra los dos grupos separados y el aviso de comando amplio dentro del primero. Resultado: _(anotar fecha, versión de Windows, `node -v`, `git --version` y resultado)_ |
+| R21 | `./init.sh` completo en verde (fases 1–4 y features 14, 15 y 19) y `node sdd-lint.js` con 0 errores (T19) |
+
 ## Qué NO se considera verificado
 
 - "Yo lo he probado a mano una vez" no cuenta como test.
