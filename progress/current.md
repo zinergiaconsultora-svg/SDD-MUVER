@@ -4,10 +4,10 @@
 > leader y el implementer. Si cierras la sesión y la abres mañana, esto te dice por
 > dónde ibas. (El histórico cerrado va a `history.md`.)
 
-- **Feature en curso:** — (la 15 se cerró como `done`; siguiente: #19 `git-config-sin-clic`, `pending`)
-- **Estado:** feature 15 `done`; feature 19 en `spec_ready`, **esperando aprobación humana de la spec** (el leader comprobó con git 2.43 real los vectores de filtros `clean` y `log.showSignature` y sus protecciones)
-- **Tarea actual:** aprobación de la spec de la feature 19 y respuesta a las dudas de su design.md.
-- **Siguiente paso:** humano aprueba la spec de la 19 → implementer → puerta 2 → reviewer → done. Después: 16, 17, 18 y la 13.
+- **Feature en curso:** #19 `git-config-sin-clic` — programas de `.git/config` sin clic, avisos en Commit y push y campos de Ajustes de ejecución
+- **Estado:** `in_progress` — spec aprobada por el humano (2026-10-26); implementer trabajando
+- **Tarea actual:** T1 en adelante de `specs/git-config-sin-clic/tasks.md`
+- **Siguiente paso:** implementer → humano revisa tests (puerta 2) → reviewer → done. Después: 16, 17, 18 y la 13.
 - **Bloqueos / esperando:** — (pendiente del humano, no bloqueante: T16 de la feature 15 en Windows; duda 5 de la 15 a comprobar con el CLI real)
 
 ## Decisiones tomadas con el humano

@@ -425,3 +425,16 @@ referencia `§7.3`), una fila por requisito, R20 `MANUAL — Windows, pendiente 
 - **Coste:** una llamada git más por proyecto y sondeo (`config --get-regexp`, que solo lee ficheros).
 - **Supuesto:** el ámbito que muestra `--show-scope` para lo que llega por `include.path` es el del fichero que lo
   incluye (`local`); lo comprueba el test de R11 si el implementer añade un caso con `include.path`.
+
+### Decisiones del humano (2026-10-26, aprobación de la spec)
+
+- Spec aprobada tal como está; se aceptan las cuatro dudas de esta sección:
+  1. con un filtro (git-lfs u otro) definido en el `.git/config` del proyecto, el listado y "Ver cambios" pueden
+     mostrar como cambiados ficheros que la terminal no marca;
+  2. con `--ignore-submodules=dirty`, los cambios sin commitear dentro de un submódulo no cuentan;
+  3. en "Commit y push" se **avisa** (no se anula) de los programas de la configuración del repo;
+  4. con git anterior a 2.45 la descarga perezosa queda abierta en las lecturas (riesgo documentado).
+- Comprobación previa del leader (git 2.43.0, `HOME` temporal, `GIT_CONFIG_NOSYSTEM=1`): un `filter.x.clean` local
+  se ejecuta con `git status` y no con `-c filter.x.clean= -c filter.x.required=false` (status y `diff --stat`
+  siguen mostrando el cambio); `gpg.program` se ejecuta con `log.showSignature=true` en `git log -1 --format=…` y no
+  con `-c log.showSignature=false`. El resto de evidencias las hace el implementer (T2/T3) antes de implementar.
